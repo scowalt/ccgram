@@ -39,6 +39,10 @@ _BOT_COMMANDS: list[tuple[str, str]] = [
     ("sessions", "Sessions dashboard"),
     ("resume", "Browse and resume past sessions"),
     ("screenshot", "Capture terminal screenshot"),
+    ("panes", "List panes in this window"),
+    ("sync", "Audit and fix state"),
+    ("unbind", "Unbind this topic"),
+    ("recall", "Recall recent commands"),
     ("upgrade", "Upgrade ccbot and restart"),
 ]
 
