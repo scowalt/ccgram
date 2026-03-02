@@ -63,6 +63,7 @@ Each Telegram Forum topic binds to one tmux window running an agent CLI. Message
 
 - Send messages and `/commands` directly to your agent (`/clear`, `/compact`, `/cost`, etc.)
 - Interactive prompts (AskUserQuestion, ExitPlanMode, Permission) rendered as inline keyboards
+- Codex edit approvals are reformatted for Telegram readability (compact summary + short preview, with approval choices preserved)
 - Multi-pane support — auto-detects blocked panes, surfaces prompts, `/panes` command for overview
 - Terminal screenshots — capture the current pane (or any specific pane) as a PNG image
 - Sessions dashboard (`/sessions`) — overview of all sessions with status and kill buttons

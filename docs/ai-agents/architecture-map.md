@@ -23,6 +23,7 @@
 - `src/ccbot/providers/base.py` defines the provider contract.
 - `src/ccbot/providers/__init__.py` resolves per-window provider selection.
 - `src/ccbot/providers/{claude,codex,gemini}.py` implement provider-specific behavior.
+- `src/ccbot/interactive_prompt_formatter.py` normalizes provider interactive prompt text for Telegram readability (currently Codex edit approvals).
 
 5. Integrations
 

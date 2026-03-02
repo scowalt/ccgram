@@ -287,6 +287,29 @@ class TestCodexTerminalStatus:
         assert status.is_interactive is True
         assert status.ui_type == "SelectionUI"
 
+    def test_formats_edit_prompt_for_readability(self) -> None:
+        codex = CodexProvider()
+        pane = (
+            "Do you want to make this edit to src/ccbot/bot.py?\n"
+            "947    936 -    await register_commands(application.bot, provider=get_provider())"
+            "    948 +    await register_commands(application.bot, providers=_menu_providers())\n"
+            "953          try:\n"
+            "942 -            await register_commands(context.bot, provider=get_provider())"
+            "    954 +            await register_commands(context.bot, providers=_menu_providers())\n"
+            "› 1. Yes, proceed (y)  2. Yes, and don't ask again for these files (a)"
+            "  3. No, and tell Codex what to do differently (esc)\n"
+            "Press enter to confirm or esc to cancel\n"
+        )
+        status = codex.parse_terminal_status(pane)
+        assert status is not None
+        assert status.is_interactive is True
+        assert "File: src/ccbot/bot.py" in status.raw_text
+        assert "Changes: +" in status.raw_text
+        assert "› 1. Yes, proceed (y)" in status.raw_text
+        assert "  2. Yes, and don't ask again for these files (a)" in status.raw_text
+        assert "  3. No, and tell Codex what to do differently (esc)" in status.raw_text
+        assert "Press enter to confirm or esc to cancel" in status.raw_text
+
     def test_returns_none_for_non_interactive(self) -> None:
         codex = CodexProvider()
         status = codex.parse_terminal_status("normal output\n")

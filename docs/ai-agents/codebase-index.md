@@ -54,6 +54,7 @@ Change provider behavior (commands, parsing, capabilities):
 - `src/ccbot/providers/base.py` for contract/capabilities.
 - `src/ccbot/providers/__init__.py` for per-window provider resolution.
 - `src/ccbot/providers/{claude,codex,gemini}.py` for provider-specific behavior.
+- `src/ccbot/interactive_prompt_formatter.py` for provider-facing interactive prompt text normalization (currently Codex edit approval readability).
 
 Change Telegram interactive UX:
 

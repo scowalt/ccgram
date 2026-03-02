@@ -17,6 +17,7 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
+from ccbot.interactive_prompt_formatter import format_codex_interactive_prompt
 from ccbot.providers._jsonl import JsonlProvider
 from ccbot.providers.base import (
     RESUME_ID_RE,
@@ -517,8 +518,11 @@ class CodexProvider(JsonlProvider):
         """Parse Codex pane content for interactive prompts."""
         interactive = extract_interactive_content(pane_text)
         if interactive:
+            formatted = format_codex_interactive_prompt(
+                interactive.content, interactive.name
+            )
             return StatusUpdate(
-                raw_text=interactive.content,
+                raw_text=formatted,
                 display_label=interactive.name,
                 is_interactive=True,
                 ui_type=interactive.name,

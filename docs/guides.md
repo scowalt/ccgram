@@ -181,7 +181,32 @@ CCBot supports multiple agent CLI backends. Each Telegram topic can use a differ
 
 **Claude Code** has the richest integration — 7 hook event types (SessionStart, Notification, Stop, SubagentStart, SubagentStop, TeammateIdle, TaskCompleted) provide instant session tracking, interactive UI detection, done/idle detection, subagent activity monitoring, and agent team notifications. The bot also uses a pyte VT100 screen buffer as fallback for terminal status parsing. Multi-pane windows (e.g. from agent teams) are automatically scanned for blocked panes and surfaced as inline keyboard alerts.
 
-**Codex CLI** and **Gemini CLI** lack a session hook, so session tracking relies on auto-detection from running processes. Codex interactive prompts (question lists, permission prompts, and other selection UIs) are detected from terminal screen content via pyte and shown with inline keyboard controls. Gemini sets pane titles (`Working: ✦`, `Action Required: ✋`, `Ready: ◇`) that CCBot reads for status, and its `@inquirer/select` permission prompts are detected as interactive UI.
+**Codex CLI** and **Gemini CLI** lack a session hook, so session tracking relies on auto-detection from running processes. Codex interactive prompts (question lists, permission prompts, and other selection UIs) are detected from terminal screen content via pyte and shown with inline keyboard controls. For edit-approval prompts, CCBot reformats dense terminal diffs into a compact summary with a short preview while keeping the Yes/No confirmation choices and bottom action hints intact. Gemini sets pane titles (`Working: ✦`, `Action Required: ✋`, `Ready: ◇`) that CCBot reads for status, and its `@inquirer/select` permission prompts are detected as interactive UI.
+
+### Codex Edit Approval Formatting
+
+When Codex asks for approval on file edits, terminal output can include dense side-by-side diff lines that are hard to read in Telegram. CCBot reformats that content before sending the interactive prompt:
+
+- Keeps the approval controls and action hints intact (`Yes/No`, `Press enter`, `Esc`).
+- Adds a compact summary (`File`, `Changes: +N -M`).
+- Adds a short preview of parsed changed lines when available.
+- Omits unreadable wrapped diff blobs instead of forwarding noisy raw text.
+
+Typical output shape:
+
+```text
+Do you want to make this edit to src/ccbot/example.py?
+File: src/ccbot/example.py
+Changes: +1 -1
+Preview:
+  - return old_value
+  + return new_value
+
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for these files (a)
+  3. No, and tell Codex what to do differently (esc)
+Press enter to confirm or esc to cancel
+```
 
 ### Custom Launch Commands
 
