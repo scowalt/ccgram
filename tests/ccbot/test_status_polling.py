@@ -1155,3 +1155,65 @@ class TestMaybeDiscoverTranscript:
             await _maybe_discover_transcript("@7")
 
         mock_sm.register_hookless_session.assert_not_called()
+
+    async def test_passes_max_age_zero_when_pane_is_alive(self) -> None:
+        from ccbot.handlers.status_polling import _maybe_discover_transcript
+
+        mock_provider = MagicMock()
+        mock_provider.capabilities.supports_hook = False
+        mock_provider.capabilities.name = "codex"
+        mock_provider.discover_transcript.return_value = None
+
+        with (
+            patch("ccbot.handlers.status_polling.session_manager") as mock_sm,
+            patch(
+                "ccbot.handlers.status_polling.get_provider_for_window",
+                return_value=mock_provider,
+            ),
+            patch("ccbot.handlers.status_polling.config") as mock_config,
+            patch("ccbot.handlers.status_polling.tmux_manager") as mock_tmux,
+            patch("ccbot.handlers.status_polling.asyncio") as mock_asyncio,
+        ):
+            mock_sm.window_states = {
+                "@7": MagicMock(session_id="", cwd="/proj", provider_name="codex")
+            }
+            mock_config.tmux_session_name = "ccbot"
+            mock_tmux.find_window_by_id = AsyncMock(
+                return_value=MagicMock(pane_current_command="bun")
+            )
+            mock_asyncio.to_thread = AsyncMock(return_value=None)
+            await _maybe_discover_transcript("@7")
+
+        discover_call = mock_asyncio.to_thread.call_args_list[0]
+        assert discover_call.args[0] == mock_provider.discover_transcript
+        assert discover_call.kwargs["max_age"] == 0
+
+    async def test_passes_max_age_none_when_pane_not_alive(self) -> None:
+        from ccbot.handlers.status_polling import _maybe_discover_transcript
+
+        mock_provider = MagicMock()
+        mock_provider.capabilities.supports_hook = False
+        mock_provider.capabilities.name = "codex"
+        mock_provider.discover_transcript.return_value = None
+
+        with (
+            patch("ccbot.handlers.status_polling.session_manager") as mock_sm,
+            patch(
+                "ccbot.handlers.status_polling.get_provider_for_window",
+                return_value=mock_provider,
+            ),
+            patch("ccbot.handlers.status_polling.config") as mock_config,
+            patch("ccbot.handlers.status_polling.tmux_manager") as mock_tmux,
+            patch("ccbot.handlers.status_polling.asyncio") as mock_asyncio,
+        ):
+            mock_sm.window_states = {
+                "@7": MagicMock(session_id="", cwd="/proj", provider_name="codex")
+            }
+            mock_config.tmux_session_name = "ccbot"
+            mock_tmux.find_window_by_id = AsyncMock(return_value=None)
+            mock_asyncio.to_thread = AsyncMock(return_value=None)
+            await _maybe_discover_transcript("@7")
+
+        discover_call = mock_asyncio.to_thread.call_args_list[0]
+        assert discover_call.args[0] == mock_provider.discover_transcript
+        assert discover_call.kwargs["max_age"] is None

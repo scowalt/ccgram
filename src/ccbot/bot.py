@@ -1361,6 +1361,22 @@ async def _handle_new_window(event: NewWindowEvent, bot: Bot) -> None:
         w = await tmux_manager.find_window_by_id(event.window_id)
         if w and w.pane_current_command:
             detected = detect_provider_from_command(w.pane_current_command)
+            if not detected:
+                # Gemini often runs under bun/node wrappers, so command-name
+                # detection can miss it. Fall back to Gemini-specific pane-title
+                # symbols set via OSC title updates.
+                cmd = w.pane_current_command.strip().lower()
+                if cmd in {"bun", "node", "npx"}:
+                    pane_title = await tmux_manager.get_pane_title(event.window_id)
+                    if isinstance(pane_title, str) and any(
+                        marker in pane_title
+                        for marker in (
+                            "\u2726",  # ✦ Working
+                            "\u270b",  # ✋ Action Required
+                            "\u25c7",  # ◇ Ready
+                        )
+                    ):
+                        detected = "gemini"
             if detected:
                 session_manager.set_window_provider(event.window_id, detected)
                 logger.info(

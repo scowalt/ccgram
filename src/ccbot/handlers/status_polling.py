@@ -882,16 +882,15 @@ async def _maybe_discover_transcript(window_id: str) -> None:
 
     window_key = f"{config.tmux_session_name}:{window_id}"
     for provider_name, provider in providers_to_try:
-        from ..providers.codex import CodexProvider
-
-        if pane_alive and isinstance(provider, CodexProvider):
-            event = await asyncio.to_thread(
-                provider.discover_transcript, state.cwd, window_key, max_age=0
-            )
-        else:
-            event = await asyncio.to_thread(
-                provider.discover_transcript, state.cwd, window_key
-            )
+        # Active panes may have stale transcript mtimes (no recent writes yet);
+        # bypass staleness checks for better hookless session recovery.
+        max_age = 0 if pane_alive else None
+        event = await asyncio.to_thread(
+            provider.discover_transcript,
+            state.cwd,
+            window_key,
+            max_age=max_age,
+        )
         if event:
             if (
                 state.session_id == event.session_id

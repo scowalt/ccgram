@@ -147,6 +147,76 @@ class TestHandleNewWindowAutoDetection:
     @patch("ccbot.bot.session_manager")
     @patch("ccbot.bot.config")
     @patch("ccbot.bot.detect_provider_from_command", return_value="")
+    async def test_detects_gemini_from_pane_title_when_command_is_bun(
+        self,
+        mock_detect: MagicMock,
+        mock_config: MagicMock,
+        mock_sm: MagicMock,
+        mock_tmux: MagicMock,
+    ) -> None:
+        from ccbot.bot import _handle_new_window
+        from ccbot.session_monitor import NewWindowEvent
+
+        mock_config.group_id = None
+        mock_sm.iter_thread_bindings.return_value = []
+        mock_sm.get_window_state.return_value = MagicMock(provider_name="")
+
+        mock_window = MagicMock()
+        mock_window.pane_current_command = "bun"
+        mock_tmux.find_window_by_id = AsyncMock(return_value=mock_window)
+        mock_tmux.get_pane_title = AsyncMock(return_value="◇  Ready (ccbot)")
+
+        event = NewWindowEvent(
+            window_id="@8", session_id="uuid-4", window_name="proj", cwd="/tmp"
+        )
+        bot = AsyncMock()
+
+        await _handle_new_window(event, bot)
+
+        mock_detect.assert_called_once_with("bun")
+        mock_tmux.get_pane_title.assert_awaited_once_with("@8")
+        mock_sm.set_window_provider.assert_called_once_with("@8", "gemini")
+
+    @pytest.mark.asyncio
+    @patch("ccbot.bot.tmux_manager")
+    @patch("ccbot.bot.session_manager")
+    @patch("ccbot.bot.config")
+    @patch("ccbot.bot.detect_provider_from_command", return_value="")
+    async def test_does_not_detect_gemini_from_generic_working_text(
+        self,
+        mock_detect: MagicMock,
+        mock_config: MagicMock,
+        mock_sm: MagicMock,
+        mock_tmux: MagicMock,
+    ) -> None:
+        from ccbot.bot import _handle_new_window
+        from ccbot.session_monitor import NewWindowEvent
+
+        mock_config.group_id = None
+        mock_sm.iter_thread_bindings.return_value = []
+        mock_sm.get_window_state.return_value = MagicMock(provider_name="")
+
+        mock_window = MagicMock()
+        mock_window.pane_current_command = "bun"
+        mock_tmux.find_window_by_id = AsyncMock(return_value=mock_window)
+        mock_tmux.get_pane_title = AsyncMock(return_value="Working on build...")
+
+        event = NewWindowEvent(
+            window_id="@10", session_id="uuid-6", window_name="proj", cwd="/tmp"
+        )
+        bot = AsyncMock()
+
+        await _handle_new_window(event, bot)
+
+        mock_detect.assert_called_once_with("bun")
+        mock_tmux.get_pane_title.assert_awaited_once_with("@10")
+        mock_sm.set_window_provider.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("ccbot.bot.tmux_manager")
+    @patch("ccbot.bot.session_manager")
+    @patch("ccbot.bot.config")
+    @patch("ccbot.bot.detect_provider_from_command", return_value="")
     async def test_skips_provider_set_for_unrecognized_command(
         self,
         mock_detect: MagicMock,
@@ -166,7 +236,7 @@ class TestHandleNewWindowAutoDetection:
         mock_tmux.find_window_by_id = AsyncMock(return_value=mock_window)
 
         event = NewWindowEvent(
-            window_id="@8", session_id="uuid-4", window_name="proj", cwd="/tmp"
+            window_id="@9", session_id="uuid-5", window_name="proj", cwd="/tmp"
         )
         bot = AsyncMock()
 
