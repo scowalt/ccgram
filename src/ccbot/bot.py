@@ -5,7 +5,7 @@ Each Telegram topic maps 1:1 to a tmux window (Claude session).
 
 Core responsibilities:
   - Command handlers: /new (+ /start alias), /history, /sessions, /resume,
-    /screenshot, /panes, plus forwarding unknown /commands to Claude Code via tmux.
+    /screenshot, /panes, /restore, plus forwarding unknown /commands to Claude Code via tmux.
   - Callback query handler: thin dispatcher routing to dedicated handler modules.
   - Topic-based routing: each named topic binds to one tmux window.
     Unbound topics trigger the directory browser to create a new session.
@@ -115,6 +115,7 @@ from .handlers.interactive_callbacks import (
     match_interactive_prefix as _match_interactive_prefix,
 )
 from .handlers.recovery_callbacks import handle_recovery_callback
+from .handlers.restore_command import restore_command
 from .handlers.resume_command import handle_resume_command_callback, resume_command
 from .handlers.screenshot_callbacks import handle_screenshot_callback
 from .handlers.window_callbacks import handle_window_callback
@@ -1444,6 +1445,12 @@ async def _handle_new_window(event: NewWindowEvent, bot: Bot) -> None:
         if chat_id != user_id:  # Only group chats (not fallback to user_id)
             seen_chats.add(chat_id)
 
+    # Fallback: use preserved group_chat_ids (post-restart, no bindings left)
+    if not seen_chats:
+        seen_chats.update(
+            cid for cid in session_manager.group_chat_ids.values() if cid < 0
+        )
+
     if not seen_chats:
         if config.group_id:
             seen_chats.add(config.group_id)
@@ -1540,6 +1547,62 @@ async def _handle_new_window(event: NewWindowEvent, bot: Bot) -> None:
 # --- App lifecycle ---
 
 
+async def _close_stale_topics(bot: Bot, dropped_bindings: list) -> None:
+    """Close Telegram topics for bindings dropped during startup re-resolution."""
+    from .session import DroppedBinding
+
+    db: DroppedBinding
+    for db in dropped_bindings:
+        if db.chat_id == db.user_id:
+            continue  # No group chat stored — skip DM fallback
+        try:
+            await bot.close_forum_topic(db.chat_id, db.thread_id)
+            logger.info(
+                "Startup: closed stale topic thread=%d chat=%d (was window %s)",
+                db.thread_id,
+                db.chat_id,
+                db.window_id,
+            )
+        except RetryAfter as e:
+            retry_secs = (
+                e.retry_after
+                if isinstance(e.retry_after, int)
+                else int(e.retry_after.total_seconds())
+            )
+            logger.warning(
+                "Startup: flood control closing topic thread=%d, retry after %ds",
+                db.thread_id,
+                retry_secs,
+            )
+            await asyncio.sleep(max(1, retry_secs) + 1)
+            try:
+                await bot.close_forum_topic(db.chat_id, db.thread_id)
+            except TelegramError:
+                logger.exception(
+                    "Startup: failed to close topic thread=%d after retry",
+                    db.thread_id,
+                )
+        except TelegramError:
+            logger.debug(
+                "Startup: could not close topic thread=%d (may already be closed)",
+                db.thread_id,
+            )
+
+
+async def _adopt_unbound_windows(bot: Bot) -> None:
+    """Auto-adopt known-but-unbound windows (post-restart recovery)."""
+    all_windows = await tmux_manager.list_windows()
+    live_ids = {w.window_id for w in all_windows}
+    live_pairs = [(w.window_id, w.window_name) for w in all_windows]
+    audit = session_manager.audit_state(live_ids, live_pairs)
+    orphaned = [i for i in audit.issues if i.category == "orphaned_window"]
+    if orphaned:
+        from .handlers.sync_command import _adopt_orphaned_windows
+
+        await _adopt_orphaned_windows(bot, orphaned)
+        logger.info("Startup: adopted %d unbound window(s)", len(orphaned))
+
+
 async def post_init(application: Application) -> None:
     global session_monitor, _status_poll_task, _global_provider_menu
 
@@ -1563,7 +1626,10 @@ async def post_init(application: Application) -> None:
         jq.run_repeating(_refresh_commands, interval=600, first=600)
 
     # Re-resolve stale window IDs from persisted state against live tmux windows
-    await session_manager.resolve_stale_ids()
+    dropped_bindings = await session_manager.resolve_stale_ids()
+    await _close_stale_topics(application.bot, dropped_bindings)
+
+    await _adopt_unbound_windows(application.bot)
 
     # Warn if Claude Code hooks are not installed (provider-aware, non-blocking)
     provider = get_provider()
@@ -1709,6 +1775,9 @@ def create_bot() -> Application:
         CommandHandler("panes", panes_command, filters=_group_filter)
     )
     application.add_handler(CommandHandler("sync", sync_command, filters=_group_filter))
+    application.add_handler(
+        CommandHandler("restore", restore_command, filters=_group_filter)
+    )
     application.add_handler(CallbackQueryHandler(callback_handler))
     # Topic closed event — unbind window (kept alive for rebinding)
     application.add_handler(

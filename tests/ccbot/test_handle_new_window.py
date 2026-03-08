@@ -269,3 +269,43 @@ class TestHandleNewWindowErrors:
         bot.create_forum_topic.assert_called_once_with(
             chat_id=-100500, name="cool-project"
         )
+
+
+class TestHandleNewWindowGroupChatIdsFallback:
+    """Post-restart: no bindings left, but group_chat_ids preserved."""
+
+    async def test_uses_group_chat_ids_when_no_bindings(self) -> None:
+        event = _make_event()
+        bot = AsyncMock()
+        bot.create_forum_topic = AsyncMock(return_value=_make_topic(thread_id=42))
+
+        with (
+            patch("ccbot.bot.session_manager") as mock_sm,
+            patch("ccbot.bot.config") as mock_config,
+        ):
+            mock_sm.iter_thread_bindings.return_value = iter([])
+            mock_sm.group_chat_ids = {"100:5": -100200}
+            mock_config.group_id = None
+            mock_config.allowed_users = {12345}
+
+            await _handle_new_window(event, bot)
+
+        bot.create_forum_topic.assert_called_once_with(
+            chat_id=-100200, name="my-project"
+        )
+
+    async def test_skips_positive_ids(self) -> None:
+        event = _make_event()
+        bot = AsyncMock()
+
+        with (
+            patch("ccbot.bot.session_manager") as mock_sm,
+            patch("ccbot.bot.config") as mock_config,
+        ):
+            mock_sm.iter_thread_bindings.return_value = iter([])
+            mock_sm.group_chat_ids = {"100:5": 100}  # DM fallback (positive)
+            mock_config.group_id = None
+
+            await _handle_new_window(event, bot)
+
+        bot.create_forum_topic.assert_not_called()

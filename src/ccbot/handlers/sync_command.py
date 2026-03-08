@@ -2,7 +2,7 @@
 
 Audits all state maps against live tmux windows and reports issues.
 A "Fix" button runs cleanup operations and re-audits in place.
-Enforcement: closes ghost topics and kills orphaned tmux windows.
+Enforcement: closes ghost topics and adopts orphaned tmux windows.
 
 Key functions:
   - sync_command(): /sync command handler
@@ -42,7 +42,7 @@ _CATEGORY_LABELS: dict[str, str] = {
     "stale_window_state": "stale window state",
     "stale_offset": "stale offset entry",
     "display_name_drift": "display name drift",
-    "orphaned_window": "orphaned tmux window (no topic)",
+    "orphaned_window": "unbound tmux window (no topic)",
 }
 
 
@@ -54,8 +54,26 @@ async def _run_audit() -> AuditResult:
     return session_manager.audit_state(live_ids, live_pairs)
 
 
+def _issue_summary_lines(audit: AuditResult) -> list[str]:
+    """Build category summary lines from audit issues."""
+    category_counts: dict[str, int] = {}
+    for issue in audit.issues:
+        if issue.category == "ghost_binding":
+            continue  # already shown in binding summary
+        category_counts[issue.category] = category_counts.get(issue.category, 0) + 1
+
+    if category_counts:
+        return [
+            f"\u26a0 {count} {_CATEGORY_LABELS.get(cat, cat)}"
+            for cat, count in category_counts.items()
+        ]
+    if audit.total_bindings > 0:
+        return ["\u2713 No orphaned entries", "\u2713 Display names in sync"]
+    return []
+
+
 def _format_report(
-    audit: AuditResult, *, fixed_count: int = 0
+    audit: AuditResult, *, fixed_count: int = 0, closed_topic_count: int = 0
 ) -> tuple[str, InlineKeyboardMarkup | None]:
     """Build report text and optional keyboard."""
     lines: list[str] = []
@@ -65,6 +83,13 @@ def _format_report(
         lines.append(f"\u2705 Fixed {fixed_count} {issue_word}\n")
     else:
         lines.append("\U0001f50d State audit\n")
+
+    if closed_topic_count > 0:
+        topic_word = "topic" if closed_topic_count == 1 else "topics"
+        lines.append(
+            f"\u2139 Closed {closed_topic_count} stale {topic_word} "
+            "(delete manually in Telegram)"
+        )
 
     # Binding summary
     if audit.total_bindings == 0:
@@ -78,20 +103,7 @@ def _format_report(
             f"({audit.live_binding_count}/{audit.total_bindings} alive)"
         )
 
-    # Group issues by category for summary
-    category_counts: dict[str, int] = {}
-    for issue in audit.issues:
-        if issue.category == "ghost_binding":
-            continue  # already shown in binding summary
-        category_counts[issue.category] = category_counts.get(issue.category, 0) + 1
-
-    if category_counts:
-        for cat, count in category_counts.items():
-            label = _CATEGORY_LABELS.get(cat, cat)
-            lines.append(f"\u26a0 {count} {label}")
-    elif audit.total_bindings > 0:
-        lines.append("\u2713 No orphaned entries")
-        lines.append("\u2713 Display names in sync")
+    lines.extend(_issue_summary_lines(audit))
 
     text = "\n".join(lines)
 
@@ -118,8 +130,9 @@ def _format_report(
     return text, keyboard
 
 
-async def _close_ghost_topics(bot: Bot, issues: list[AuditIssue]) -> None:
-    """Close Telegram topics for ghost bindings (thread → dead window)."""
+async def _close_ghost_topics(bot: Bot, issues: list[AuditIssue]) -> int:
+    """Close Telegram topics for ghost bindings. Returns count of closed topics."""
+    closed_count = 0
     for issue in issues:
         if issue.category != "ghost_binding":
             continue
@@ -153,16 +166,22 @@ async def _close_ghost_topics(bot: Bot, issues: list[AuditIssue]) -> None:
                     user_id, thread_id, bot=bot, window_id=window_id
                 )
                 session_manager.unbind_thread(user_id, thread_id)
+                if topic_closed:
+                    closed_count += 1
             except OSError, TelegramError:
                 logger.exception(
                     "Failed to clean up ghost binding thread=%d window=%s",
                     thread_id,
                     window_id,
                 )
+    return closed_count
 
 
-async def _kill_orphaned_windows(issues: list[AuditIssue]) -> None:
-    """Kill live tmux windows that are not bound to any topic."""
+async def _adopt_orphaned_windows(bot: Bot, issues: list[AuditIssue]) -> None:
+    """Create Telegram topics for unbound tmux windows."""
+    from ..bot import _handle_new_window
+    from ..session_monitor import NewWindowEvent
+
     for issue in issues:
         if issue.category != "orphaned_window":
             continue
@@ -170,10 +189,18 @@ async def _kill_orphaned_windows(issues: list[AuditIssue]) -> None:
         if not match:
             continue
         window_id = match.group(1)
+        ws = session_manager.get_window_state(window_id)
+        name = ws.window_name or session_manager.get_display_name(window_id)
+        event = NewWindowEvent(
+            window_id=window_id,
+            session_id=ws.session_id,
+            window_name=name,
+            cwd=ws.cwd,
+        )
         try:
-            await tmux_manager.kill_window(window_id)
-        except OSError:
-            logger.exception("Failed to kill orphaned window %s", window_id)
+            await _handle_new_window(event, bot)
+        except TelegramError:
+            logger.exception("Failed to adopt orphaned window %s", window_id)
 
 
 async def sync_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -217,13 +244,15 @@ async def handle_sync_fix(query: CallbackQuery) -> None:
 
     # Enforcement: close ghost topics and kill orphaned windows
     bot = query.get_bot()
-    await _close_ghost_topics(bot, pre_audit.issues)
-    await _kill_orphaned_windows(pre_audit.issues)
+    closed_count = await _close_ghost_topics(bot, pre_audit.issues)
+    await _adopt_orphaned_windows(bot, pre_audit.issues)
 
     # Re-audit and compute actual fixed count (handles partial failures)
     post_audit = await _run_audit()
     actual_fixed = pre_audit.fixable_count - post_audit.fixable_count
-    text, keyboard = _format_report(post_audit, fixed_count=actual_fixed)
+    text, keyboard = _format_report(
+        post_audit, fixed_count=actual_fixed, closed_topic_count=closed_count
+    )
     await safe_edit(query, text, reply_markup=keyboard)
 
 

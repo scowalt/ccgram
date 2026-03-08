@@ -108,6 +108,16 @@ class TestBuildReport:
         assert keyboard is not None
         assert "Fix 3 issues" in keyboard.inline_keyboard[0][0].text
 
+    def test_report_shows_stale_topic_hint(self) -> None:
+        audit = AuditResult(issues=[], total_bindings=0, live_binding_count=0)
+        text, _keyboard = _format_report(audit, fixed_count=1, closed_topic_count=2)
+        assert "Closed 2 stale topics (delete manually in Telegram)" in text
+
+    def test_report_shows_singular_stale_topic_hint(self) -> None:
+        audit = AuditResult(issues=[], total_bindings=0, live_binding_count=0)
+        text, _keyboard = _format_report(audit, fixed_count=1, closed_topic_count=1)
+        assert "Closed 1 stale topic (delete manually in Telegram)" in text
+
     def test_clean_state_shows_all_clear(self) -> None:
         audit = AuditResult(issues=[], total_bindings=3, live_binding_count=3)
         text, _keyboard = _format_report(audit)
@@ -253,13 +263,15 @@ class TestSyncFix:
         query.get_bot = MagicMock(return_value=mock_bot)
 
         with (
-            patch("ccbot.handlers.sync_command.safe_edit"),
+            patch("ccbot.handlers.sync_command.safe_edit") as mock_edit,
             patch("ccbot.handlers.sync_command.clear_topic_state") as mock_cleanup,
         ):
             await handle_sync_fix(query)
             mock_bot.close_forum_topic.assert_called_once_with(-999, 42)
             mock_cleanup.assert_called_once_with(100, 42, bot=mock_bot, window_id="@7")
             mock_sm.unbind_thread.assert_called_once_with(100, 42)
+            report_text = mock_edit.call_args[0][1]
+            assert "Closed 1 stale topic" in report_text
 
     async def test_fix_skips_unbind_when_close_fails(self, _patch_deps) -> None:
         mock_sm, _, _ = _patch_deps
@@ -336,9 +348,8 @@ class TestSyncFix:
             mock_cleanup.assert_called_once_with(100, 42, bot=mock_bot, window_id="@7")
             mock_sm.unbind_thread.assert_called_once_with(100, 42)
 
-    async def test_fix_kills_orphaned_windows(self, _patch_deps) -> None:
-        mock_sm, mock_tm, _ = _patch_deps
-        mock_tm.kill_window = AsyncMock()
+    async def test_fix_adopts_orphaned_windows(self, _patch_deps) -> None:
+        mock_sm, _, _ = _patch_deps
         mock_sm.audit_state.side_effect = [
             AuditResult(
                 issues=[
@@ -349,12 +360,23 @@ class TestSyncFix:
             ),
             AuditResult(issues=[], total_bindings=1, live_binding_count=1),
         ]
+        mock_sm.get_window_state.return_value = MagicMock(
+            session_id="s1", cwd="/tmp", window_name="stray-proj"
+        )
 
         query = AsyncMock()
 
-        with patch("ccbot.handlers.sync_command.safe_edit"):
+        with (
+            patch("ccbot.handlers.sync_command.safe_edit"),
+            patch(
+                "ccbot.bot._handle_new_window", new_callable=AsyncMock
+            ) as mock_handle,
+        ):
             await handle_sync_fix(query)
-            mock_tm.kill_window.assert_called_once_with("@5")
+            mock_handle.assert_called_once()
+            event = mock_handle.call_args[0][0]
+            assert event.window_id == "@5"
+            assert event.window_name == "stray-proj"
 
     def test_orphaned_window_label(self) -> None:
         audit = AuditResult(
@@ -365,5 +387,5 @@ class TestSyncFix:
             live_binding_count=1,
         )
         text, keyboard = _format_report(audit)
-        assert "orphaned tmux window" in text
+        assert "unbound tmux window" in text
         assert keyboard is not None

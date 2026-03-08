@@ -105,6 +105,7 @@ graph TB
 | `history.py`               | Message history display with pagination                            |
 | `history_callbacks.py`     | History pagination callbacks (prev/next)                           |
 | `sessions_dashboard.py`    | /sessions command: active session overview + kill                  |
+| `restore_command.py`       | /restore command: recover dead topics via recovery keyboard        |
 | `resume_command.py`        | /resume command: scan past sessions, paginated picker              |
 | `upgrade.py`               | /upgrade command: uv tool upgrade + process restart                |
 | `file_handler.py`          | Photo/document handler (save to .ccbot-uploads/, notify agent)     |
