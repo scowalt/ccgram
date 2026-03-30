@@ -1,15 +1,14 @@
 """Telegram notifications for inter-agent messaging.
 
 Shows silent notifications in Telegram topics when agents send messages
-to each other. Handles sent/delivered/reply/broadcast/shell-pending
-notifications and loop detection alerts with inline keyboard controls.
+to each other. Handles sent/delivered/reply/shell-pending notifications
+and loop detection alerts with inline keyboard controls.
 
 Key functions:
   - notify_message_sent: compact line in sender's topic
   - notify_messages_delivered: grouped notification for multiple messages
   - notify_reply_received: reply notification in original sender's topic
   - notify_pending_shell: pending message display in shell topic
-  - notify_broadcast_sent: single summary in sender's topic
   - notify_loop_detected: alert with [Pause] [Allow] keyboard
 """
 
@@ -45,7 +44,6 @@ _WINDOW_KEY_PARTS = 2
 
 _SUBJECT_MAX_LEN = 40
 _BODY_PREVIEW_LEN = 100
-_MAX_DISPLAYED_RECIPIENTS = 5
 _MAX_LOOP_ALERT_PAIRS = 100
 
 # Map short hash → (window_a, window_b) for loop alert callback data.
@@ -257,46 +255,6 @@ async def notify_pending_shell(
     text = (
         f"\u2709 Pending from {from_wid} ({from_name})"
         f" [{message.type}]{subj_part} {body_preview}"
-    )
-
-    await rate_limit_send_message(
-        bot,
-        chat_id,
-        text,
-        message_thread_id=thread_id,
-        disable_notification=True,
-    )
-
-
-async def notify_broadcast_sent(
-    bot: Bot,
-    from_window: str,
-    recipients: list[str],
-    message: Message,
-) -> None:
-    """Send a single summary in the sender's topic listing broadcast recipients.
-
-    Format: Broadcast [notify] to 3 peers: @5, @8, @12
-    """
-    topic = _resolve_topic(from_window)
-    if topic is None:
-        return
-
-    _, thread_id, chat_id, _ = topic
-    subj = _format_subject(message.subject)
-    subj_part = f" {subj}" if subj else ""
-
-    recipient_names = [
-        f"{_extract_window_id(r)} ({_display_name(r)})"
-        for r in recipients[:_MAX_DISPLAYED_RECIPIENTS]
-    ]
-    overflow = len(recipients) - _MAX_DISPLAYED_RECIPIENTS
-    extra = f" (+{overflow} more)" if overflow > 0 else ""
-    peers = ", ".join(recipient_names) + extra
-
-    text = (
-        f"\u2192 Broadcast [{message.type}]{subj_part}"
-        f" to {len(recipients)} peers: {peers}"
     )
 
     await rate_limit_send_message(

@@ -98,13 +98,18 @@ def _sanitize_dir_name(qualified_id: str) -> str:
     Replaces colons with ``=`` so that IDs like ``ccgram:@0`` become
     ``ccgram=@0`` (filesystem-safe on all platforms).
     """
-    _validate_no_traversal(qualified_id, "window ID")
-    return qualified_id.replace(":", "=")
+    parts = qualified_id.split(":", 1)
+    for part in parts:
+        _validate_no_traversal(part, "window ID")
+    return "=".join(parts)
 
 
 def _unsanitize_dir_name(dir_name: str) -> str:
-    """Reverse ``_sanitize_dir_name``: ``ccgram=@0`` → ``ccgram:@0``."""
-    return dir_name.replace("=", ":")
+    """Reverse ``_sanitize_dir_name``: ``ccgram=@0`` → ``ccgram:@0``.
+
+    Only the first ``=`` is reversed (session:window split).
+    """
+    return dir_name.replace("=", ":", 1)
 
 
 def _now_iso() -> str:

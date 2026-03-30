@@ -32,6 +32,17 @@ def _env_with_fallback(new_name: str, old_name: str, default: str = "") -> str:
     return default
 
 
+def _parse_int_env(name: str, default: int) -> int:
+    """Parse an integer from an env var with a clear error on bad values."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a valid integer: {exc}") from exc
+
+
 class Config:
     """Application configuration loaded from environment variables."""
 
@@ -175,11 +186,11 @@ class Config:
             "true",
             "yes",
         )
-        self.msg_max_windows: int = int(os.getenv("CCGRAM_MSG_MAX_WINDOWS", "10"))
-        self.msg_wait_timeout: int = int(os.getenv("CCGRAM_MSG_WAIT_TIMEOUT", "60"))
-        self.msg_spawn_timeout: int = int(os.getenv("CCGRAM_MSG_SPAWN_TIMEOUT", "300"))
-        self.msg_spawn_rate: int = int(os.getenv("CCGRAM_MSG_SPAWN_RATE", "3"))
-        self.msg_rate_limit: int = int(os.getenv("CCGRAM_MSG_RATE_LIMIT", "10"))
+        self.msg_max_windows: int = _parse_int_env("CCGRAM_MSG_MAX_WINDOWS", 10)
+        self.msg_wait_timeout: int = _parse_int_env("CCGRAM_MSG_WAIT_TIMEOUT", 60)
+        self.msg_spawn_timeout: int = _parse_int_env("CCGRAM_MSG_SPAWN_TIMEOUT", 300)
+        self.msg_spawn_rate: int = _parse_int_env("CCGRAM_MSG_SPAWN_RATE", 3)
+        self.msg_rate_limit: int = _parse_int_env("CCGRAM_MSG_RATE_LIMIT", 10)
 
     def is_user_allowed(self, user_id: int) -> bool:
         """Check if a user is in the allowed list."""

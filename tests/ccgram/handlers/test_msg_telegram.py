@@ -186,54 +186,6 @@ class TestNotifyPendingShell:
         mock_send.assert_not_called()
 
 
-class TestNotifyBroadcastSent:
-    @pytest.mark.asyncio
-    async def test_sends_summary_to_sender_topic(self):
-        from ccgram.handlers.msg_telegram import notify_broadcast_sent
-
-        bot = AsyncMock(spec=Bot)
-        msg = _make_message(type="broadcast", to_id="")
-        router = _mock_router()
-        recipients = ["ccgram:@5", "ccgram:@8"]
-
-        with (
-            patch("ccgram.handlers.msg_telegram.thread_router", router),
-            patch(
-                "ccgram.handlers.msg_telegram.rate_limit_send_message",
-                new_callable=AsyncMock,
-            ) as mock_send,
-        ):
-            mock_send.return_value = MagicMock()
-            await notify_broadcast_sent(bot, "ccgram:@0", recipients, msg)
-
-        mock_send.assert_called_once()
-        args, kwargs = mock_send.call_args
-        text = args[2] if len(args) > 2 else kwargs.get("text", "")
-        assert "broadcast" in text.lower() or "2" in text
-        assert kwargs.get("disable_notification") is True
-
-    @pytest.mark.asyncio
-    async def test_single_summary_not_per_recipient(self):
-        from ccgram.handlers.msg_telegram import notify_broadcast_sent
-
-        bot = AsyncMock(spec=Bot)
-        msg = _make_message(type="broadcast", to_id="")
-        router = _mock_router()
-        recipients = ["ccgram:@5", "ccgram:@8", "ccgram:@12"]
-
-        with (
-            patch("ccgram.handlers.msg_telegram.thread_router", router),
-            patch(
-                "ccgram.handlers.msg_telegram.rate_limit_send_message",
-                new_callable=AsyncMock,
-            ) as mock_send,
-        ):
-            mock_send.return_value = MagicMock()
-            await notify_broadcast_sent(bot, "ccgram:@0", recipients, msg)
-
-        assert mock_send.call_count == 1
-
-
 class TestNotificationGrouping:
     @pytest.mark.asyncio
     async def test_multiple_messages_merged_in_delivered_notification(self):
@@ -266,7 +218,6 @@ class TestSilentDelivery:
     @pytest.mark.asyncio
     async def test_all_notifications_are_silent(self):
         from ccgram.handlers.msg_telegram import (
-            notify_broadcast_sent,
             notify_message_sent,
             notify_pending_shell,
         )
@@ -278,10 +229,6 @@ class TestSilentDelivery:
         funcs_and_args = [
             (notify_message_sent, (bot, "ccgram:@0", "ccgram:@5", msg)),
             (notify_pending_shell, (bot, "ccgram:@5", msg)),
-            (
-                notify_broadcast_sent,
-                (bot, "ccgram:@0", ["ccgram:@5"], msg),
-            ),
         ]
 
         for func, call_args in funcs_and_args:
