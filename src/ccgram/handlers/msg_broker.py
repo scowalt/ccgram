@@ -425,23 +425,13 @@ async def _notify_senders(
     """Notify each sender's Telegram topic that their message was delivered."""
     if bot is None:
         return
-    from .msg_telegram import notify_broadcast_sent, notify_message_sent
+    from .msg_telegram import notify_message_sent
 
-    broadcast_by_sender: dict[str, list["Message"]] = {}
     for msg in messages:
         try:
             await notify_message_sent(bot, msg.from_id, to_window, msg)
         except OSError, TelegramError:
             logger.debug("Failed to send sender notification", from_id=msg.from_id)
-        if msg.type == "broadcast":
-            broadcast_by_sender.setdefault(msg.from_id, []).append(msg)
-
-    for from_id, bc_msgs in broadcast_by_sender.items():
-        try:
-            recipients = [m.to_id for m in bc_msgs]
-            await notify_broadcast_sent(bot, from_id, recipients, bc_msgs[0])
-        except OSError, TelegramError:
-            logger.debug("Failed to send broadcast notification", from_id=from_id)
 
 
 async def _notify_loop(bot: "Bot | None", window_a: str, window_b: str) -> None:

@@ -33,7 +33,7 @@ _DEFAULT_TTL: dict[str, int] = {
 
 _VALID_TYPES = frozenset(_DEFAULT_TTL)
 
-_SWEEPABLE_STATUSES = frozenset({"replied", "expired"})
+_SWEEPABLE_STATUSES = frozenset({"read", "replied", "expired"})
 
 
 @dataclass
@@ -367,12 +367,33 @@ class Mailbox:
             entries = list(os.scandir(str(inbox_dir)))
         except FileNotFoundError:
             return 0
+        live_ids: set[str] = set()
         for entry in entries:
             if not entry.name.endswith(".json") or entry.name.startswith("."):
                 continue
             if entry.is_dir():
                 continue
-            removed += self._sweep_entry(entry)
+            swept = self._sweep_entry(entry)
+            if not swept:
+                live_ids.add(entry.name.removesuffix(".json"))
+            removed += swept
+        removed += self._sweep_tmp(inbox_dir, live_ids)
+        return removed
+
+    def _sweep_tmp(self, inbox_dir: Path, live_ids: set[str]) -> int:
+        """Remove delivery files in tmp/ whose parent message was swept."""
+        tmp_dir = inbox_dir / "tmp"
+        if not tmp_dir.is_dir():
+            return 0
+        removed = 0
+        for entry in os.scandir(str(tmp_dir)):
+            if not entry.name.startswith("deliver-") or not entry.name.endswith(".txt"):
+                continue
+            msg_id = entry.name.removeprefix("deliver-").removesuffix(".txt")
+            if msg_id not in live_ids:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(entry.path)
+                    removed += 1
         return removed
 
     def _sweep_entry(self, entry: os.DirEntry[str]) -> int:

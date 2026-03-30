@@ -69,6 +69,8 @@ from .polling_strategies import (
     lifecycle_strategy,
     terminal_strategy,
 )
+from .msg_broker import BROKER_CYCLE_INTERVAL as _BROKER_CYCLE_INTERVAL
+from .msg_broker import SWEEP_INTERVAL as _SWEEP_INTERVAL
 from .recovery_callbacks import build_recovery_keyboard
 from .topic_emoji import update_topic_emoji
 
@@ -79,9 +81,6 @@ logger = structlog.get_logger()
 STATUS_POLL_INTERVAL = 1.0  # seconds
 TOPIC_CHECK_INTERVAL = 60.0  # seconds
 
-# Must match msg_broker.BROKER_CYCLE_INTERVAL / SWEEP_INTERVAL.
-_BROKER_CYCLE_INTERVAL = 2.0
-_SWEEP_INTERVAL = 300.0
 
 # Exponential backoff bounds for loop errors (seconds)
 _BACKOFF_MIN = 2.0

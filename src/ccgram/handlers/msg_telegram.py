@@ -6,7 +6,6 @@ notifications and loop detection alerts with inline keyboard controls.
 
 Key functions:
   - notify_message_sent: compact line in sender's topic
-  - notify_message_delivered: compact line in recipient's topic
   - notify_messages_delivered: grouped notification for multiple messages
   - notify_reply_received: reply notification in original sender's topic
   - notify_pending_shell: pending message display in shell topic
@@ -148,37 +147,6 @@ async def notify_message_sent(
     subj_part = f" {subj}" if subj else ""
 
     text = f"\u2192 {to_wid} ({to_name}) [{message.type}]{subj_part}"
-
-    await rate_limit_send_message(
-        bot,
-        chat_id,
-        text,
-        message_thread_id=thread_id,
-        disable_notification=True,
-    )
-
-
-async def notify_message_delivered(
-    bot: Bot,
-    from_window: str,
-    to_window: str,
-    message: Message,
-) -> None:
-    """Send a compact notification in the recipient's Telegram topic.
-
-    Format: <- @0 (payment-svc) [request] API contract query
-    """
-    topic = _resolve_topic(to_window)
-    if topic is None:
-        return
-
-    _, thread_id, chat_id, _ = topic
-    from_name = _display_name(from_window)
-    from_wid = _extract_window_id(from_window)
-    subj = _format_subject(message.subject)
-    subj_part = f" {subj}" if subj else ""
-
-    text = f"\u2190 {from_wid} ({from_name}) [{message.type}]{subj_part}"
 
     await rate_limit_send_message(
         bot,

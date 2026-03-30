@@ -105,52 +105,6 @@ class TestNotifyMessageSent:
         mock_send.assert_not_called()
 
 
-class TestNotifyMessageDelivered:
-    @pytest.mark.asyncio
-    async def test_sends_compact_line_to_recipient_topic(self):
-        from ccgram.handlers.msg_telegram import notify_message_delivered
-
-        bot = AsyncMock(spec=Bot)
-        msg = _make_message()
-        router = _mock_router()
-
-        with (
-            patch("ccgram.handlers.msg_telegram.thread_router", router),
-            patch(
-                "ccgram.handlers.msg_telegram.rate_limit_send_message",
-                new_callable=AsyncMock,
-            ) as mock_send,
-        ):
-            mock_send.return_value = MagicMock()
-            await notify_message_delivered(bot, "ccgram:@0", "ccgram:@5", msg)
-
-        mock_send.assert_called_once()
-        args, kwargs = mock_send.call_args
-        text = args[2] if len(args) > 2 else kwargs.get("text", "")
-        assert "@0" in text or "payment-svc" in text
-        assert kwargs.get("disable_notification") is True
-
-    @pytest.mark.asyncio
-    async def test_skips_when_no_recipient_binding(self):
-        from ccgram.handlers.msg_telegram import notify_message_delivered
-
-        bot = AsyncMock(spec=Bot)
-        msg = _make_message()
-        router = MagicMock()
-        router.iter_thread_bindings.return_value = []
-
-        with (
-            patch("ccgram.handlers.msg_telegram.thread_router", router),
-            patch(
-                "ccgram.handlers.msg_telegram.rate_limit_send_message",
-                new_callable=AsyncMock,
-            ) as mock_send,
-        ):
-            await notify_message_delivered(bot, "ccgram:@0", "ccgram:@5", msg)
-
-        mock_send.assert_not_called()
-
-
 class TestNotifyReplyReceived:
     @pytest.mark.asyncio
     async def test_sends_reply_notification_to_original_sender_topic(self):
@@ -313,7 +267,6 @@ class TestSilentDelivery:
     async def test_all_notifications_are_silent(self):
         from ccgram.handlers.msg_telegram import (
             notify_broadcast_sent,
-            notify_message_delivered,
             notify_message_sent,
             notify_pending_shell,
         )
@@ -324,7 +277,6 @@ class TestSilentDelivery:
 
         funcs_and_args = [
             (notify_message_sent, (bot, "ccgram:@0", "ccgram:@5", msg)),
-            (notify_message_delivered, (bot, "ccgram:@0", "ccgram:@5", msg)),
             (notify_pending_shell, (bot, "ccgram:@5", msg)),
             (
                 notify_broadcast_sent,

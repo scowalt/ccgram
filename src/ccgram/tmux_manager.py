@@ -18,6 +18,7 @@ Module-level: _vim_state cache, _vim_locks for per-window send serialization.
 import asyncio
 import contextlib
 import fnmatch
+import shlex
 import structlog
 import subprocess
 from dataclasses import dataclass
@@ -1056,7 +1057,7 @@ class TmuxManager:
                 qualified_id = f"{self.session_name}:{new_window_id}"
                 if pane and new_window_id:
                     pane.send_keys(
-                        f"export CCGRAM_WINDOW_ID='{qualified_id}'",
+                        f"export CCGRAM_WINDOW_ID={shlex.quote(qualified_id)}",
                         enter=True,
                     )
 
