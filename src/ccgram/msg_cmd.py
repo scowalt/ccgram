@@ -177,8 +177,9 @@ def _check_rate_limit(mailbox: Mailbox, window_id: str, limit: int) -> bool:
     cutoff = time.time() - _RATE_WINDOW_SECONDS
     count = 0
     base_dir = mailbox.base_dir
+    skip_dirs = {"tmp", "spawns"}
     for entry in base_dir.iterdir() if base_dir.exists() else []:
-        if not entry.is_dir():
+        if not entry.is_dir() or entry.name in skip_dirs:
             continue
         for msg_file in entry.iterdir():
             if not msg_file.name.endswith(".json"):

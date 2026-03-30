@@ -93,6 +93,10 @@ async def clear_topic_state(
         clear_declared(qualified_id)
         clear_delivery_state(qualified_id)
 
+        from ..spawn_request import clear_spawn_state
+
+        clear_spawn_state(qualified_id)
+
     # Clear interactive UI state (also deletes message from chat)
     await clear_interactive_msg(user_id, bot, thread_id)
 

@@ -205,9 +205,15 @@ def format_file_reference(msg_id: str, file_path: str) -> str:
     return f"[MSG {msg_id}] See: {file_path}"
 
 
+_MERGED_CHAR_LIMIT = 1500
+
+
 def merge_injection_texts(texts: list[str]) -> str:
     """Merge multiple injection texts into a single block."""
-    return " --- ".join(texts)
+    merged = " --- ".join(texts)
+    if len(merged) > _MERGED_CHAR_LIMIT:
+        merged = merged[: _MERGED_CHAR_LIMIT - 3] + "..."
+    return merged
 
 
 def write_delivery_file(
