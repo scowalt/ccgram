@@ -15,24 +15,19 @@ from telegram import Bot
 from ..utils import log_throttle_reset
 from .interactive_ui import clear_interactive_msg
 from .message_queue import enqueue_status_update
-from .topic_emoji import clear_topic_emoji_state
 from .user_state import PENDING_THREAD_ID, PENDING_THREAD_TEXT, VOICE_PENDING
 
 
 def _clear_window_state(window_id: str, user_id: int, thread_id: int) -> None:
     """Clear state keyed by window_id or qualified_id.
 
-    Window-scoped cleanups (vim, poll, pane alerts, subagents, shell monitor,
-    detection cache) are now handled by TopicStateRegistry. This function
-    retains only non-registerable cleanup (log throttle, mailbox I/O) and
-    qualified-scoped calls not yet migrated to the registry.
+    Window-scoped and qualified-scoped cleanups are handled by
+    TopicStateRegistry.  This function retains only non-registerable
+    cleanup (log throttle, mailbox I/O).
     """
     from ..config import config
     from ..mailbox import Mailbox
-    from ..msg_discovery import clear_declared
-    from ..spawn_request import clear_spawn_state
     from ..window_resolver import is_foreign_window
-    from .msg_delivery import clear_delivery_state
 
     log_throttle_reset(f"topic-probe:{window_id}")
     log_throttle_reset(f"status-update:{user_id}:{thread_id}")
@@ -45,9 +40,6 @@ def _clear_window_state(window_id: str, user_id: int, thread_id: int) -> None:
     mb = Mailbox(config.mailbox_dir)
     mb.sweep(qualified_id)
     mb.clear_inbox(qualified_id)
-    clear_declared(qualified_id)
-    clear_delivery_state(qualified_id)
-    clear_spawn_state(qualified_id)
 
 
 async def clear_topic_state(
@@ -80,24 +72,10 @@ async def clear_topic_state(
     # Clear interactive UI state (also deletes message from chat)
     await clear_interactive_msg(user_id, bot, thread_id)
 
-    # Clear topic emoji tracking (needs chat_id; use 0 as fallback)
+    # Resolve chat_id once for voice cleanup and registry dispatch
     from ..thread_router import thread_router
 
     chat_id = thread_router.resolve_chat_id(user_id, thread_id)
-    clear_topic_emoji_state(chat_id, thread_id)
-
-    # Clear shell pending (not yet migrated to registry)
-    from .shell_commands import clear_shell_pending
-
-    clear_shell_pending(chat_id, thread_id)
-
-    # Clear per-chat state (topic creation retry, disabled emoji chats)
-    if chat_id:
-        from .topic_emoji import clear_disabled_chat
-        from .topic_orchestration import clear_topic_create_retry
-
-        clear_topic_create_retry(chat_id)
-        clear_disabled_chat(chat_id)
 
     # Clear pending thread state from user_data
     if user_data is not None and user_data.get(PENDING_THREAD_ID) == thread_id:
@@ -107,13 +85,11 @@ async def clear_topic_state(
     # Clear pending voice transcriptions for this chat
     if user_data is not None:
         voice_store: dict[tuple[int, int], str] = user_data.get(VOICE_PENDING, {})
-        chat_id = thread_router.resolve_chat_id(user_id, thread_id)
         stale = [k for k in voice_store if k[0] == chat_id]
         for k in stale:
             voice_store.pop(k, None)
 
-    # Dual-path: also dispatch via registry (additive — migrating modules
-    # will self-register here; explicit calls above remain until migration)
+    # Dispatch all registered cleanups via registry
     from .topic_state_registry import topic_state
 
     qualified_id: str | None = None

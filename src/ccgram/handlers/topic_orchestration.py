@@ -28,6 +28,7 @@ from ..session import session_manager
 from ..session_monitor import NewWindowEvent
 from ..thread_router import thread_router
 from ..tmux_manager import tmux_manager
+from .topic_state_registry import topic_state
 
 logger = structlog.get_logger()
 
@@ -37,7 +38,8 @@ _topic_create_retry_until: dict[int, float] = {}
 _TOPIC_CREATE_RETRY_BUFFER_SECONDS = 1
 
 
-def clear_topic_create_retry(chat_id: int) -> None:
+@topic_state.register("chat")
+def clear_topic_create_retry(chat_id: int, _thread_id: int = 0) -> None:
     """Clear topic creation retry backoff for this chat (called on topic cleanup)."""
     _topic_create_retry_until.pop(chat_id, None)
 

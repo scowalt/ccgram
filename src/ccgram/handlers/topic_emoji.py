@@ -21,6 +21,8 @@ import structlog
 from telegram import Bot
 from telegram.error import BadRequest, TelegramError
 
+from .topic_state_registry import topic_state
+
 logger = structlog.get_logger()
 
 # Emoji prefixes for session states
@@ -240,6 +242,7 @@ def update_stored_topic_name(chat_id: int, thread_id: int, new_clean_name: str) 
     _topic_names[(chat_id, thread_id)] = new_clean_name
 
 
+@topic_state.register("chat")
 def clear_topic_emoji_state(chat_id: int, thread_id: int) -> None:
     """Clear emoji tracking for a topic (called on topic cleanup)."""
     key = (chat_id, thread_id)
@@ -251,7 +254,8 @@ def clear_topic_emoji_state(chat_id: int, thread_id: int) -> None:
 _MAX_DISABLED_CHATS = 1000
 
 
-def clear_disabled_chat(chat_id: int) -> None:
+@topic_state.register("chat")
+def clear_disabled_chat(chat_id: int, _thread_id: int = 0) -> None:
     """Remove a chat from the disabled set (called on topic cleanup)."""
     _disabled_chats.discard(chat_id)
     if len(_disabled_chats) > _MAX_DISABLED_CHATS:

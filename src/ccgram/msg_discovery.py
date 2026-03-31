@@ -16,6 +16,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 import structlog
 
+from .handlers.topic_state_registry import topic_state
 from .utils import atomic_write_json
 
 logger = structlog.get_logger()
@@ -106,6 +107,7 @@ def register_declared(
     _save_declared_file(resolved_path, data)
 
 
+@topic_state.register("qualified")
 def clear_declared(window_id: str, *, path: Path | None = None) -> None:
     """Remove self-declared overlay entry on window death."""
     resolved_path = path if path is not None else _default_declared_path()

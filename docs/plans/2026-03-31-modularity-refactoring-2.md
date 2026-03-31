@@ -363,13 +363,13 @@ Migrate modules that use `window_id` key.
 
 #### Task 9d: Migrate handlers to self-register (batch 3 — chat + qualified scoped)
 
-- [ ] `handlers/topic_emoji.py`: register `clear_topic_emoji_state` with `@topic_state.register("chat")`; register `clear_disabled_chat` with `@topic_state.register("chat")`; remove from `cleanup.py`
-- [ ] `handlers/shell_commands.py`: register `clear_shell_pending` with `@topic_state.register("chat")`; remove from `cleanup.py`
-- [ ] `handlers/msg_delivery.py`: register `clear_delivery_state` with `@topic_state.register("qualified")`; remove from `cleanup.py`
-- [ ] `spawn_request.py`: register `clear_spawn_state` with `@topic_state.register("qualified")`; remove from `cleanup.py`
-- [ ] `msg_discovery.py`: register `clear_declared` with `@topic_state.register("qualified")`; remove from `cleanup.py`
-- [ ] `handlers/topic_orchestration.py`: register `clear_topic_create_retry` with `@topic_state.register("chat")`; remove from `cleanup.py`
-- [ ] `make check` — must pass
+- [x] `handlers/topic_emoji.py`: register `clear_topic_emoji_state` with `@topic_state.register("chat")`; register `clear_disabled_chat` with `@topic_state.register("chat")`; remove from `cleanup.py`
+- [x] `handlers/shell_commands.py`: register `clear_shell_pending` with `@topic_state.register("chat")`; remove from `cleanup.py`
+- [x] `handlers/msg_delivery.py`: register `clear_delivery_state` with `@topic_state.register("qualified")`; remove from `cleanup.py`
+- [x] `spawn_request.py`: register `clear_spawn_state` with `@topic_state.register("qualified")`; remove from `cleanup.py`
+- [x] `msg_discovery.py`: register `clear_declared` with `@topic_state.register("qualified")`; remove from `cleanup.py`
+- [x] `handlers/topic_orchestration.py`: register `clear_topic_create_retry` with `@topic_state.register("chat")`; remove from `cleanup.py`
+- [x] `make check` — must pass
 
 #### Task 9e: Finalize — remove old explicit calls from cleanup.py
 
