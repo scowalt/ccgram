@@ -119,7 +119,7 @@ Design doc: `docs/design/spawn-request/design.md`
 
 Three modules (`spawn_request.py`, `msg_broker.py`, `msg_spawn.py`) co-own `_pending_requests` dict with `.pop()` calls. Replace with accessor functions.
 
-- [ ] `spawn_request.py`: add 4 accessor functions after `_pending_requests` definition (line 69):
+- [x] `spawn_request.py`: add 4 accessor functions after `_pending_requests` definition (line 69):
 
   ```python
   def get_pending(request_id: str) -> SpawnRequest | None:
@@ -135,11 +135,11 @@ Three modules (`spawn_request.py`, `msg_broker.py`, `msg_spawn.py`) co-own `_pen
       _pending_requests[req.id] = req
   ```
 
-- [ ] `spawn_request.py`: promote `_spawns_dir` → `spawns_dir`; keep `_spawns_dir = spawns_dir` alias
-- [ ] `handlers/msg_broker.py` (lines 477, 493, 503, 506): replace `from ..spawn_request import _pending_requests, scan_spawn_requests, _spawns_dir` → `from ..spawn_request import pop_pending, get_pending, scan_spawn_requests, spawns_dir`; update `.pop()` calls to `pop_pending()`
-- [ ] `handlers/msg_spawn.py` (lines 30-31): replace `from ..spawn_request import _pending_requests, _spawns_dir` → `from ..spawn_request import pop_pending, register_pending, spawns_dir`; update `.pop()` calls (lines 51, 123) to `pop_pending()`; update `_spawns_dir()` calls (lines 59, 68, 86, 127) to `spawns_dir()`
-- [ ] write tests: `test_get_pending_returns_request`, `test_pop_pending_removes`, `test_pop_pending_missing_returns_none`, `test_iter_pending_yields_all`, `test_register_pending_stores`
-- [ ] `make check` — must pass
+- [x] `spawn_request.py`: promote `_spawns_dir` → `spawns_dir`; keep `_spawns_dir = spawns_dir` alias
+- [x] `handlers/msg_broker.py` (lines 477, 493, 503, 506): replace `from ..spawn_request import _pending_requests, scan_spawn_requests, _spawns_dir` → `from ..spawn_request import pop_pending, get_pending, scan_spawn_requests, spawns_dir`; update `.pop()` calls to `pop_pending()`
+- [x] `handlers/msg_spawn.py` (lines 30-31): replace `from ..spawn_request import _pending_requests, _spawns_dir` → `from ..spawn_request import pop_pending, register_pending, spawns_dir`; update `.pop()` calls (lines 51, 123) to `pop_pending()`; update `_spawns_dir()` calls (lines 59, 68, 86, 127) to `spawns_dir()`
+- [x] write tests: `test_get_pending_returns_request`, `test_pop_pending_removes`, `test_pop_pending_missing_returns_none`, `test_iter_pending_yields_all`, `test_register_pending_stores`
+- [x] `make check` — must pass
 
 ---
 

@@ -426,3 +426,67 @@ class TestSkillInstallOnSpawn:
 
         skill_path = tmp_path / ".claude" / "skills" / "ccgram-messaging" / "SKILL.md"
         assert not skill_path.exists()
+
+
+class TestAccessorAPI:
+    def test_get_pending_returns_request(self, tmp_path: Path):
+        from ccgram.spawn_request import get_pending
+
+        req = create_spawn_request(
+            requester_window="ccgram:@0",
+            provider="claude",
+            cwd=str(tmp_path),
+            prompt="test",
+        )
+        result = get_pending(req.id)
+        assert result is req
+
+    def test_get_pending_missing_returns_none(self):
+        from ccgram.spawn_request import get_pending
+
+        assert get_pending("nonexistent") is None
+
+    def test_pop_pending_removes(self, tmp_path: Path):
+        from ccgram.spawn_request import pop_pending
+
+        req = create_spawn_request(
+            requester_window="ccgram:@0",
+            provider="claude",
+            cwd=str(tmp_path),
+            prompt="test",
+        )
+        result = pop_pending(req.id)
+        assert result is req
+        assert req.id not in _pending_requests
+
+    def test_pop_pending_missing_returns_none(self):
+        from ccgram.spawn_request import pop_pending
+
+        assert pop_pending("nonexistent") is None
+
+    def test_iter_pending_yields_all(self, tmp_path: Path):
+        from ccgram.spawn_request import iter_pending
+
+        cwd = str(tmp_path)
+        r1 = create_spawn_request(
+            requester_window="ccgram:@0", provider="claude", cwd=cwd, prompt="a"
+        )
+        r2 = create_spawn_request(
+            requester_window="ccgram:@0", provider="claude", cwd=cwd, prompt="b"
+        )
+        items = dict(iter_pending())
+        assert items[r1.id] is r1
+        assert items[r2.id] is r2
+
+    def test_register_pending_stores(self):
+        from ccgram.spawn_request import SpawnRequest, get_pending, register_pending
+
+        req = SpawnRequest(
+            id="test-123",
+            requester_window="ccgram:@0",
+            provider="claude",
+            cwd="/tmp",
+            prompt="test",
+        )
+        register_pending(req)
+        assert get_pending("test-123") is req

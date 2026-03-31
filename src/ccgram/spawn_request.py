@@ -16,6 +16,7 @@ import contextlib
 import json
 import time
 import uuid
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -69,8 +70,27 @@ class SpawnResult:
 _pending_requests: dict[str, SpawnRequest] = {}
 
 
-def _spawns_dir() -> Path:
+def spawns_dir() -> Path:
     return ccgram_dir() / "mailbox" / "spawns"
+
+
+_spawns_dir = spawns_dir
+
+
+def get_pending(request_id: str) -> SpawnRequest | None:
+    return _pending_requests.get(request_id)
+
+
+def pop_pending(request_id: str) -> SpawnRequest | None:
+    return _pending_requests.pop(request_id, None)
+
+
+def iter_pending() -> Iterator[tuple[str, SpawnRequest]]:
+    yield from _pending_requests.items()
+
+
+def register_pending(req: SpawnRequest) -> None:
+    _pending_requests[req.id] = req
 
 
 def reset_spawn_state() -> None:

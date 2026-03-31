@@ -474,7 +474,7 @@ async def _notify_shell_pending(
 
 async def _process_spawn_requests(bot: "Bot") -> None:
     """Scan for file-based spawn requests and post approval keyboards or auto-approve."""
-    from ..spawn_request import _pending_requests, scan_spawn_requests
+    from ..spawn_request import pop_pending, scan_spawn_requests, spawns_dir
     from .msg_spawn import (
         handle_spawn_approval,
         post_spawn_approval_keyboard,
@@ -490,18 +490,14 @@ async def _process_spawn_requests(bot: "Bot") -> None:
                     req.id, bot, spawn_timeout=config.msg_spawn_timeout
                 )
                 if result is None:
-                    from ..spawn_request import _spawns_dir
-
-                    spawn_file = _spawns_dir() / f"{req.id}.json"
+                    spawn_file = spawns_dir() / f"{req.id}.json"
                     spawn_file.unlink(missing_ok=True)
             else:
                 posted = await post_spawn_approval_keyboard(
                     bot, req.requester_window, req
                 )
                 if not posted:
-                    # Remove from cache so next scan cycle can retry
-                    _pending_requests.pop(req.id, None)
+                    pop_pending(req.id)
         except OSError, TelegramError:
-            # Remove from cache so next scan cycle can retry
-            _pending_requests.pop(req.id, None)
+            pop_pending(req.id)
             logger.debug("Failed to process spawn request", request_id=req.id)

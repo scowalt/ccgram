@@ -27,8 +27,8 @@ from ..session import session_manager
 from ..spawn_request import (
     SpawnRequest,
     SpawnResult,
-    _pending_requests,
-    _spawns_dir,
+    pop_pending,
+    spawns_dir,
 )
 from ..tmux_manager import tmux_manager
 from .callback_registry import register
@@ -48,7 +48,7 @@ async def handle_spawn_approval(
     bot: Bot,
     spawn_timeout: int = 300,
 ) -> SpawnResult | None:
-    req = _pending_requests.pop(request_id, None)
+    req = pop_pending(request_id)
     if req is None:
         logger.warning(
             "Spawn request %s not found (expired or already handled)", request_id
@@ -56,7 +56,7 @@ async def handle_spawn_approval(
         return None
 
     if req.is_expired(timeout=spawn_timeout):
-        spawn_file = _spawns_dir() / f"{request_id}.json"
+        spawn_file = spawns_dir() / f"{request_id}.json"
         spawn_file.unlink(missing_ok=True)
         logger.info("Spawn request %s expired before approval", request_id)
         return None
@@ -65,7 +65,7 @@ async def handle_spawn_approval(
     from ..spawn_request import check_max_windows
 
     if not check_max_windows(session_manager.window_states, config.msg_max_windows):
-        spawn_file = _spawns_dir() / f"{request_id}.json"
+        spawn_file = spawns_dir() / f"{request_id}.json"
         spawn_file.unlink(missing_ok=True)
         logger.warning("Spawn request %s denied: max windows reached", request_id)
         return None
@@ -83,7 +83,7 @@ async def handle_spawn_approval(
         return None
 
     # Window created — remove the request file (point of no return)
-    spawn_file = _spawns_dir() / f"{request_id}.json"
+    spawn_file = spawns_dir() / f"{request_id}.json"
     spawn_file.unlink(missing_ok=True)
 
     session_manager.set_window_provider(window_id, req.provider, cwd=req.cwd)
@@ -120,11 +120,11 @@ async def handle_spawn_approval(
 
 
 def handle_spawn_denial(request_id: str) -> None:
-    req = _pending_requests.pop(request_id, None)
+    req = pop_pending(request_id)
     if req is not None:
         logger.info("Spawn request %s denied", request_id)
     # Remove the file from disk
-    spawn_file = _spawns_dir() / f"{request_id}.json"
+    spawn_file = spawns_dir() / f"{request_id}.json"
     spawn_file.unlink(missing_ok=True)
 
 
