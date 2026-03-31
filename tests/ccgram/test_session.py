@@ -1097,3 +1097,8 @@ class TestProtocolsSatisfied:
         from ccgram.session import SessionManager, WindowModeConfig
 
         assert issubclass(SessionManager, WindowModeConfig)
+
+    def test_session_manager_is_session_io(self) -> None:
+        from ccgram.session import SessionIO, SessionManager
+
+        assert issubclass(SessionManager, SessionIO)

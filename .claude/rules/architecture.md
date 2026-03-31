@@ -112,6 +112,7 @@ graph TB
 | `msg_cmd.py`          | `ccgram msg` CLI group: send, inbox, read, reply, broadcast, register, spawn                     |
 | `msg_discovery.py`    | Peer discovery: view over SessionManager + self-declared overlay (task, team)                    |
 | `msg_skill.py`        | Messaging skill auto-installation for Claude Code agents                                         |
+| `spawn_request.py`    | Spawn request data types, file-based CRUD, public accessor API (get/pop/iter/register_pending)   |
 
 ### Handler modules (`handlers/`)
 

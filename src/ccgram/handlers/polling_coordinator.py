@@ -69,8 +69,7 @@ from .polling_strategies import (
     lifecycle_strategy,
     terminal_strategy,
 )
-from .msg_broker import BROKER_CYCLE_INTERVAL as _BROKER_CYCLE_INTERVAL
-from .msg_broker import SWEEP_INTERVAL as _SWEEP_INTERVAL
+from .msg_broker import BROKER_CYCLE_INTERVAL, SWEEP_INTERVAL
 from .recovery_callbacks import build_recovery_keyboard
 from .topic_emoji import update_topic_emoji
 
@@ -872,11 +871,11 @@ async def _run_periodic_tasks(
         await _probe_topic_existence(bot)
         log_throttle_sweep()
 
-    if now - timers["broker"] >= _BROKER_CYCLE_INTERVAL:
+    if now - timers["broker"] >= BROKER_CYCLE_INTERVAL:
         timers["broker"] = now
         await _run_broker_cycle(bot)
 
-    if now - timers["sweep"] >= _SWEEP_INTERVAL:
+    if now - timers["sweep"] >= SWEEP_INTERVAL:
         timers["sweep"] = now
         _run_mailbox_sweep()
 

@@ -19,7 +19,7 @@ from ccgram.handlers.polling_coordinator import (
     _scan_window_panes,
 )
 from ccgram.handlers.polling_strategies import (
-    _MAX_PROBE_FAILURES,
+    MAX_PROBE_FAILURES,
     clear_autoclose_timer,
     clear_pane_alerts,
     clear_screen_buffer,
@@ -742,7 +742,7 @@ class TestShellPromptClearsStatus:
 
 class TestProbeFailures:
     async def test_probe_skips_suspended_windows(self) -> None:
-        _get_window_state("@5").probe_failures = _MAX_PROBE_FAILURES
+        _get_window_state("@5").probe_failures = MAX_PROBE_FAILURES
         bot = AsyncMock(spec=Bot)
         with patch("ccgram.handlers.polling_coordinator.thread_router") as mock_tr:
             mock_tr.iter_thread_bindings.return_value = [(1, 42, "@5")]
@@ -786,10 +786,10 @@ class TestProbeFailures:
         with patch("ccgram.handlers.polling_coordinator.thread_router") as mock_tr:
             mock_tr.iter_thread_bindings.return_value = [(1, 42, "@5")]
             mock_tr.resolve_chat_id.return_value = -100
-            for _ in range(_MAX_PROBE_FAILURES + 1):
+            for _ in range(MAX_PROBE_FAILURES + 1):
                 await _probe_topic_existence(bot)
-        assert bot.unpin_all_forum_topic_messages.call_count == _MAX_PROBE_FAILURES
-        assert _window_poll_state["@5"].probe_failures == _MAX_PROBE_FAILURES
+        assert bot.unpin_all_forum_topic_messages.call_count == MAX_PROBE_FAILURES
+        assert _window_poll_state["@5"].probe_failures == MAX_PROBE_FAILURES
 
     @pytest.mark.parametrize(
         "window_alive",

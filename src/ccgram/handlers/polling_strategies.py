@@ -29,27 +29,21 @@ logger = structlog.get_logger()
 
 # Transcript activity heuristic threshold (seconds).
 ACTIVITY_THRESHOLD = 10.0
-_ACTIVITY_THRESHOLD = ACTIVITY_THRESHOLD
 
 # Startup timeout before transitioning to idle (seconds).
 STARTUP_TIMEOUT = 30.0
-_STARTUP_TIMEOUT = STARTUP_TIMEOUT
 
 # RC debounce: require RC absent for this long before clearing badge.
 RC_DEBOUNCE_SECONDS = 3.0
-_RC_DEBOUNCE_SECONDS = RC_DEBOUNCE_SECONDS
 
 # Consecutive topic probe failure threshold.
 MAX_PROBE_FAILURES = 3
-_MAX_PROBE_FAILURES = MAX_PROBE_FAILURES
 
 # Typing indicator throttle interval (seconds).
 TYPING_INTERVAL = 4.0
-_TYPING_INTERVAL = TYPING_INTERVAL
 
 # Pane count cache TTL for multi-pane scanning (seconds).
 PANE_COUNT_TTL = 5.0
-_PANE_COUNT_TTL = PANE_COUNT_TTL
 
 # Shell commands indicating agent has exited.
 SHELL_COMMANDS = frozenset({"bash", "zsh", "fish", "sh", "dash", "tcsh", "csh", "ksh"})

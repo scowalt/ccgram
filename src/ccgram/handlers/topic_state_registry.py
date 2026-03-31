@@ -77,7 +77,7 @@ class TopicStateRegistry:
     ) -> None:
         """Dispatch all registered cleanups for a closing topic."""
         self.clear_topic(user_id, thread_id)
-        if chat_id:
+        if chat_id is not None:
             self.clear_chat(chat_id, thread_id)
         if window_id:
             self.clear_window(window_id)

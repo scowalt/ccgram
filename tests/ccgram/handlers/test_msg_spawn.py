@@ -23,7 +23,7 @@ from ccgram.spawn_request import (
 
 @pytest.fixture(autouse=True)
 def _clean_state(tmp_path: Path):
-    with patch("ccgram.spawn_request._spawns_dir", return_value=tmp_path / "spawns"):
+    with patch("ccgram.spawn_request.spawns_dir", return_value=tmp_path / "spawns"):
         reset_spawn_state()
         yield
         reset_spawn_state()

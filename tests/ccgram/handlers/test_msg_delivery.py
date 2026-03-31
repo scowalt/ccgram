@@ -1,4 +1,3 @@
-from ccgram.handlers import msg_broker, msg_delivery
 from ccgram.handlers.msg_delivery import (
     DeliveryState,
     clear_delivery_state,
@@ -13,19 +12,6 @@ def setup_function():
 
 def teardown_function():
     reset_delivery_state()
-
-
-class TestSingletonIdentity:
-    def test_broker_reexport_is_same_singleton(self):
-        assert msg_broker.delivery_strategy is msg_delivery.delivery_strategy
-
-    def test_broker_reexport_delivery_state_class(self):
-        assert msg_broker.DeliveryState is msg_delivery.DeliveryState
-
-    def test_broker_reexport_strategy_class(self):
-        assert (
-            msg_broker.MessageDeliveryStrategy is msg_delivery.MessageDeliveryStrategy
-        )
 
 
 class TestDeliveryStateLifecycle:

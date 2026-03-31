@@ -14,13 +14,7 @@ from typing import TYPE_CHECKING
 import structlog
 from telegram.error import TelegramError
 
-from .msg_delivery import (
-    DeliveryState,
-    MessageDeliveryStrategy,
-    clear_delivery_state,
-    delivery_strategy,
-    reset_delivery_state,
-)
+from .msg_delivery import delivery_strategy
 
 if TYPE_CHECKING:
     from telegram import Bot
@@ -40,18 +34,6 @@ BROKER_CYCLE_INTERVAL = 2.0
 
 # Mailbox sweep interval (seconds) — runs inside poll loop.
 SWEEP_INTERVAL = 300.0
-
-# Re-export for backward compatibility
-__all__ = [
-    "BROKER_CYCLE_INTERVAL",
-    "DeliveryState",
-    "MessageDeliveryStrategy",
-    "SWEEP_INTERVAL",
-    "broker_delivery_cycle",
-    "clear_delivery_state",
-    "delivery_strategy",
-    "reset_delivery_state",
-]
 
 
 def format_injection_text(

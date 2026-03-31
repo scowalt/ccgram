@@ -75,9 +75,6 @@ def spawns_dir() -> Path:
     return ccgram_dir() / "mailbox" / "spawns"
 
 
-_spawns_dir = spawns_dir
-
-
 def get_pending(request_id: str) -> SpawnRequest | None:
     return _pending_requests.get(request_id)
 
@@ -107,7 +104,7 @@ def clear_spawn_state(window_id: str) -> None:
     ]
     for rid in to_remove:
         del _pending_requests[rid]
-    sdir = _spawns_dir()
+    sdir = spawns_dir()
     if sdir.is_dir():
         for entry in sdir.iterdir():
             if not entry.name.endswith(".json"):
@@ -129,7 +126,7 @@ def check_max_windows(
 
 def _load_spawn_log() -> dict[str, list[float]]:
     """Load spawn rate log from disk."""
-    path = _spawns_dir() / "rate_log.json"
+    path = spawns_dir() / "rate_log.json"
     if path.exists():
         try:
             return json.loads(path.read_text())
@@ -140,7 +137,7 @@ def _load_spawn_log() -> dict[str, list[float]]:
 
 def _save_spawn_log(log: dict[str, list[float]]) -> None:
     """Save spawn rate log to disk."""
-    sdir = _spawns_dir()
+    sdir = spawns_dir()
     sdir.mkdir(parents=True, exist_ok=True)
     path = sdir / "rate_log.json"
     atomic_write_json(path, log)
@@ -185,8 +182,8 @@ def create_spawn_request(
         auto=auto,
     )
 
-    _pending_requests[request_id] = req
-    sdir = _spawns_dir()
+    register_pending(req)
+    sdir = spawns_dir()
     sdir.mkdir(parents=True, exist_ok=True)
     atomic_write_json(sdir / f"{request_id}.json", req.to_dict())
 
@@ -203,7 +200,7 @@ def scan_spawn_requests(spawn_timeout: int = 300) -> list[SpawnRequest]:
     Also evicts expired cached requests so they don't remain approvable
     indefinitely.
     """
-    sdir = _spawns_dir()
+    sdir = spawns_dir()
 
     # Evict expired requests from the in-memory cache (and clean up files).
     for rid in list(_pending_requests):
@@ -235,7 +232,7 @@ def scan_spawn_requests(spawn_timeout: int = 300) -> list[SpawnRequest]:
                 entry.unlink()
             continue
 
-        _pending_requests[req.id] = req
+        register_pending(req)
         new_requests.append(req)
 
     return new_requests

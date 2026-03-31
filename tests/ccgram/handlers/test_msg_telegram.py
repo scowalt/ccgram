@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from telegram import Bot
 
-from ccgram.handlers.msg_broker import reset_delivery_state
+from ccgram.handlers.msg_delivery import reset_delivery_state
 from ccgram.mailbox import Message
 
 

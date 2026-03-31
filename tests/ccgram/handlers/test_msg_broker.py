@@ -10,13 +10,12 @@ from ccgram.handlers.msg_broker import (
     _INJECTION_CHAR_LIMIT,
     _collect_eligible,
     broker_delivery_cycle,
-    delivery_strategy,
     format_file_reference,
     format_injection_text,
     merge_injection_texts,
-    reset_delivery_state,
     write_delivery_file,
 )
+from ccgram.handlers.msg_delivery import delivery_strategy, reset_delivery_state
 from ccgram.handlers.msg_delivery import (
     DeliveryState,
     MessageDeliveryStrategy,

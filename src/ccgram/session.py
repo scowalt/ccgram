@@ -370,7 +370,6 @@ class SessionManager:
         """
         state = self._persistence.load()
         if not state:
-            self._needs_migration = False
             return
 
         self.window_states = {
@@ -405,9 +404,6 @@ class SessionManager:
                 "Detected old-format state (window_name keys), "
                 "will re-resolve on startup"
             )
-            self._needs_migration = True
-        else:
-            self._needs_migration = False
 
     async def resolve_stale_ids(self) -> None:
         """Re-resolve persisted window IDs against live tmux windows.
@@ -446,8 +442,6 @@ class SessionManager:
 
             # Migrate mailbox directories for remapped window IDs
             _migrate_mailbox_ids(old_display, self.window_states, tmux_session)
-
-        self._needs_migration = False
 
         # Prune session_map.json entries for dead windows
         live_ids = {w.window_id for w in live}
