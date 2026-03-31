@@ -52,6 +52,12 @@ class MessageDeliveryStrategy:
         self._states: dict[str, DeliveryState] = {}
         self._crash_recovery_done = False
 
+    def is_crash_recovery_done(self) -> bool:
+        return self._crash_recovery_done
+
+    def mark_crash_recovery_done(self) -> None:
+        self._crash_recovery_done = True
+
     def get_state(self, window_id: str) -> DeliveryState:
         return self._states.setdefault(window_id, DeliveryState())
 

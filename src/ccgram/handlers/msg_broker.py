@@ -134,15 +134,19 @@ def _collect_eligible(
         return [], []
 
     loops: list[tuple[str, str]] = []
+    seen_loops: set[tuple[str, str]] = set()
     for msg in eligible:
         if delivery_strategy.check_loop(qualified_id, msg.from_id):
             delivery_strategy.pause_peer(qualified_id, msg.from_id)
-            loops.append((qualified_id, msg.from_id))
-            logger.warning(
-                "Loop detected, pausing delivery",
-                window_a=qualified_id,
-                window_b=msg.from_id,
-            )
+            pair = (qualified_id, msg.from_id)
+            if pair not in seen_loops:
+                seen_loops.add(pair)
+                loops.append(pair)
+                logger.warning(
+                    "Loop detected, pausing delivery",
+                    window_a=qualified_id,
+                    window_b=msg.from_id,
+                )
 
     filtered = [
         m for m in eligible if not delivery_strategy.is_paused(qualified_id, m.from_id)
@@ -173,9 +177,9 @@ def _recover_stale_pending(mailbox: "Mailbox") -> None:
     Handles crash recovery: if the bot crashed after send_keys but before
     mark_delivered, these messages would otherwise be injected again.
     """
-    if delivery_strategy._crash_recovery_done:
+    if delivery_strategy.is_crash_recovery_done():
         return
-    delivery_strategy._crash_recovery_done = True
+    delivery_strategy.mark_crash_recovery_done()
     stale = mailbox.pending_undelivered(min_age_seconds=5.0)
     for msg in stale:
         mailbox.mark_delivered(msg.id, msg.to_id)
