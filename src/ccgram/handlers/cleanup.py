@@ -15,7 +15,7 @@ from telegram import Bot
 
 from ..utils import log_throttle_reset
 from .interactive_ui import clear_interactive_msg
-from .message_queue import enqueue_status_update
+from .message_queue import clear_status_msg_info, enqueue_status_update
 from .user_state import PENDING_THREAD_ID, PENDING_THREAD_TEXT, VOICE_PENDING
 
 
@@ -52,6 +52,8 @@ async def clear_topic_state(
         await enqueue_status_update(
             bot, user_id, window_id or "", None, thread_id=thread_id
         )
+    else:
+        clear_status_msg_info(user_id, thread_id)
 
     # Registry dispatch — all module-specific per-topic/window/chat state
     topic_state.clear_all(

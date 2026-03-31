@@ -868,9 +868,16 @@ async def enqueue_status_update(
     queue.put_nowait(task)
 
 
-@topic_state.register("topic")
 def clear_status_msg_info(user_id: int, thread_id: int | None = None) -> None:
-    """Clear status message tracking for a user (and optionally a specific thread)."""
+    """Clear status message tracking for a user (and optionally a specific thread).
+
+    NOT registered with TopicStateRegistry — must only be called explicitly
+    from cleanup.py in the ``bot is None`` path.  When a bot is available,
+    ``_do_clear_status_message`` (via the queued ``status_clear`` task) pops
+    the entry *and* deletes the Telegram message.  Registering this function
+    with the registry would pop the entry before the worker runs, preventing
+    the actual Telegram delete.
+    """
     skey = (user_id, thread_id or 0)
     _status_msg_info.pop(skey, None)
 
@@ -898,7 +905,7 @@ def clear_tool_msg_ids_for_topic(user_id: int, thread_id: int | None = None) -> 
 
 async def shutdown_workers() -> None:
     """Stop all queue workers (called during bot shutdown)."""
-    for _user_id, worker in list(_queue_workers.items()):
+    for _, worker in list(_queue_workers.items()):
         worker.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await worker
