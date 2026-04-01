@@ -90,19 +90,12 @@ def merge_injection_texts(texts: list[str]) -> str:
 
 
 def write_delivery_file(
-    mailbox_dir: Path, window_id: str, msg_id: str, body: str
+    mailbox: "Mailbox", window_id: str, msg_id: str, body: str
 ) -> Path:
     """Write full message body to a delivery file for long messages."""
-    from ..mailbox import sanitize_dir_name, validate_no_traversal
-
-    validate_no_traversal(msg_id, "message ID")
-    inbox_dir = mailbox_dir / sanitize_dir_name(window_id)
-    tmp_dir = inbox_dir / "tmp"
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-
-    delivery_path = tmp_dir / f"deliver-{msg_id}.txt"
-    delivery_path.write_text(body, encoding="utf-8")
-    return delivery_path
+    path = mailbox.delivery_path(window_id, msg_id)
+    path.write_text(body, encoding="utf-8")
+    return path
 
 
 def _collect_eligible(
@@ -155,11 +148,11 @@ def _collect_eligible(
     return filtered, loops
 
 
-def _format_for_delivery(msg: "Message", mailbox_dir: Path, qualified_id: str) -> str:
+def _format_for_delivery(msg: "Message", mailbox: "Mailbox", qualified_id: str) -> str:
     """Format a single message for send_keys injection."""
     body = msg.body
     if len(body) > _INJECTION_CHAR_LIMIT:
-        delivery_path = write_delivery_file(mailbox_dir, qualified_id, msg.id, body)
+        delivery_path = write_delivery_file(mailbox, qualified_id, msg.id, body)
         return format_file_reference(msg.id, str(delivery_path))
     return format_injection_text(
         msg_id=msg.id,
@@ -197,7 +190,6 @@ async def broker_delivery_cycle(
     window_states: dict,
     tmux_session: str,
     msg_rate_limit: int,
-    mailbox_dir: Path,
     bot: "Bot | None" = None,
     idle_windows: frozenset[str] = frozenset(),
 ) -> int:
@@ -242,7 +234,7 @@ async def broker_delivery_cycle(
         if not to_deliver:
             continue
 
-        texts = [_format_for_delivery(m, mailbox_dir, qualified_id) for m in to_deliver]
+        texts = [_format_for_delivery(m, mailbox, qualified_id) for m in to_deliver]
         merged = merge_injection_texts(texts)
         success = await tmux_mgr.send_keys(window_id, merged, literal=True)
 

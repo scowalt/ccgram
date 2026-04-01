@@ -27,6 +27,7 @@ from telegram import (
 from telegram.ext import ContextTypes
 
 from ..thread_router import thread_router
+from ..topic_state_registry import topic_state
 from ..utils import tmux_session_name
 from .callback_registry import register
 from .message_sender import rate_limit_send_message
@@ -49,6 +50,18 @@ _MAX_LOOP_ALERT_PAIRS = 100
 # Map short hash → (window_a, window_b) for loop alert callback data.
 # Telegram limits callback_data to 64 bytes; qualified IDs can be long.
 _loop_alert_pairs: dict[str, tuple[str, str]] = {}
+
+
+@topic_state.register("qualified")
+def clear_loop_alerts(qualified_id: str) -> None:
+    """Remove loop alert pairs involving this window."""
+    stale = [
+        k
+        for k, (a, b) in _loop_alert_pairs.items()
+        if a == qualified_id or b == qualified_id
+    ]
+    for k in stale:
+        del _loop_alert_pairs[k]
 
 
 def _extract_window_id(qualified_id: str) -> str:

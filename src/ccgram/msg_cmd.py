@@ -110,9 +110,9 @@ def _build_message_context(my_id: str) -> dict[str, str]:
         if ws.window_name:
             ctx["window_name"] = ws.window_name
         if ws.cwd:
-            from .msg_discovery import _detect_branch
+            from .msg_discovery import detect_branch
 
-            branch = _detect_branch(ws.cwd)
+            branch = detect_branch(ws.cwd)
             if branch:
                 ctx["branch"] = branch
     _CONTEXT_CACHE = ctx

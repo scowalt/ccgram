@@ -168,6 +168,13 @@ class Mailbox:
     def _inbox_dir(self, window_id: str) -> Path:
         return self.base_dir / sanitize_dir_name(window_id)
 
+    def delivery_path(self, window_id: str, msg_id: str) -> Path:
+        """Return a delivery file path, creating the directory if needed."""
+        validate_no_traversal(msg_id, "message ID")
+        tmp_dir = self._inbox_dir(window_id) / "tmp"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        return tmp_dir / f"deliver-{msg_id}.txt"
+
     def send(
         self,
         from_id: str,
