@@ -763,6 +763,7 @@ async def handle_new_message(msg: NewMessage, bot: Bot) -> None:
                 window_id=window_id,
                 parts=parts,
                 tool_use_id=msg.tool_use_id,
+                tool_name=msg.tool_name,
                 content_type=msg.content_type,
                 text=msg.text,
                 thread_id=thread_id,

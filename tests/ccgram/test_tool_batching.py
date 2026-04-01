@@ -113,6 +113,59 @@ class TestFormatBatchMessage:
         assert "[" in header
         assert "2 subagents" in header
 
+    def test_task_create_batch_renders_numbered_list(self) -> None:
+        entries = [
+            ToolBatchEntry(
+                "t1",
+                "**TaskCreate** `Understand the Problem Domain`",
+                tool_name="TaskCreate",
+            ),
+            ToolBatchEntry(
+                "t2",
+                "**TaskCreate** `Map Integrations`",
+                tool_name="TaskCreate",
+            ),
+            ToolBatchEntry(
+                "t3",
+                "**TaskCreate** `Apply the Balance Rule`",
+                tool_name="TaskCreate",
+            ),
+        ]
+
+        result = format_batch_message(entries, subagent_label="\U0001f916 subagent")
+
+        assert result.split("\n")[0] == "\U0001f916 subagent"
+        assert "Creating 3 tasks\u2026" in result
+        assert "1. Understand the Problem Domain" in result
+        assert "2. Map Integrations" in result
+        assert "3. Apply the Balance Rule" in result
+        assert "tool calls" not in result
+
+    def test_task_create_batch_renders_completed_header_when_results_arrive(
+        self,
+    ) -> None:
+        entries = [
+            ToolBatchEntry(
+                "t1",
+                "**TaskCreate** `Write the Review`",
+                tool_name="TaskCreate",
+                tool_result_text="Done",
+            )
+        ]
+
+        result = format_batch_message(entries)
+
+        assert result.startswith("Created 1 task\n")
+        assert "1. Write the Review" in result
+        assert "\u23bf" not in result
+
+    def test_task_create_batch_falls_back_when_tool_name_missing(self) -> None:
+        entries = [ToolBatchEntry("t1", "TaskCreate Understand the Problem Domain")]
+
+        result = format_batch_message(entries)
+
+        assert result.startswith("\u26a1 1 tool call")
+
 
 class TestIsBatchEligible:
     @pytest.mark.parametrize("content_type", ["tool_use", "tool_result"])
@@ -257,6 +310,7 @@ def _make_tool_use(
     window_id: str = "@0",
     tool_use_id: str = "tu1",
     text: str = "Read src/foo.py",
+    tool_name: str | None = None,
     thread_id: int | None = 10,
 ) -> MessageTask:
     return MessageTask(
@@ -264,6 +318,7 @@ def _make_tool_use(
         content_type="tool_use",
         window_id=window_id,
         tool_use_id=tool_use_id,
+        tool_name=tool_name,
         text=text,
         parts=[text],
         thread_id=thread_id,
@@ -311,6 +366,35 @@ class TestProcessBatchTask:
         assert len(batch.entries) == 1
         assert batch.entries[0].tool_use_id == "tu1"
         assert batch.telegram_msg_id == 100
+
+    @patch("ccgram.handlers.message_queue.thread_router")
+    @patch("ccgram.handlers.message_queue.rate_limit_send_message")
+    @patch("ccgram.handlers.message_queue._should_batch", return_value=True)
+    @patch(
+        "ccgram.handlers.message_queue._do_clear_status_message", new_callable=AsyncMock
+    )
+    async def test_task_create_batch_sends_task_list(
+        self, mock_clear, mock_should, mock_send, mock_tr
+    ) -> None:
+        mock_tr.resolve_chat_id.return_value = 42
+        sent_msg = MagicMock()
+        sent_msg.message_id = 100
+        mock_send.return_value = sent_msg
+
+        bot = AsyncMock()
+        await _process_batch_task(
+            bot,
+            1,
+            _make_tool_use(
+                text="**TaskCreate** `Understand the Problem Domain`",
+                tool_name="TaskCreate",
+            ),
+        )
+        sent_text = mock_send.await_args.args[2]
+
+        assert sent_text.startswith("Creating 1 task\u2026\n")
+        assert "1. Understand the Problem Domain" in sent_text
+        assert "tool call" not in sent_text
 
     @patch("ccgram.handlers.message_queue.thread_router")
     @patch("ccgram.handlers.message_queue.rate_limit_send_message")

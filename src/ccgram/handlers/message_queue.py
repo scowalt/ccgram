@@ -17,14 +17,14 @@ Key components:
 """
 
 import asyncio
-import structlog
+import contextlib
+import re
 from dataclasses import dataclass, field
 from typing import Literal
 
+import structlog
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import RetryAfter, TelegramError
-
-import contextlib
 
 from ..claude_task_state import get_claude_task_snapshot, get_claude_wait_header
 from ..session import session_manager
@@ -62,6 +62,7 @@ class ToolBatchEntry:
     tool_use_id: str | None
     tool_use_text: str  # Formatted summary from build_response_parts
     tool_result_text: str | None = None  # None until result arrives
+    tool_name: str | None = None
 
 
 @dataclass
@@ -94,6 +95,10 @@ def format_batch_message(
         ✏️ Edit  src/foo.py       ⎿  +3 −1
         ⚡ Bash  make test        ⏳
     """
+    task_create_message = _format_task_create_batch(entries, subagent_label)
+    if task_create_message is not None:
+        return task_create_message
+
     count = len(entries)
     label = "tool call" if count == 1 else "tool calls"
     header = f"\u26a1 {count} {label}"
@@ -110,6 +115,55 @@ def format_batch_message(
         lines.append(line)
 
     return "\n".join(lines)
+
+
+_MARKDOWN_TOOL_SUMMARY_RE = re.compile(r"^\*\*[^*]+\*\*(?:\s+`([^`]+)`)?$")
+_PLAIN_TASK_CREATE_RE = re.compile(r"^TaskCreate\s+(.+)$")
+
+
+def _format_task_create_batch(
+    entries: list[ToolBatchEntry], subagent_label: str | None
+) -> str | None:
+    """Render TaskCreate bursts as a numbered task list."""
+    if not entries or any(entry.tool_name != "TaskCreate" for entry in entries):
+        return None
+
+    titles = [_extract_task_create_title(entry) for entry in entries]
+    if any(not title for title in titles):
+        return None
+
+    action = (
+        "Created"
+        if all(entry.tool_result_text is not None for entry in entries)
+        else "Creating"
+    )
+    task_label = "task" if len(entries) == 1 else "tasks"
+    lines: list[str] = []
+    if subagent_label:
+        lines.append(subagent_label)
+    if action == "Creating":
+        lines.append(f"{action} {len(entries)} {task_label}\u2026")
+    else:
+        lines.append(f"{action} {len(entries)} {task_label}")
+    lines.extend(f"{index}. {title}" for index, title in enumerate(titles, start=1))
+    return "\n".join(lines)
+
+
+def _extract_task_create_title(entry: ToolBatchEntry) -> str:
+    """Extract the visible title from a TaskCreate summary."""
+    text = entry.tool_use_text.strip()
+    if not text:
+        return ""
+
+    markdown_match = _MARKDOWN_TOOL_SUMMARY_RE.match(text)
+    if markdown_match:
+        return (markdown_match.group(1) or "").strip()
+
+    plain_match = _PLAIN_TASK_CREATE_RE.match(text)
+    if plain_match:
+        return plain_match.group(1).strip()
+
+    return text
 
 
 def build_status_keyboard(
@@ -171,6 +225,7 @@ class MessageTask:
     # content type fields
     parts: list[str] = field(default_factory=list)
     tool_use_id: str | None = None
+    tool_name: str | None = None
     content_type: str = "text"
     thread_id: int | None = None  # Telegram topic thread_id for targeted send
 
@@ -391,6 +446,7 @@ async def _process_batch_task(bot: Bot, user_id: int, task: MessageTask) -> None
         entry = ToolBatchEntry(
             tool_use_id=task.tool_use_id,
             tool_use_text=entry_text,
+            tool_name=task.tool_name,
         )
         batch.entries.append(entry)
         batch.total_length += len(entry_text)
@@ -883,6 +939,7 @@ async def enqueue_content_message(
     window_id: str,
     parts: list[str],
     tool_use_id: str | None = None,
+    tool_name: str | None = None,
     content_type: str = "text",
     text: str | None = None,
     thread_id: int | None = None,
@@ -896,6 +953,7 @@ async def enqueue_content_message(
         window_id=window_id,
         parts=parts,
         tool_use_id=tool_use_id,
+        tool_name=tool_name,
         content_type=content_type,
         thread_id=thread_id,
     )
