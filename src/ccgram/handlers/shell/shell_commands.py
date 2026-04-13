@@ -49,7 +49,6 @@ from ..messaging_pipeline.message_sender import (
     safe_reply,
     safe_send,
 )
-from ..messaging_pipeline.message_queue import enqueue_status_update
 from ..polling.polling_state import lifecycle_strategy
 from ...topic_state_registry import topic_state
 
@@ -80,7 +79,7 @@ async def _send_typing(client: TelegramClient, chat_id: int, thread_id: int) -> 
             message_thread_id=thread_id,
             action=ChatAction.TYPING,
         )
-    except TelegramError, OSError:
+    except (TelegramError, OSError):
         logger.debug("send_chat_action failed", exc_info=True)
 
 
@@ -207,7 +206,6 @@ async def handle_shell_message(
     message: Message | None = None,
 ) -> None:
     """Route shell provider messages: ``!`` prefix = raw, else = NL via LLM."""
-    await enqueue_status_update(client, user_id, window_id, None, thread_id)
     lifecycle_strategy.clear_probe_failures(window_id)
 
     chat_id = thread_router.resolve_chat_id(user_id, thread_id)
@@ -390,7 +388,7 @@ async def show_command_approval(
                 message_thread_id=thread_id,
                 reply_markup=keyboard,
             )
-    except TelegramError, OSError:
+    except (TelegramError, OSError):
         # If send fails, release the slot so future attempts aren't blocked
         _shell_pending.pop(key, None)
         raise

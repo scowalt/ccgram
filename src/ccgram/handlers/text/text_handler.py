@@ -41,7 +41,6 @@ from ..topics.worktree import (
     worktree_path_for,
 )
 from ..interactive import get_interactive_window, handle_interactive_ui
-from ..messaging_pipeline.message_queue import enqueue_status_update
 from ..live.pane_callbacks import apply_pane_rename
 from ..messaging_pipeline.message_sender import (
     ack_reaction,
@@ -404,10 +403,6 @@ async def _forward_message(
 ) -> None:
     """Forward a text message to the bound tmux window."""
     await message.chat.send_action(ChatAction.TYPING)  # type: ignore[union-attr]
-    # Enqueue a status clear to actually delete the Telegram message
-    # (clear_status_msg_info only clears the tracking dict, leaving a ghost)
-    await enqueue_status_update(client, user_id, window_id, None, thread_id)
-
     # Cancel any running bash capture — new message pushes pane content down
     cancel_bash_capture(user_id, thread_id)
 

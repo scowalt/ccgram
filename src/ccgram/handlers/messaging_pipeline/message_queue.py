@@ -1,4 +1,4 @@
-"""Per-user message queue management for ordered message delivery.
+"""Per-topic message queue management for ordered message delivery.
 
 Queue primitives (FIFO ordering, merging, coalescing) and the worker loop
 that dispatches tasks to ``tool_batch`` and ``status_bubble``.  Status I/O,
@@ -8,6 +8,7 @@ tool-use batching lives in ``tool_batch``.
 
 import asyncio
 import contextlib
+import time
 from io import BytesIO
 from typing import assert_never
 
@@ -24,6 +25,7 @@ from ...window_query import is_tool_calls_hidden
 from ..status.status_bubble import (
     clear_status_message,
     convert_status_to_content,
+    note_content_sent,
     process_status_clear,
     process_status_update,
 )
@@ -54,11 +56,16 @@ from .tool_batch import (
 logger = structlog.get_logger()
 
 MERGE_MAX_LENGTH = 3800  # Leave room within Telegram's 4096 char message limit
+_QUEUE_WAIT_WARN_SECS = 1.0
+_TASK_RUN_WARN_SECS = 1.0
 
-# Per-user message queues and worker tasks
-_message_queues: dict[int, asyncio.Queue[MessageTask]] = {}
-_queue_workers: dict[int, asyncio.Task[None]] = {}
-_queue_locks: dict[int, asyncio.Lock] = {}  # Protect drain/refill operations
+QueueKey = tuple[int, int]
+
+
+# Per-topic message queues and worker tasks
+_message_queues: dict[QueueKey, asyncio.Queue[MessageTask]] = {}
+_queue_workers: dict[QueueKey, asyncio.Task[None]] = {}
+_queue_locks: dict[QueueKey, asyncio.Lock] = {}  # Protect drain/refill operations
 
 # Map (tool_use_id, user_id, thread_key) -> telegram message_id
 # for editing tool_use messages with results
@@ -124,31 +131,45 @@ async def _send_tts_voice(
     return True
 
 
-def get_message_queue(user_id: int) -> asyncio.Queue[MessageTask] | None:
-    """Get the message queue for a user (if exists)."""
-    return _message_queues.get(user_id)
+def _queue_key(user_id: int, thread_id: int | None = None) -> QueueKey:
+    """Build the queue key for a user's topic."""
+    return (user_id, thread_key(thread_id))
+
+
+def get_message_queue(
+    user_id: int, thread_id: int | None = None
+) -> asyncio.Queue[MessageTask] | None:
+    """Get the message queue for a user's topic (if it exists)."""
+    return _message_queues.get(_queue_key(user_id, thread_id))
 
 
 def get_or_create_queue(
-    client: TelegramClient, user_id: int
+    client: TelegramClient, user_id: int, thread_id: int | None = None
 ) -> asyncio.Queue[MessageTask]:
-    """Get or create message queue and worker for a user.
+    """Get or create message queue and worker for a user's topic.
 
     Also detects dead workers and respawns them so messages are not lost.
     """
-    if user_id not in _message_queues:
-        _message_queues[user_id] = asyncio.Queue()
-        _queue_locks[user_id] = asyncio.Lock()
+    key = _queue_key(user_id, thread_id)
+    if key not in _message_queues:
+        _message_queues[key] = asyncio.Queue()
+        _queue_locks[key] = asyncio.Lock()
 
     # Respawn dead workers (can happen if an uncaught exception killed the task)
-    existing = _queue_workers.get(user_id)
+    existing = _queue_workers.get(key)
     if existing is None or existing.done():
         if existing is not None:
-            logger.warning("Respawning dead queue worker for user %s", user_id)
-        task = asyncio.create_task(_message_queue_worker(client, user_id))
+            logger.warning(
+                "Respawning dead queue worker for user %s thread %s",
+                user_id,
+                thread_key(thread_id),
+            )
+        task = asyncio.create_task(
+            _message_queue_worker(client, user_id, thread_key(thread_id))
+        )
         task.add_done_callback(task_done_callback)
-        _queue_workers[user_id] = task
-    return _message_queues[user_id]
+        _queue_workers[key] = task
+    return _message_queues[key]
 
 
 def _drain_queue(queue: asyncio.Queue[MessageTask]) -> list[MessageTask]:
@@ -231,6 +252,7 @@ async def _merge_content_tasks(
             content_type=first.content_type,
             role=first.role,
             thread_id=first.thread_id,
+            enqueued_at=first.enqueued_at,
         ),
         merge_count,
     )
@@ -347,21 +369,55 @@ async def _dispatch(
             assert_never(unreachable)
 
 
-async def _message_queue_worker(client: TelegramClient, user_id: int) -> None:
-    """Process message tasks for a user sequentially."""
-    queue = _message_queues[user_id]
-    lock = _queue_locks[user_id]
-    logger.debug("Message queue worker started for user %s", user_id)
+async def _message_queue_worker(
+    client: TelegramClient, user_id: int, thread_id_or_0: int
+) -> None:
+    """Process message tasks for one user/topic sequentially."""
+    key = _queue_key(user_id, thread_id_or_0)
+    queue = _message_queues[key]
+    lock = _queue_locks[key]
+    logger.debug(
+        "Message queue worker started for user %s thread %s", user_id, thread_id_or_0
+    )
 
     while True:
         try:
             task = await queue.get()
             try:
+                queue_wait_secs = time.monotonic() - task.enqueued_at
+                if config.diagnostic_logs and (
+                    queue_wait_secs >= _QUEUE_WAIT_WARN_SECS or queue.qsize() > 0
+                ):
+                    logger.warning(
+                        "queue_wait",
+                        user_id=user_id,
+                        task_type=type(task).__name__,
+                        content_type=getattr(task, "content_type", "status"),
+                        window_id=task.window_id,
+                        thread_id=task.thread_id,
+                        queue_wait_ms=int(queue_wait_secs * 1000),
+                        pending_items=queue.qsize(),
+                    )
                 while True:
                     try:
+                        task_started_at = time.monotonic()
                         extra = await _dispatch(client, user_id, task, queue, lock)
                         for _ in range(extra):
                             queue.task_done()
+                        task_run_secs = time.monotonic() - task_started_at
+                        if config.diagnostic_logs and (
+                            task_run_secs >= _TASK_RUN_WARN_SECS or queue.qsize() > 0
+                        ):
+                            logger.warning(
+                                "queue_task_done",
+                                user_id=user_id,
+                                task_type=type(task).__name__,
+                                content_type=getattr(task, "content_type", "status"),
+                                window_id=task.window_id,
+                                thread_id=task.thread_id,
+                                task_run_ms=int(task_run_secs * 1000),
+                                remaining_items=queue.qsize(),
+                            )
                         break
                     except RetryAfter as e:
                         retry_secs = min(
@@ -373,8 +429,9 @@ async def _message_queue_worker(client: TelegramClient, user_id: int) -> None:
                             ),
                         )
                         logger.warning(
-                            "Flood control for user %s, pausing %ss",
+                            "Flood control for user %s thread %s, pausing %ss",
                             user_id,
+                            thread_id_or_0,
                             retry_secs,
                         )
                         await asyncio.sleep(retry_secs)
@@ -387,12 +444,17 @@ async def _message_queue_worker(client: TelegramClient, user_id: int) -> None:
             finally:
                 queue.task_done()
         except asyncio.CancelledError:
-            logger.debug("Message queue worker cancelled for user %s", user_id)
+            logger.debug(
+                "Message queue worker cancelled for user %s thread %s",
+                user_id,
+                thread_id_or_0,
+            )
             break
         except Exception:
             logger.exception(
-                "Unexpected error in queue worker for user %s",
+                "Unexpected error in queue worker for user %s thread %s",
                 user_id,
+                thread_id_or_0,
             )
 
 
@@ -416,6 +478,7 @@ async def _process_content_task(
                 full_text,
             )
             if success:
+                note_content_sent(user_id, tkey)
                 return
             logger.debug("Failed to edit tool msg %s, sending new", edit_msg_id)
 
@@ -434,6 +497,7 @@ async def _process_content_task(
                 part,
             )
             if converted_msg_id is not None:
+                note_content_sent(user_id, tkey)
                 last_msg_id = converted_msg_id
                 continue
 
@@ -442,6 +506,7 @@ async def _process_content_task(
         )
 
         if sent:
+            note_content_sent(user_id, tkey)
             last_msg_id = sent.message_id
 
     if _should_send_tts(task) and (tts_text := prepare_tts_text(task.parts)):
@@ -471,7 +536,7 @@ async def enqueue_content_message(
     """Enqueue a content message task."""
     if _is_ghost_window_task_at_enqueue(window_id):
         return
-    queue = get_or_create_queue(client, user_id)
+    queue = get_or_create_queue(client, user_id, thread_id)
 
     task = ContentTask(
         window_id=window_id,
@@ -483,6 +548,16 @@ async def enqueue_content_message(
         thread_id=thread_id,
     )
     queue.put_nowait(task)
+    if config.diagnostic_logs and queue.qsize() > 1:
+        logger.warning(
+            "queue_enqueue",
+            user_id=user_id,
+            task_type="content",
+            content_type=content_type,
+            window_id=window_id,
+            thread_id=thread_id,
+            queue_size=queue.qsize(),
+        )
 
 
 async def enqueue_status_update(
@@ -493,7 +568,7 @@ async def enqueue_status_update(
     thread_id: int | None = None,
 ) -> None:
     """Enqueue status update or clear."""
-    queue = get_or_create_queue(client, user_id)
+    queue = get_or_create_queue(client, user_id, thread_id)
 
     if status_text is not None:
         task: MessageTask = StatusUpdateTask(
@@ -508,6 +583,16 @@ async def enqueue_status_update(
         )
 
     queue.put_nowait(task)
+    if config.diagnostic_logs and queue.qsize() > 1:
+        logger.warning(
+            "queue_enqueue",
+            user_id=user_id,
+            task_type=type(task).__name__,
+            content_type="status",
+            window_id=window_id,
+            thread_id=thread_id,
+            queue_size=queue.qsize(),
+        )
 
 
 @topic_state.register("topic")

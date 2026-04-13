@@ -86,7 +86,7 @@ async def tick_window(
         thread_id=thread_id,
     )
 
-    queue = get_message_queue(user_id)
+    queue = get_message_queue(user_id, thread_id)
     if queue and not queue.empty():
         await _check_interactive_only(
             bot, user_id, window_id, thread_id, _window=window

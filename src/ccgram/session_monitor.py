@@ -17,6 +17,7 @@ Re-exported from transcript_reader for backward-compatible imports.
 """
 
 import asyncio
+import time
 import structlog
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -55,6 +56,7 @@ _LoopError = (OSError, RuntimeError, json.JSONDecodeError, ValueError, TelegramE
 _BACKOFF_MIN = 2.0
 _BACKOFF_MAX = 30.0
 _MSG_PREVIEW_LENGTH = 80
+_MONITOR_LOOP_WARN_SECS = 1.0
 
 logger = structlog.get_logger()
 
@@ -335,6 +337,7 @@ class SessionMonitor:
         error_streak = 0
         while self._running:
             try:
+                loop_started_at = time.monotonic()
                 await self._read_hook_events()
                 await session_map_sync.load_session_map()
 
@@ -389,6 +392,18 @@ class SessionMonitor:
                                 "Message callback error for session=%s",
                                 msg.session_id,
                             )
+
+                loop_elapsed_secs = time.monotonic() - loop_started_at
+                if config.diagnostic_logs and (
+                    loop_elapsed_secs >= _MONITOR_LOOP_WARN_SECS
+                    or len(new_messages) > 0
+                ):
+                    logger.warning(
+                        "monitor_loop_stats",
+                        tracked_sessions=len(current_map),
+                        emitted_messages=len(new_messages),
+                        elapsed_ms=int(loop_elapsed_secs * 1000),
+                    )
 
             except _LoopError:
                 logger.exception("Monitor loop error")

@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import aiofiles
 import structlog
 
+from .config import config
 from .monitor_events import NewMessage, SessionInfo
 from .monitor_state import MonitorState, TrackedSession
 from .providers import (
@@ -36,6 +38,7 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 _PathResolveError = (OSError, ValueError)
+_SESSION_SCAN_WARN_SECS = 0.25
 
 
 def _resolve_provider_for_file(window_id: str, file_path: Path) -> Any:
@@ -101,6 +104,7 @@ class TranscriptReader:
         current_map: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         """Process a single session file for new messages."""
+        started_at = time.monotonic()
         tracked = self._state.get_session(session_id)
         provider = _resolve_provider_for_file(window_id, file_path)
 
@@ -189,6 +193,19 @@ class TranscriptReader:
             )
 
         self._state.update_session(tracked)
+        elapsed_secs = time.monotonic() - started_at
+        if config.diagnostic_logs and (
+            elapsed_secs >= _SESSION_SCAN_WARN_SECS or len(new_entries) > 0
+        ):
+            logger.warning(
+                "session_scan",
+                session_id=session_id,
+                window_id=window_id,
+                provider=provider.capabilities.name,
+                entry_count=len(new_entries),
+                emitted_messages=len(agent_messages),
+                elapsed_ms=int(elapsed_secs * 1000),
+            )
 
     async def _read_new_lines(
         self, session: TrackedSession, file_path: Path, window_id: str = ""
