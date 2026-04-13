@@ -23,8 +23,11 @@ from telegram import Bot, CallbackQuery, LinkPreviewOptions, Message, ReactionTy
 from telegram.error import BadRequest, RetryAfter, TelegramError
 
 from ..entity_formatting import convert_to_entities
+from ..config import config
 
 logger = structlog.get_logger()
+
+_SEND_WARN_SECS = 1.0
 
 
 def is_thread_gone(exc: TelegramError) -> bool:
@@ -153,8 +156,20 @@ async def rate_limit_send_message(
     Combines rate_limit_send() + _send_with_fallback() for convenience.
     Returns the sent Message on success, None on failure.
     """
+    started_at = time.monotonic()
     await rate_limit_send(chat_id)
-    return await _send_with_fallback(bot, chat_id, text, **kwargs)
+    sent = await _send_with_fallback(bot, chat_id, text, **kwargs)
+    elapsed_secs = time.monotonic() - started_at
+    if config.diagnostic_logs and elapsed_secs >= _SEND_WARN_SECS:
+        logger.warning(
+            "telegram_send_slow",
+            chat_id=chat_id,
+            message_thread_id=kwargs.get("message_thread_id"),
+            text_len=len(text),
+            elapsed_ms=int(elapsed_secs * 1000),
+            sent=sent is not None,
+        )
+    return sent
 
 
 async def safe_reply(message: Message, text: str, **kwargs: Any) -> Message | None:

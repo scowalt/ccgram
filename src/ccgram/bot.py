@@ -702,15 +702,13 @@ async def handle_new_message(msg: NewMessage, bot: Bot) -> None:
             window_id=window_id, session_id=msg.session_id
         )
         # Check notification mode — skip suppressed messages.
-        # All tool_use/tool_result MUST pass through regardless of mode: the message
-        # queue edits tool_use messages in-place when tool_result arrives, so filtering
-        # one half would break pairing and leave orphaned messages. This means muted/
-        # errors_only sessions still deliver tool flow — an accepted trade-off.
         notif_mode = session_manager.get_notification_mode(window_id)
         is_tool_flow = msg.tool_name in INTERACTIVE_TOOL_NAMES or msg.content_type in (
             "tool_use",
             "tool_result",
         )
+        if is_tool_flow and not config.forward_tool_flow:
+            continue
         if not is_tool_flow:
             if notif_mode == "muted":
                 continue
@@ -723,6 +721,8 @@ async def handle_new_message(msg: NewMessage, bot: Bot) -> None:
         # blocks carry no useful reasoning content. Only forward thinking with
         # substantial text (>= 20 chars after stripping).
         if msg.content_type == "thinking":
+            if not config.forward_thinking:
+                continue
             stripped = (msg.text or "").strip()
             if len(stripped) < _MIN_THINKING_LENGTH:
                 continue
@@ -732,7 +732,7 @@ async def handle_new_message(msg: NewMessage, bot: Bot) -> None:
             # Mark interactive mode BEFORE sleeping so polling skips this window
             set_interactive_mode(user_id, window_id, thread_id)
             # Flush pending messages (e.g. plan content) before sending interactive UI
-            queue = get_message_queue(user_id)
+            queue = get_message_queue(user_id, thread_id)
             if queue:
                 await queue.join()
             # Wait briefly for Claude Code to render the question UI

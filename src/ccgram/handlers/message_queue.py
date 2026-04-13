@@ -1,7 +1,7 @@
-"""Per-user message queue management for ordered message delivery.
+"""Per-topic message queue management for ordered message delivery.
 
 Provides a queue-based message processing system that ensures:
-  - Messages are sent in receive order (FIFO)
+  - Messages are sent in receive order (FIFO) within a topic
   - Status messages always follow content messages
   - Consecutive content messages can be merged for efficiency
   - Rate limiting is respected
@@ -10,8 +10,8 @@ Provides a queue-based message processing system that ensures:
 
 Key components:
   - MessageTask: Dataclass representing a queued message task (with thread_id)
-  - get_or_create_queue: Get or create queue and worker for a user
-  - Message queue worker: Background task processing user's queue
+  - get_or_create_queue: Get or create queue and worker for a topic
+  - Message queue worker: Background task processing a topic queue
   - Content task processing with tool_use/tool_result handling
   - Status message tracking and conversion (keyed by (user_id, thread_id))
 """
@@ -19,6 +19,7 @@ Key components:
 import asyncio
 import contextlib
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -27,6 +28,7 @@ from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import RetryAfter, TelegramError
 
 from ..claude_task_state import get_claude_task_snapshot, get_claude_wait_header
+from ..config import config
 from ..session import session_manager
 from ..thread_router import thread_router
 from ..topic_state_registry import topic_state
@@ -44,6 +46,10 @@ from .message_sender import edit_with_fallback, rate_limit_send_message
 # Top-level loop resilience: catch any error to keep the worker alive
 
 logger = structlog.get_logger()
+
+_QUEUE_WAIT_WARN_SECS = 1.0
+_TASK_RUN_WARN_SECS = 1.0
+_STATUS_RECREATE_COOLDOWN_SECS = 10.0
 
 # Merge limit for content messages
 MERGE_MAX_LENGTH = 3800  # Leave room within Telegram's 4096 char message limit
@@ -367,12 +373,21 @@ class MessageTask:
     tool_name: str | None = None
     content_type: str = "text"
     thread_id: int | None = None  # Telegram topic thread_id for targeted send
+    enqueued_at: float = field(default_factory=time.monotonic)
 
 
-# Per-user message queues and worker tasks
-_message_queues: dict[int, asyncio.Queue[MessageTask]] = {}
-_queue_workers: dict[int, asyncio.Task[None]] = {}
-_queue_locks: dict[int, asyncio.Lock] = {}  # Protect drain/refill operations
+QueueKey = tuple[int, int]
+
+
+def _queue_key(user_id: int, thread_id: int | None = None) -> QueueKey:
+    """Build the queue key for a user's topic."""
+    return (user_id, thread_id or 0)
+
+
+# Per-topic message queues and worker tasks
+_message_queues: dict[QueueKey, asyncio.Queue[MessageTask]] = {}
+_queue_workers: dict[QueueKey, asyncio.Task[None]] = {}
+_queue_locks: dict[QueueKey, asyncio.Lock] = {}  # Protect drain/refill operations
 
 # Map (tool_use_id, user_id, thread_id_or_0) -> telegram message_id
 # for editing tool_use messages with results
@@ -381,33 +396,51 @@ _tool_msg_ids: dict[tuple[str, int, int], int] = {}
 # Status message tracking: (user_id, thread_id_or_0) -> (message_id, window_id, last_text)
 _status_msg_info: dict[tuple[int, int], tuple[int, str, str, int]] = {}
 
+# Last time a topic delivered visible content into Telegram. Used to avoid
+# immediately recreating a status bubble that was just replaced by content.
+_last_content_sent_at: dict[tuple[int, int], float] = {}
+
 # Active tool batches: (user_id, thread_id_or_0) -> ToolBatch
 _active_batches: dict[tuple[int, int], ToolBatch] = {}
 
 
-def get_message_queue(user_id: int) -> asyncio.Queue[MessageTask] | None:
-    """Get the message queue for a user (if exists)."""
-    return _message_queues.get(user_id)
+def get_message_queue(
+    user_id: int, thread_id: int | None = None
+) -> asyncio.Queue[MessageTask] | None:
+    """Get the message queue for a user's topic (if it exists)."""
+    return _message_queues.get(_queue_key(user_id, thread_id))
 
 
-def get_or_create_queue(bot: Bot, user_id: int) -> asyncio.Queue[MessageTask]:
-    """Get or create message queue and worker for a user.
+def _note_content_sent(user_id: int, thread_id_or_0: int) -> None:
+    """Record that visible content was just delivered for a topic."""
+    _last_content_sent_at[(user_id, thread_id_or_0)] = time.monotonic()
+
+
+def get_or_create_queue(
+    bot: Bot, user_id: int, thread_id: int | None = None
+) -> asyncio.Queue[MessageTask]:
+    """Get or create message queue and worker for a user's topic.
 
     Also detects dead workers and respawns them so messages are not lost.
     """
-    if user_id not in _message_queues:
-        _message_queues[user_id] = asyncio.Queue()
-        _queue_locks[user_id] = asyncio.Lock()
+    key = _queue_key(user_id, thread_id)
+    if key not in _message_queues:
+        _message_queues[key] = asyncio.Queue()
+        _queue_locks[key] = asyncio.Lock()
 
     # Respawn dead workers (can happen if an uncaught exception killed the task)
-    existing = _queue_workers.get(user_id)
+    existing = _queue_workers.get(key)
     if existing is None or existing.done():
         if existing is not None:
-            logger.warning("Respawning dead queue worker for user %s", user_id)
-        task = asyncio.create_task(_message_queue_worker(bot, user_id))
+            logger.warning(
+                "Respawning dead queue worker for user %s thread %s",
+                user_id,
+                thread_id or 0,
+            )
+        task = asyncio.create_task(_message_queue_worker(bot, user_id, thread_id or 0))
         task.add_done_callback(task_done_callback)
-        _queue_workers[user_id] = task
-    return _message_queues[user_id]
+        _queue_workers[key] = task
+    return _message_queues[key]
 
 
 def _inspect_queue(queue: asyncio.Queue[MessageTask]) -> list[MessageTask]:
@@ -706,18 +739,38 @@ def _is_ghost_window_task_at_enqueue(window_id: str) -> bool:
     return False
 
 
-async def _message_queue_worker(bot: Bot, user_id: int) -> None:
-    """Process message tasks for a user sequentially."""
-    queue = _message_queues[user_id]
-    lock = _queue_locks[user_id]
-    logger.debug("Message queue worker started for user %s", user_id)
+async def _message_queue_worker(bot: Bot, user_id: int, thread_id_or_0: int) -> None:
+    """Process message tasks for one user/topic sequentially."""
+    key = _queue_key(user_id, thread_id_or_0)
+    queue = _message_queues[key]
+    lock = _queue_locks[key]
+    logger.debug(
+        "Message queue worker started for user %s thread %s",
+        user_id,
+        thread_id_or_0,
+    )
 
     while True:
         try:
             task = await queue.get()
             try:
+                queue_wait_secs = time.monotonic() - task.enqueued_at
+                if config.diagnostic_logs and (
+                    queue_wait_secs >= _QUEUE_WAIT_WARN_SECS or queue.qsize() > 0
+                ):
+                    logger.warning(
+                        "queue_wait",
+                        user_id=user_id,
+                        task_type=task.task_type,
+                        content_type=task.content_type,
+                        window_id=task.window_id,
+                        thread_id=task.thread_id,
+                        queue_wait_ms=int(queue_wait_secs * 1000),
+                        pending_items=queue.qsize(),
+                    )
                 while True:
                     try:
+                        task_started_at = time.monotonic()
                         if task.task_type == "content":
                             extra = await _handle_content_task(
                                 bot, user_id, task, queue, lock
@@ -745,6 +798,20 @@ async def _message_queue_worker(bot: Bot, user_id: int) -> None:
                             if bkey in _active_batches:
                                 await _flush_batch(bot, user_id, thread_id)
                             await _process_status_clear_task(bot, user_id, task)
+                        task_run_secs = time.monotonic() - task_started_at
+                        if config.diagnostic_logs and (
+                            task_run_secs >= _TASK_RUN_WARN_SECS or queue.qsize() > 0
+                        ):
+                            logger.warning(
+                                "queue_task_done",
+                                user_id=user_id,
+                                task_type=task.task_type,
+                                content_type=task.content_type,
+                                window_id=task.window_id,
+                                thread_id=task.thread_id,
+                                task_run_ms=int(task_run_secs * 1000),
+                                remaining_items=queue.qsize(),
+                            )
                         break
                     except RetryAfter as e:
                         retry_secs = min(
@@ -770,14 +837,19 @@ async def _message_queue_worker(bot: Bot, user_id: int) -> None:
             finally:
                 queue.task_done()
         except asyncio.CancelledError:
-            logger.debug("Message queue worker cancelled for user %s", user_id)
+            logger.debug(
+                "Message queue worker cancelled for user %s thread %s",
+                user_id,
+                thread_id_or_0,
+            )
             break
         except Exception:
             # Catch-all: any error (network, programming, etc.) must not kill
             # the queue worker — log and continue processing next message.
             logger.exception(
-                "Unexpected error in queue worker for user %s",
+                "Unexpected error in queue worker for user %s thread %s",
                 user_id,
+                thread_id_or_0,
             )
 
 
@@ -810,6 +882,7 @@ async def _process_content_task(bot: Bot, user_id: int, task: MessageTask) -> No
                 full_text,
             )
             if success:
+                _note_content_sent(user_id, thread_id)
                 # Status will be recreated by the poll loop — no eager send.
                 return
             logger.debug("Failed to edit tool msg %s, sending new", edit_msg_id)
@@ -832,6 +905,7 @@ async def _process_content_task(bot: Bot, user_id: int, task: MessageTask) -> No
                 part,
             )
             if converted_msg_id is not None:
+                _note_content_sent(user_id, thread_id)
                 last_msg_id = converted_msg_id
                 continue
 
@@ -843,6 +917,7 @@ async def _process_content_task(bot: Bot, user_id: int, task: MessageTask) -> No
         )
 
         if sent:
+            _note_content_sent(user_id, thread_id)
             last_msg_id = sent.message_id
 
     # 3. Record tool_use message ID for later editing
@@ -901,6 +976,13 @@ def _get_idle_history(
     if first_line != IDLE_STATUS_TEXT:
         return None
     return get_history(user_id, thread_id_or_0, limit=2) or None
+
+
+def _is_idle_status_text(status_text: str) -> bool:
+    """Return True when the status represents the idle ready bubble."""
+    from .callback_data import IDLE_STATUS_TEXT
+
+    return status_text.split("\n", 1)[0] == IDLE_STATUS_TEXT
 
 
 def _format_claude_task_status(window_id: str, base_text: str | None) -> str | None:
@@ -964,6 +1046,7 @@ async def _process_status_update_task(
         return
 
     current_info = _status_msg_info.get(skey)
+    last_content_at = _last_content_sent_at.get(skey)
 
     if current_info:
         msg_id, stored_wid, last_text, stored_chat_id = current_info
@@ -1001,6 +1084,25 @@ async def _process_status_update_task(
                 # instead of sending a new message (which causes pile-up).
                 _status_msg_info.pop(skey, None)
     else:
+        if _is_idle_status_text(status_text):
+            if config.diagnostic_logs:
+                logger.debug(
+                    "Skipping new idle status bubble for user %s thread %s",
+                    user_id,
+                    thread_id,
+                )
+            return
+        if last_content_at is not None:
+            since_content = time.monotonic() - last_content_at
+            if since_content < _STATUS_RECREATE_COOLDOWN_SECS:
+                if config.diagnostic_logs:
+                    logger.debug(
+                        "Skipping new status bubble for user %s thread %s; recent content %.2fs ago",
+                        user_id,
+                        thread_id,
+                        since_content,
+                    )
+                return
         # No existing status message, send new
         await _do_send_status_message(bot, user_id, thread_id, window_id, status_text)
 
@@ -1094,7 +1196,7 @@ async def enqueue_content_message(
     """Enqueue a content message task."""
     if _is_ghost_window_task_at_enqueue(window_id):
         return
-    queue = get_or_create_queue(bot, user_id)
+    queue = get_or_create_queue(bot, user_id, thread_id)
 
     task = MessageTask(
         task_type="content",
@@ -1107,6 +1209,16 @@ async def enqueue_content_message(
         thread_id=thread_id,
     )
     queue.put_nowait(task)
+    if config.diagnostic_logs and queue.qsize() > 1:
+        logger.warning(
+            "queue_enqueue",
+            user_id=user_id,
+            task_type="content",
+            content_type=content_type,
+            window_id=window_id,
+            thread_id=thread_id,
+            queue_size=queue.qsize(),
+        )
 
 
 async def enqueue_status_update(
@@ -1117,7 +1229,7 @@ async def enqueue_status_update(
     thread_id: int | None = None,
 ) -> None:
     """Enqueue status update."""
-    queue = get_or_create_queue(bot, user_id)
+    queue = get_or_create_queue(bot, user_id, thread_id)
 
     if status_text:
         task = MessageTask(
@@ -1134,6 +1246,16 @@ async def enqueue_status_update(
         )
 
     queue.put_nowait(task)
+    if config.diagnostic_logs and queue.qsize() > 1:
+        logger.warning(
+            "queue_enqueue",
+            user_id=user_id,
+            task_type=task.task_type,
+            content_type="status",
+            window_id=window_id,
+            thread_id=thread_id,
+            queue_size=queue.qsize(),
+        )
 
 
 def clear_status_msg_info(user_id: int, thread_id: int | None = None) -> None:
@@ -1154,6 +1276,14 @@ def clear_status_msg_info(user_id: int, thread_id: int | None = None) -> None:
 def clear_batch_for_topic(user_id: int, thread_id: int | None = None) -> None:
     """Clear active batch for a specific topic (called on topic cleanup)."""
     _active_batches.pop((user_id, thread_id or 0), None)
+
+
+@topic_state.register("topic")
+def clear_recent_content_for_topic(
+    user_id: int, thread_id: int | None = None
+) -> None:
+    """Clear recent-content cooldown tracking for a specific topic."""
+    _last_content_sent_at.pop((user_id, thread_id or 0), None)
 
 
 @topic_state.register("topic")
@@ -1181,4 +1311,5 @@ async def shutdown_workers() -> None:
     _message_queues.clear()
     _queue_locks.clear()
     _active_batches.clear()
+    _last_content_sent_at.clear()
     logger.info("Message queue workers stopped")

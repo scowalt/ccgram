@@ -54,6 +54,8 @@ _PathResolveError = (OSError, ValueError)
 _SessionMapError = (json.JSONDecodeError, OSError)
 
 _MSG_PREVIEW_LENGTH = 80
+_SESSION_SCAN_WARN_SECS = 0.25
+_MONITOR_LOOP_WARN_SECS = 1.0
 
 
 def _resolve_provider_for_file(window_id: str, file_path: Path):
@@ -454,6 +456,7 @@ class SessionMonitor:
         Handles tracking initialization, mtime checking, incremental reading,
         and parsing. Appends any new messages to the provided list.
         """
+        started_at = time.monotonic()
         tracked = self.state.get_session(session_id)
         provider = _resolve_provider_for_file(window_id, file_path)
 
@@ -553,6 +556,19 @@ class SessionMonitor:
             )
 
         self.state.update_session(tracked)
+        elapsed_secs = time.monotonic() - started_at
+        if config.diagnostic_logs and (
+            elapsed_secs >= _SESSION_SCAN_WARN_SECS or len(new_entries) > 0
+        ):
+            logger.warning(
+                "session_scan",
+                session_id=session_id,
+                window_id=window_id,
+                provider=provider.capabilities.name,
+                entry_count=len(new_entries),
+                emitted_messages=len(agent_messages),
+                elapsed_ms=int(elapsed_secs * 1000),
+            )
 
     async def _seed_claude_task_state(
         self, window_id: str, session_id: str, file_path: Path
@@ -778,6 +794,7 @@ class SessionMonitor:
         error_streak = 0
         while self._running:
             try:
+                loop_started_at = time.monotonic()
                 # Read hook events first (lower latency than transcript polls)
                 await self._read_hook_events()
 
@@ -837,6 +854,16 @@ class SessionMonitor:
                                 "Message callback error for session=%s",
                                 msg.session_id,
                             )
+                loop_elapsed_secs = time.monotonic() - loop_started_at
+                if config.diagnostic_logs and (
+                    loop_elapsed_secs >= _MONITOR_LOOP_WARN_SECS or len(new_messages) > 0
+                ):
+                    logger.warning(
+                        "monitor_loop_stats",
+                        tracked_sessions=len(current_map),
+                        emitted_messages=len(new_messages),
+                        elapsed_ms=int(loop_elapsed_secs * 1000),
+                    )
 
             except _LoopError:
                 logger.exception("Monitor loop error")

@@ -42,7 +42,6 @@ from .callback_data import (
 from .callback_helpers import get_thread_id
 from .callback_registry import register
 from .message_sender import safe_edit, safe_reply, safe_send
-from .message_queue import enqueue_status_update
 from .polling_strategies import clear_probe_failures
 from ..topic_state_registry import topic_state
 
@@ -177,7 +176,6 @@ async def handle_shell_message(
     message: Message | None = None,
 ) -> None:
     """Route shell provider messages: ``!`` prefix = raw, else = NL via LLM."""
-    await enqueue_status_update(bot, user_id, window_id, None, thread_id)
     clear_probe_failures(window_id)
 
     chat_id = thread_router.resolve_chat_id(user_id, thread_id)

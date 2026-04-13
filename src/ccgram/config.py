@@ -137,6 +137,17 @@ class Config:
             "CCGRAM_ACK_REACTION", "CCBOT_ACK_REACTION"
         )
 
+        # Forwarding controls for transcript-derived assistant events.
+        self.forward_tool_flow: bool = (
+            os.getenv("CCGRAM_FORWARD_TOOL_FLOW", "1").lower() in ("1", "true", "yes")
+        )
+        self.forward_thinking: bool = (
+            os.getenv("CCGRAM_FORWARD_THINKING", "1").lower() in ("1", "true", "yes")
+        )
+        self.diagnostic_logs: bool = (
+            os.getenv("CCGRAM_DIAGNOSTIC_LOGS", "").lower() in ("1", "true", "yes")
+        )
+
         # Whisper transcription
         self.whisper_provider: str = _env_with_fallback(
             "CCGRAM_WHISPER_PROVIDER", "CCBOT_WHISPER_PROVIDER"

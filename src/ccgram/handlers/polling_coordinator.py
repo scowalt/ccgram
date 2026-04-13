@@ -552,7 +552,7 @@ async def status_poll_loop(bot: Bot) -> None:
                         thread_id=thread_id,
                     )
 
-                    queue = get_message_queue(user_id)
+                    queue = get_message_queue(user_id, thread_id)
                     if queue and not queue.empty():
                         await _check_interactive_only(
                             bot, user_id, wid, thread_id, _window=w
