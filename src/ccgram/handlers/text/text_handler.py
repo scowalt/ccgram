@@ -15,7 +15,6 @@ from pathlib import Path
 
 import structlog
 from telegram import Message, Update
-from telegram.constants import ChatAction
 from ...config import config
 from ...telegram_client import PTBTelegramClient, TelegramClient
 from ..callback_helpers import get_thread_id as _get_thread_id
@@ -402,12 +401,15 @@ async def _forward_message(
     message: Message,
 ) -> None:
     """Forward a text message to the bound tmux window."""
-    await message.chat.send_action(ChatAction.TYPING)  # type: ignore[union-attr]
     # Cancel any running bash capture — new message pushes pane content down
     cancel_bash_capture(user_id, thread_id)
 
     lifecycle_strategy.clear_probe_failures(window_id)
 
+    # Send to tmux FIRST — this is the latency-critical path.
+    # Telegram API calls (typing indicator, ack reaction) go through the
+    # AIORateLimiter group limiter and can block for seconds when the
+    # outbound message budget is exhausted.
     success, err_message = await send_to_window(window_id, text)
     if not success:
         await safe_reply(message, f"\u274c {err_message}")
@@ -452,7 +454,10 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not update.message or not update.message.text:
         return
 
-    await sync_scoped_menu_for_text_context(update, user.id)
+    # Menu sync is cosmetic — don't block the latency-critical text path.
+    # Fire-and-forget; errors are already caught internally.
+    task = asyncio.create_task(sync_scoped_menu_for_text_context(update, user.id))
+    task.add_done_callback(task_done_callback)
     await handle_text_message(update, context)
 
 

@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING
 
 import structlog
 from telegram import Message, Update
-from telegram.constants import ChatAction
 
 from ...config import config
 from ...providers import (
@@ -125,11 +124,6 @@ async def _handle_pi_followup_command(
         await safe_reply(message, "Usage: `/followup <message>`")
         return
     logger.info("Forwarding Pi follow-up to window %s (user=%d)", display, user_id)
-    await message.get_bot().send_chat_action(
-        chat_id=message.chat.id,
-        message_thread_id=thread_id,
-        action=ChatAction.TYPING,
-    )
     success, error_msg = await send_followup_to_window(window_id, args)
     if not success:
         await safe_reply(message, f"❌ {error_msg}")
@@ -287,11 +281,6 @@ async def forward_command_handler(
     logger.info(
         "Forwarding command %s to window %s (user=%d)", cc_slash, display, user.id
     )
-    await update.message.get_bot().send_chat_action(
-        chat_id=update.message.chat.id,
-        message_thread_id=thread_id,
-        action=ChatAction.TYPING,
-    )
     (
         probe_transcript_path,
         probe_transcript_offset,
@@ -300,6 +289,8 @@ async def forward_command_handler(
     ) = await _capture_forward_probe_context(window_id, provider, cc_slash, status_like)
 
     lifecycle_strategy.clear_probe_failures(window_id)
+    # Send to tmux FIRST — typing indicators go through the rate limiter
+    # and can block for seconds when the outbound message budget is exhausted.
     success, error_msg = await send_to_window(window_id, cc_slash)
     if not success:
         await safe_reply(update.message, f"❌ {error_msg}")
