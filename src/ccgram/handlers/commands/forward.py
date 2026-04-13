@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING
 
 import structlog
 from telegram import Update
-from telegram.constants import ChatAction
 
 from ...config import config
 from ...providers import (
@@ -171,11 +170,6 @@ async def forward_command_handler(
     logger.info(
         "Forwarding command %s to window %s (user=%d)", cc_slash, display, user.id
     )
-    await update.message.get_bot().send_chat_action(
-        chat_id=update.message.chat.id,
-        message_thread_id=thread_id,
-        action=ChatAction.TYPING,
-    )
     (
         probe_transcript_path,
         probe_transcript_offset,
@@ -184,6 +178,8 @@ async def forward_command_handler(
     status_probe_offset = _status_snapshot_probe_offset(window_id, cc_slash)
 
     lifecycle_strategy.clear_probe_failures(window_id)
+    # Send to tmux FIRST — typing indicators go through the rate limiter
+    # and can block for seconds when the outbound message budget is exhausted.
     success, error_msg = await send_to_window(window_id, cc_slash)
     if not success:
         await safe_reply(update.message, f"❌ {error_msg}")
