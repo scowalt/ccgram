@@ -12,6 +12,7 @@ from pathlib import Path
 import structlog
 from telegram import Bot
 
+from ..config import config
 from ..session import session_manager
 from ..user_preferences import user_preferences
 from ..session_monitor import NewMessage
@@ -64,6 +65,8 @@ async def handle_new_message(msg: NewMessage, bot: Bot) -> None:  # noqa: C901, 
             "tool_use",
             "tool_result",
         )
+        if is_tool_flow and not config.forward_tool_flow:
+            continue
         if not is_tool_flow:
             if notif_mode == "muted":
                 continue
@@ -73,13 +76,15 @@ async def handle_new_message(msg: NewMessage, bot: Bot) -> None:  # noqa: C901, 
                 continue
 
         if msg.content_type == "thinking":
+            if not config.forward_thinking:
+                continue
             stripped = (msg.text or "").strip()
             if len(stripped) < _MIN_THINKING_LENGTH:
                 continue
 
         if msg.tool_name in INTERACTIVE_TOOL_NAMES and msg.content_type == "tool_use":
             set_interactive_mode(user_id, window_id, thread_id)
-            queue = get_message_queue(user_id)
+            queue = get_message_queue(user_id, thread_id)
             if queue:
                 await queue.join()
             await asyncio.sleep(0.3)
