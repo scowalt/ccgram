@@ -330,7 +330,9 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not update.message or not update.message.text:
         return
 
-    await _sync_scoped_menu_for_text_context(update, user.id)
+    # Menu sync is cosmetic — don't block the latency-critical text path.
+    # Fire-and-forget; errors are already caught internally.
+    asyncio.create_task(_sync_scoped_menu_for_text_context(update, user.id))
     await handle_text_message(update, context)
 
 

@@ -11,7 +11,6 @@ import asyncio
 import structlog
 from pathlib import Path
 from telegram import Bot, Message, Update
-from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
 from .callback_helpers import get_thread_id as _get_thread_id
@@ -315,13 +314,15 @@ async def _forward_message(
     message: Message,
 ) -> None:
     """Forward a text message to the bound tmux window."""
-    await message.chat.send_action(ChatAction.TYPING)  # type: ignore[union-attr]
-
     # Cancel any running bash capture — new message pushes pane content down
     cancel_bash_capture(user_id, thread_id)
 
     clear_probe_failures(window_id)
 
+    # Send to tmux FIRST — this is the latency-critical path.
+    # Telegram API calls (typing indicator, ack reaction) go through the
+    # AIORateLimiter group limiter and can block for seconds when the
+    # outbound message budget is exhausted.
     success, err_message = await send_to_window(window_id, text)
     if not success:
         await safe_reply(message, f"\u274c {err_message}")
