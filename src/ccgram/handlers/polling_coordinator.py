@@ -13,14 +13,12 @@ Key components:
 """
 
 import asyncio
-import contextlib
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import structlog
 from telegram import Bot
-from telegram.constants import ChatAction
 from telegram.error import BadRequest, TelegramError
 
 from ..claude_task_state import claude_task_state
@@ -80,19 +78,14 @@ _LoopError = (TelegramError, OSError, RuntimeError, ValueError)
 
 
 async def _send_typing_throttled(bot: Bot, user_id: int, thread_id: int | None) -> None:
-    """Send typing indicator if enough time has elapsed since the last one."""
-    if thread_id is None:
-        return
-    if lifecycle_strategy.is_typing_throttled(user_id, thread_id):
-        return
-    lifecycle_strategy.record_typing_sent(user_id, thread_id)
-    chat_id = thread_router.resolve_chat_id(user_id, thread_id)
-    with contextlib.suppress(TelegramError):
-        await bot.send_chat_action(
-            chat_id=chat_id,
-            message_thread_id=thread_id,
-            action=ChatAction.TYPING,
-        )
+    """No-op — typing indicators are disabled to preserve rate limit budget.
+
+    Each send_chat_action call goes through PTB's AIORateLimiter group limiter
+    (20/min per group).  With N active topics polling every 4s, typing alone
+    consumes N×15 calls/min, starving actual content messages.  The topic emoji
+    (green circle = active) already conveys the same "agent is working" signal.
+    """
+    return
 
 
 # ── RC state / pyte parsing ─────────────────────────────────────────────
