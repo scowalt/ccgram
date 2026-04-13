@@ -127,6 +127,17 @@ class Config:
         # Ack reaction: react to forwarded messages with an emoji (empty = disabled)
         self.ack_reaction: str = os.getenv("CCGRAM_ACK_REACTION", "")
 
+        # Forwarding controls for transcript-derived assistant events.
+        self.forward_tool_flow: bool = (
+            os.getenv("CCGRAM_FORWARD_TOOL_FLOW", "1").lower() in ("1", "true", "yes")
+        )
+        self.forward_thinking: bool = (
+            os.getenv("CCGRAM_FORWARD_THINKING", "1").lower() in ("1", "true", "yes")
+        )
+        self.diagnostic_logs: bool = (
+            os.getenv("CCGRAM_DIAGNOSTIC_LOGS", "").lower() in ("1", "true", "yes")
+        )
+
         # Whisper transcription
         self.whisper_provider: str = os.getenv("CCGRAM_WHISPER_PROVIDER", "")
         self.whisper_api_key: str = os.getenv("CCGRAM_WHISPER_API_KEY", "")

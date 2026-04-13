@@ -18,10 +18,12 @@ import structlog
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import TelegramError
 
-from ...session_state_ports.live_session_state import get_task_snapshot, get_wait_header
+from ...config import config
 from ...expandable_quote import format_expandable_quote
+from ...session_state_ports.live_session_state import get_task_snapshot, get_wait_header
 from ...telegram_client import TelegramClient
 from ...thread_router import thread_router
+from ...topic_state_registry import topic_state
 from ...window_state_ports.pane_state import PaneProjection, list_pane_projections
 
 from ..callback_data import (
@@ -48,6 +50,11 @@ logger = structlog.get_logger()
 
 # Status message tracking: (user_id, thread_key) -> (message_id, window_id, last_text, chat_id)
 _status_msg_info: dict[tuple[int, int], tuple[int, str, str, int]] = {}
+
+# Last time a topic delivered visible content into Telegram. Used to avoid
+# immediately recreating a status bubble that was just replaced by content.
+_last_content_sent_at: dict[tuple[int, int], float] = {}
+_STATUS_RECREATE_COOLDOWN_SECS = 10.0
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +129,11 @@ def build_status_keyboard(
 # ---------------------------------------------------------------------------
 
 
+def _is_idle_status_text(status_text: str) -> bool:
+    """Return True when the status represents the idle ready bubble."""
+    return status_text.split("\n", 1)[0] == IDLE_STATUS_TEXT
+
+
 def _get_idle_history(
     user_id: int, thread_id_or_0: int, status_text: str
 ) -> list[str] | None:
@@ -129,10 +141,51 @@ def _get_idle_history(
     # Lazy: command_history → messaging_pipeline → status forms a cycle.
     from ..command_history import get_history
 
-    first_line = status_text.split("\n", 1)[0]
-    if first_line != IDLE_STATUS_TEXT:
+    if not _is_idle_status_text(status_text):
         return None
     return get_history(user_id, thread_id_or_0, limit=2) or None
+
+
+def note_content_sent(user_id: int, thread_id_or_0: int) -> None:
+    """Record that visible content was just delivered for a topic."""
+    _last_content_sent_at[(user_id, thread_id_or_0)] = time.monotonic()
+
+
+def _should_skip_new_status(
+    user_id: int, thread_id_or_0: int, status_text: str
+) -> bool:
+    """Return True if a missing status bubble should not be recreated yet."""
+    if _is_idle_status_text(status_text):
+        if config.diagnostic_logs:
+            logger.debug(
+                "Skipping new idle status bubble for user %s thread %s",
+                user_id,
+                thread_id_or_0,
+            )
+        return True
+
+    last_content_at = _last_content_sent_at.get((user_id, thread_id_or_0))
+    if last_content_at is None:
+        return False
+
+    since_content = time.monotonic() - last_content_at
+    if since_content >= _STATUS_RECREATE_COOLDOWN_SECS:
+        return False
+
+    if config.diagnostic_logs:
+        logger.debug(
+            "Skipping new status bubble for user %s thread %s; recent content %.2fs ago",
+            user_id,
+            thread_id_or_0,
+            since_content,
+        )
+    return True
+
+
+@topic_state.register("topic")
+def clear_recent_content_for_topic(user_id: int, thread_id: int | None = None) -> None:
+    """Clear recent-content cooldown tracking for a specific topic."""
+    _last_content_sent_at.pop((user_id, thread_key(thread_id)), None)
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +368,8 @@ async def send_status_text(
             _status_msg_info.pop(skey, None)
         else:
             await clear_status_message(client, user_id, thread_id_or_0)
+    elif _should_skip_new_status(user_id, thread_id_or_0, text):
+        return
 
     msg = await safe_send(
         client,

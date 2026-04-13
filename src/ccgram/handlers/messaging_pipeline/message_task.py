@@ -5,7 +5,8 @@ Three frozen dataclasses replace the monolithic ``MessageTask`` that lived in
 keeping the dependency graph acyclic.
 """
 
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from typing import Literal, TypeAlias
 
 ContentType: TypeAlias = Literal["text", "tool_use", "tool_result"]
@@ -23,6 +24,7 @@ class ContentTask:
     tool_use_id: str | None = None
     tool_name: str | None = None
     thread_id: int | None = None
+    enqueued_at: float = field(default_factory=time.monotonic)
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +34,7 @@ class StatusUpdateTask:
     window_id: str
     text: str | None
     thread_id: int | None = None
+    enqueued_at: float = field(default_factory=time.monotonic)
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +43,7 @@ class StatusClearTask:
 
     window_id: str | None
     thread_id: int | None = None
+    enqueued_at: float = field(default_factory=time.monotonic)
 
 
 MessageTask: TypeAlias = ContentTask | StatusUpdateTask | StatusClearTask

@@ -6,11 +6,13 @@ management.
 """
 
 import asyncio
+import re
 from pathlib import Path
 
 import structlog
 
-from ... import session_query
+from ... import session_query, window_query
+from ...config import config
 from ...session_monitor import NewMessage
 from ...telegram_client import TelegramClient
 from ...user_preferences import user_preferences
@@ -27,6 +29,9 @@ from .message_queue import enqueue_content_message, get_message_queue
 
 logger = structlog.get_logger()
 
+_ERROR_KEYWORDS_RE = re.compile(
+    r"\b(?:error|exception|failed|traceback|stderr|assertion)\b", re.IGNORECASE
+)
 _MIN_THINKING_LENGTH = 20
 
 
@@ -55,15 +60,33 @@ async def handle_new_message(msg: NewMessage, client: TelegramClient) -> None:  
         structlog.contextvars.bind_contextvars(
             window_id=window_id, session_id=msg.session_id
         )
+        notif_mode = window_query.get_notification_mode(window_id)
+        is_tool_flow = msg.tool_name in INTERACTIVE_TOOL_NAMES or msg.content_type in (
+            "tool_use",
+            "tool_result",
+        )
+        if is_tool_flow and not config.forward_tool_flow:
+            continue
+        if not is_tool_flow:
+            if notif_mode == "muted":
+                continue
+            if (
+                notif_mode == "errors_only"
+                and msg.phase != "final_answer"
+                and not _ERROR_KEYWORDS_RE.search(msg.text or "")
+            ):
+                continue
 
         if msg.content_type == "thinking":
+            if not config.forward_thinking:
+                continue
             stripped = (msg.text or "").strip()
             if len(stripped) < _MIN_THINKING_LENGTH:
                 continue
 
         if msg.tool_name in INTERACTIVE_TOOL_NAMES and msg.content_type == "tool_use":
             set_interactive_mode(user_id, window_id, thread_id)
-            queue = get_message_queue(user_id)
+            queue = get_message_queue(user_id, thread_id)
             if queue:
                 await queue.join()
             await asyncio.sleep(0.3)
