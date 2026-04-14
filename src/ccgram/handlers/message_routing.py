@@ -41,6 +41,9 @@ async def handle_new_message(msg: NewMessage, bot: Bot) -> None:  # noqa: C901, 
     Messages are queued per-user to ensure status messages always appear last.
     Routes via thread_bindings to deliver to the correct topic.
     """
+    if msg.role == "user" and not config.forward_user_echo:
+        return
+
     status = "complete" if msg.is_complete else "streaming"
     logger.info(
         "handle_new_message [%s]: session=%s, text_len=%d",
