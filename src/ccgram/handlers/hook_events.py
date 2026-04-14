@@ -12,7 +12,7 @@ import asyncio
 
 import structlog
 
-from ..claude_task_state import classify_wait_message, claude_task_state
+from ..claude_task_state import claude_task_state
 from ..providers.base import HookEvent
 from ..session_lifecycle import session_lifecycle
 from ..session_state_ports.live_session_state import has_task_snapshot
@@ -75,15 +75,7 @@ async def _handle_notification(event: HookEvent, client: TelegramClient) -> None
         tool_name,
         event.window_key,
     )
-    wait_header = classify_wait_message(event.data.get("message", ""))
-
     for user_id, thread_id, window_id in users:
-        if wait_header:
-            session_lifecycle.handle_notification_wait(window_id, wait_header)
-            await enqueue_status_update(
-                client, user_id, window_id, None, thread_id=thread_id
-            )
-
         if provider_name != "claude":
             message = str(event.data.get("message", "") or "Agent notification")
             await enqueue_status_update(
@@ -124,7 +116,7 @@ async def _get_llm_summary(transcript_path: str) -> str | None:
         from ..llm.summarizer import summarize_completion
 
         return await summarize_completion(transcript_path)
-    except RuntimeError, OSError, ValueError:
+    except (RuntimeError, OSError, ValueError):
         logger.debug("LLM summary failed", exc_info=True)
         return None
 
