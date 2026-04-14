@@ -153,15 +153,18 @@ class Config:
         )
 
         # Forwarding controls for transcript-derived assistant events.
-        self.forward_tool_flow: bool = (
-            os.getenv("CCGRAM_FORWARD_TOOL_FLOW", "1").lower() in ("1", "true", "yes")
-        )
-        self.forward_thinking: bool = (
-            os.getenv("CCGRAM_FORWARD_THINKING", "1").lower() in ("1", "true", "yes")
-        )
-        self.diagnostic_logs: bool = (
-            os.getenv("CCGRAM_DIAGNOSTIC_LOGS", "").lower() in ("1", "true", "yes")
-        )
+        self.forward_tool_flow: bool = os.getenv(
+            "CCGRAM_FORWARD_TOOL_FLOW", "1"
+        ).lower() in ("1", "true", "yes")
+        self.forward_thinking: bool = os.getenv(
+            "CCGRAM_FORWARD_THINKING", "1"
+        ).lower() in ("1", "true", "yes")
+        self.forward_user_echo: bool = os.getenv(
+            "CCGRAM_FORWARD_USER_ECHO", "1"
+        ).lower() in ("1", "true", "yes")
+        self.diagnostic_logs: bool = os.getenv(
+            "CCGRAM_DIAGNOSTIC_LOGS", ""
+        ).lower() in ("1", "true", "yes")
 
         # Whisper transcription
         self.whisper_provider: str = _env_with_fallback(
