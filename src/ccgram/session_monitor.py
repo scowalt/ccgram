@@ -229,7 +229,7 @@ class SessionMonitor:
         )
 
     async def _read_hook_events(self) -> None:
-        """Read new lines from events.jsonl and dispatch via callback."""
+        """Read new lines from events.jsonl, dispatch callbacks, and reconcile map."""
         if not self._hook_event_callback:
             return
 
@@ -241,11 +241,69 @@ class SessionMonitor:
         if new_offset != offset_before:
             self.state._dirty = True
 
+        session_starts: dict[str, dict[str, str]] = {}
         for event in events:
+            if event.event_type == "SessionStart" and event.window_key:
+                session_starts[event.window_key] = {
+                    "session_id": event.session_id,
+                    **event.data,
+                }
             try:
                 await self._hook_event_callback(event)
             except _CallbackError:
                 logger.exception("Hook event callback error for %s", event.event_type)
+
+        if session_starts:
+            await self._reconcile_session_map(session_starts)
+
+    async def _reconcile_session_map(
+        self, session_starts: dict[str, dict[str, str]]
+    ) -> None:
+        """Fix session_map entries when a stale SessionStart overwrote a live one."""
+        map_file = config.session_map_file
+        if not map_file.exists():
+            return
+
+        try:
+            async with aiofiles.open(map_file, "r") as f:
+                raw = json.loads(await f.read())
+        except _SessionMapError:
+            return
+
+        changed = False
+        for window_key, start_data in session_starts.items():
+            existing = raw.get(window_key)
+            if not existing or existing.get("session_id") == start_data.get(
+                "session_id"
+            ):
+                continue
+
+            existing_tp = existing.get("transcript_path", "")
+            new_tp = start_data.get("transcript_path", "")
+            if existing_tp and Path(existing_tp).exists():
+                continue
+            if not new_tp or not Path(new_tp).exists():
+                continue
+
+            logger.info(
+                "Reconciling session_map for %s: %s -> %s",
+                window_key,
+                existing.get("session_id", "?")[:8],
+                start_data.get("session_id", "?")[:8],
+            )
+            raw[window_key] = {
+                "session_id": start_data.get("session_id", ""),
+                "cwd": start_data.get("cwd", ""),
+                "window_name": start_data.get("window_name", ""),
+                "transcript_path": new_tp,
+                "provider_name": existing.get("provider_name", "claude"),
+            }
+            changed = True
+
+        if changed:
+            from .utils import atomic_write_json
+
+            atomic_write_json(map_file, raw)
 
     async def _load_current_session_map(self) -> dict[str, dict[str, str]]:
         """Load current session_map and return window_key -> details mapping."""
