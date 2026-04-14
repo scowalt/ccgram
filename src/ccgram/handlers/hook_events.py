@@ -15,7 +15,6 @@ from telegram import Bot
 from ..claude_task_state import (
     add_subagent,
     claude_task_state,
-    classify_wait_message,
     clear_subagents,
     remove_subagent,
 )
@@ -57,7 +56,6 @@ async def _handle_notification(event: HookEvent, bot: Bot) -> None:
         handle_interactive_ui,
         set_interactive_mode,
     )
-    from .message_queue import enqueue_status_update
 
     users = _resolve_users_for_window_key(event.window_key)
     if not users:
@@ -72,15 +70,7 @@ async def _handle_notification(event: HookEvent, bot: Bot) -> None:
         tool_name,
         event.window_key,
     )
-    wait_header = classify_wait_message(event.data.get("message", ""))
-
     for user_id, thread_id, window_id in users:
-        if wait_header:
-            claude_task_state.set_wait_header(window_id, wait_header)
-            await enqueue_status_update(
-                bot, user_id, window_id, None, thread_id=thread_id
-            )
-
         # Skip if already in interactive mode for this window
         existing = get_interactive_window(user_id, thread_id)
         if existing == window_id:

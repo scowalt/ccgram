@@ -382,41 +382,6 @@ class TestHandleNotification:
             await dispatch_hook_event(event, bot)
             mock_clear.assert_called_once_with(100, 42)
 
-    async def test_sets_wait_header_from_notification_message(
-        self, monkeypatch
-    ) -> None:
-        monkeypatch.setattr(
-            "ccgram.handlers.hook_events.thread_router.iter_thread_bindings",
-            lambda: iter([(100, 42, "@0")]),
-        )
-        bot = AsyncMock(spec=Bot)
-        with (
-            patch(
-                "ccgram.handlers.interactive_ui.get_interactive_window",
-                return_value=None,
-            ),
-            patch("ccgram.handlers.interactive_ui.set_interactive_mode"),
-            patch(
-                "ccgram.handlers.interactive_ui.handle_interactive_ui",
-                return_value=False,
-            ),
-            patch("ccgram.handlers.interactive_ui.clear_interactive_mode"),
-            patch(
-                "ccgram.handlers.message_queue.enqueue_status_update",
-                new_callable=AsyncMock,
-            ) as mock_enqueue,
-            patch("asyncio.sleep"),
-        ):
-            event = _make_event(
-                event_type="Notification",
-                data={"message": "Claude needs your permission to use Bash"},
-            )
-            await dispatch_hook_event(event, bot)
-
-            assert claude_task_state.get_wait_header("@0") == "Approval needed: Bash"
-            mock_enqueue.assert_awaited_once_with(bot, 100, "@0", None, thread_id=42)
-
-
 class TestHandleSubagentStart:
     def setup_method(self) -> None:
         _active_subagents.clear()
