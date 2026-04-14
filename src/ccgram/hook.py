@@ -520,6 +520,27 @@ def _update_session_map(
                     except OSError:
                         logger.warning("Failed to read session_map.json")
 
+                # Guard against stale SessionStart overwriting a live entry:
+                # if the existing entry's transcript file exists but the new
+                # one doesn't, the new session likely never started properly.
+                existing = session_map.get(session_window_key)
+                if existing and transcript_path:
+                    existing_tp = existing.get("transcript_path", "")
+                    if (
+                        existing_tp
+                        and existing.get("session_id") != session_id
+                        and Path(existing_tp).exists()
+                        and not Path(transcript_path).exists()
+                    ):
+                        logger.info(
+                            "Keeping existing session_map entry for %s: "
+                            "existing transcript exists, new does not",
+                            session_window_key,
+                        )
+                        # Still write to events.jsonl (already done above),
+                        # just skip the session_map overwrite.
+                        return
+
                 session_map[session_window_key] = {
                     "session_id": session_id,
                     "cwd": cwd,

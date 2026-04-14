@@ -182,7 +182,13 @@ class SessionMonitor:
             self._last_activity[session_id] = time.monotonic()
 
     async def _read_hook_events(self) -> None:
-        """Read new lines from events.jsonl and dispatch via callback."""
+        """Read new lines from events.jsonl and dispatch via callback.
+
+        Also reconciles session_map when a non-SessionStart event references a
+        session_id that differs from the current session_map entry — this
+        detects stale overwrites where a dead session's SessionStart fired
+        after the live session's.
+        """
         if not self._hook_event_callback:
             return
 
@@ -191,6 +197,9 @@ class SessionMonitor:
             return
 
         from .providers.base import HookEvent
+
+        # Track latest SessionStart data per window_key for reconciliation
+        session_starts: dict[str, dict[str, str]] = {}
 
         offset_before = self.state.events_offset
         try:
@@ -223,6 +232,13 @@ class SessionMonitor:
                     )
                     self.state.events_offset = await f.tell()
 
+                    # Remember SessionStart data for reconciliation
+                    if event.event_type == "SessionStart" and event.window_key:
+                        session_starts[event.window_key] = {
+                            "session_id": event.session_id,
+                            **event.data,
+                        }
+
                     try:
                         await self._hook_event_callback(event)
                     except _CallbackError:
@@ -234,6 +250,68 @@ class SessionMonitor:
 
         if self.state.events_offset != offset_before:
             self.state._dirty = True
+
+        # Reconcile: if a non-SessionStart event referenced a session_id that
+        # doesn't match session_map, but we saw a SessionStart for the correct
+        # session in this batch, fix session_map.
+        if session_starts:
+            await self._reconcile_session_map(session_starts)
+
+    async def _reconcile_session_map(
+        self, session_starts: dict[str, dict[str, str]]
+    ) -> None:
+        """Fix session_map entries where a stale SessionStart overwrote a live one.
+
+        Compares the current session_map against SessionStart events seen in
+        this batch. If the session_map entry for a window_key has a transcript
+        file that doesn't exist, but one of the SessionStart events for that
+        same window_key has a transcript file that does exist, update the
+        session_map entry.
+        """
+        map_file = config.session_map_file
+        if not map_file.exists():
+            return
+
+        try:
+            async with aiofiles.open(map_file, "r") as f:
+                raw = json.loads(await f.read())
+        except (OSError, json.JSONDecodeError):
+            return
+
+        changed = False
+        for window_key, start_data in session_starts.items():
+            existing = raw.get(window_key)
+            if not existing:
+                continue
+            if existing.get("session_id") == start_data.get("session_id"):
+                continue
+            # Current session_map entry has a different session_id
+            existing_tp = existing.get("transcript_path", "")
+            new_tp = start_data.get("transcript_path", "")
+            if existing_tp and Path(existing_tp).exists():
+                continue  # existing entry is fine
+            if not new_tp or not Path(new_tp).exists():
+                continue  # new entry's transcript doesn't exist either
+            # The SessionStart we saw has a valid transcript; fix the entry
+            logger.info(
+                "Reconciling session_map for %s: %s -> %s",
+                window_key,
+                existing.get("session_id", "?")[:8],
+                start_data.get("session_id", "?")[:8],
+            )
+            raw[window_key] = {
+                "session_id": start_data.get("session_id", ""),
+                "cwd": start_data.get("cwd", ""),
+                "window_name": start_data.get("window_name", ""),
+                "transcript_path": new_tp,
+                "provider_name": existing.get("provider_name", "claude"),
+            }
+            changed = True
+
+        if changed:
+            from .utils import atomic_write_json
+
+            atomic_write_json(map_file, raw)
 
     async def _get_active_cwds(self) -> set[str]:
         """Get normalized cwds of all active tmux windows."""
@@ -856,7 +934,8 @@ class SessionMonitor:
                             )
                 loop_elapsed_secs = time.monotonic() - loop_started_at
                 if config.diagnostic_logs and (
-                    loop_elapsed_secs >= _MONITOR_LOOP_WARN_SECS or len(new_messages) > 0
+                    loop_elapsed_secs >= _MONITOR_LOOP_WARN_SECS
+                    or len(new_messages) > 0
                 ):
                     logger.warning(
                         "monitor_loop_stats",
