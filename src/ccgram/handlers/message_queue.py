@@ -1028,8 +1028,12 @@ async def _process_status_update_task(
                 )
             else:
                 # Edit failed (message deleted, rate limit, etc.)
-                # Clear tracking and let the next poll cycle recreate it
-                # instead of sending a new message (which causes pile-up).
+                # Delete the stale message to prevent duplicates, then
+                # clear tracking so the next poll cycle recreates it.
+                with contextlib.suppress(TelegramError):
+                    await bot.delete_message(
+                        chat_id=stored_chat_id, message_id=msg_id
+                    )
                 _status_msg_info.pop(skey, None)
     else:
         if _is_idle_status_text(status_text):
@@ -1097,7 +1101,11 @@ async def _do_send_status_message(
             if success:
                 _status_msg_info[skey] = (msg_id, window_id, text, stored_chat_id)
                 return
-            # Edit failed — clear tracking, fall through to send new
+            # Edit failed — delete stale message, clear tracking, send new
+            with contextlib.suppress(TelegramError):
+                await bot.delete_message(
+                    chat_id=stored_chat_id, message_id=msg_id
+                )
             _status_msg_info.pop(skey, None)
         else:
             # Different window — delete old status first
@@ -1227,9 +1235,7 @@ def clear_batch_for_topic(user_id: int, thread_id: int | None = None) -> None:
 
 
 @topic_state.register("topic")
-def clear_recent_content_for_topic(
-    user_id: int, thread_id: int | None = None
-) -> None:
+def clear_recent_content_for_topic(user_id: int, thread_id: int | None = None) -> None:
     """Clear recent-content cooldown tracking for a specific topic."""
     _last_content_sent_at.pop((user_id, thread_id or 0), None)
 
