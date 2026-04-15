@@ -56,6 +56,7 @@ _SessionMapError = (json.JSONDecodeError, OSError)
 _MSG_PREVIEW_LENGTH = 80
 _SESSION_SCAN_WARN_SECS = 0.25
 _MONITOR_LOOP_WARN_SECS = 1.0
+_TRANSCRIPT_ACTIVE_SECS = 30
 
 
 def _resolve_provider_for_file(window_id: str, file_path: Path):
@@ -285,11 +286,20 @@ class SessionMonitor:
                 continue
             if existing.get("session_id") == start_data.get("session_id"):
                 continue
-            # Current session_map entry has a different session_id
+            # Current session_map entry has a different session_id.
+            # Check if the existing transcript is still actively written to
+            # (mtime within 30s).  A stale transcript that merely exists on
+            # disk should not block reconciliation — the new session's
+            # transcript may have been created after the hook fired.
             existing_tp = existing.get("transcript_path", "")
             new_tp = start_data.get("transcript_path", "")
-            if existing_tp and Path(existing_tp).exists():
-                continue  # existing entry is fine
+            if existing_tp:
+                try:
+                    existing_mtime = Path(existing_tp).stat().st_mtime
+                    if time.time() - existing_mtime < _TRANSCRIPT_ACTIVE_SECS:
+                        continue  # existing transcript still active
+                except OSError:
+                    pass  # existing transcript gone
             if not new_tp or not Path(new_tp).exists():
                 continue  # new entry's transcript doesn't exist either
             # The SessionStart we saw has a valid transcript; fix the entry

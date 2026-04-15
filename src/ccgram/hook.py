@@ -30,6 +30,10 @@ from ccgram.providers.base import UUID_RE
 
 logger = structlog.get_logger()
 
+# Seconds within which an existing transcript is considered "active" — used
+# to guard against stale SessionStart events overwriting live session_map entries.
+_TRANSCRIPT_ACTIVE_SECS = 30
+
 # Validate session_id looks like a UUID
 
 
@@ -521,25 +525,33 @@ def _update_session_map(
                         logger.warning("Failed to read session_map.json")
 
                 # Guard against stale SessionStart overwriting a live entry:
-                # if the existing entry's transcript file exists but the new
-                # one doesn't, the new session likely never started properly.
+                # if the existing entry's transcript was written to recently
+                # (within 30s), it's likely still live — keep it.  We check
+                # mtime instead of mere file existence because Claude Code
+                # creates the transcript file *after* the SessionStart hook
+                # fires, causing a race where a valid new session would be
+                # rejected.
                 existing = session_map.get(session_window_key)
                 if existing and transcript_path:
                     existing_tp = existing.get("transcript_path", "")
                     if (
                         existing_tp
                         and existing.get("session_id") != session_id
-                        and Path(existing_tp).exists()
-                        and not Path(transcript_path).exists()
                     ):
-                        logger.info(
-                            "Keeping existing session_map entry for %s: "
-                            "existing transcript exists, new does not",
-                            session_window_key,
-                        )
-                        # Still write to events.jsonl (already done above),
-                        # just skip the session_map overwrite.
-                        return
+                        try:
+                            existing_mtime = Path(existing_tp).stat().st_mtime
+                            if time.time() - existing_mtime < _TRANSCRIPT_ACTIVE_SECS:
+                                logger.info(
+                                    "Keeping existing session_map entry for %s: "
+                                    "existing transcript written to %ds ago",
+                                    session_window_key,
+                                    int(time.time() - existing_mtime),
+                                )
+                                # Still write to events.jsonl (already done
+                                # above), just skip the session_map overwrite.
+                                return
+                        except OSError:
+                            pass  # existing transcript gone — let new entry win
 
                 session_map[session_window_key] = {
                     "session_id": session_id,
