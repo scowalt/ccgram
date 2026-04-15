@@ -108,6 +108,23 @@ async def _get_llm_summary(transcript_path: str) -> str | None:
         return None
 
 
+async def _is_agent_still_active(window_id: str) -> bool:
+    """Check if the terminal shows an active spinner for a window.
+
+    Used by Stop handler to avoid false "Ready" on intermediate turns
+    (e.g. agent finishing a tool_use turn but about to continue).
+    """
+    from ..providers import get_provider_for_window
+    from ..tmux_manager import tmux_manager
+
+    pane_text = await tmux_manager.capture_pane(window_id)
+    if not pane_text:
+        return False
+    provider = get_provider_for_window(window_id)
+    status = provider.parse_terminal_status(pane_text, pane_title="")
+    return status is not None and not status.is_interactive
+
+
 async def _handle_stop(event: HookEvent, bot: Bot) -> None:
     """Handle a Stop event — transition status directly to idle.
 
@@ -150,6 +167,13 @@ async def _handle_stop(event: HookEvent, bot: Bot) -> None:
                 )
             except TimeoutError:
                 logger.debug("LLM summary timed out after %ss", _LLM_SUMMARY_TIMEOUT)
+
+    # Guard: if the terminal still shows a spinner, the agent is between
+    # turns (e.g. executing tools after end_turn) — skip Ready and let the
+    # polling loop handle status updates.
+    if first_window_id and await _is_agent_still_active(first_window_id):
+        logger.debug("Hook Stop: terminal still active, deferring to poller")
+        return
 
     for user_id, thread_id, window_id in users:
         claude_task_state.clear_wait_header(window_id)
