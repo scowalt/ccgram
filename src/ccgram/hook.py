@@ -580,6 +580,43 @@ def _update_session_map(
         logger.exception("Failed to write session_map")
 
 
+def _clear_session_map_entry(session_window_key: str, session_id: str) -> None:
+    """Remove session_map entry on SessionEnd so the next SessionStart isn't blocked.
+
+    Without this, the stale-SessionStart guard in _update_session_map would
+    reject a new session after /clear because the old transcript was recently
+    written to.
+    """
+    from .utils import ccgram_dir, atomic_write_json
+
+    map_file = ccgram_dir() / "session_map.json"
+    if not map_file.exists():
+        return
+
+    lock_path = map_file.with_suffix(".lock")
+    try:
+        with open(lock_path, "w") as lock_f:
+            fcntl.flock(lock_f, fcntl.LOCK_EX)
+            try:
+                raw = map_file.read_text()
+                session_map = json.loads(raw)
+                if not isinstance(session_map, dict):
+                    return
+
+                existing = session_map.get(session_window_key)
+                if existing and existing.get("session_id") == session_id:
+                    del session_map[session_window_key]
+                    atomic_write_json(map_file, session_map)
+                    logger.info(
+                        "Cleared session_map entry for %s (SessionEnd)",
+                        session_window_key,
+                    )
+            finally:
+                fcntl.flock(lock_f, fcntl.LOCK_UN)
+    except OSError:
+        logger.exception("Failed to clear session_map entry")
+
+
 def _process_hook_stdin() -> None:
     """Process a Claude Code hook event from stdin."""
     logger.debug("Processing hook event from stdin")
@@ -655,6 +692,11 @@ def _process_hook_stdin() -> None:
             },
         )
         return
+
+    # SessionEnd: clear session_map entry so the next SessionStart isn't
+    # rejected by the stale-entry guard (e.g. after /clear).
+    if event == "SessionEnd":
+        _clear_session_map_entry(session_window_key, session_id)
 
     # Other events: write event only
     extractor = _EVENT_DATA_EXTRACTORS.get(event)
