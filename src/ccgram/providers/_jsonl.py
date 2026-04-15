@@ -238,6 +238,8 @@ class JsonlProvider:
         window_key: str,  # noqa: ARG002 — protocol signature
         *,
         max_age: float | None = None,  # noqa: ARG002 — protocol signature
+        exclude_session_ids: set[str] | None = None,  # noqa: ARG002
+        exclude_transcript_paths: set[str] | None = None,  # noqa: ARG002
     ) -> SessionStartEvent | None:
         return None
 

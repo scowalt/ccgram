@@ -635,9 +635,13 @@ class GeminiProvider(JsonlProvider):
         *,
         age_limit: float,
         now: float,
+        exclude_session_ids: set[str] | None = None,
+        exclude_transcript_paths: set[str] | None = None,
     ) -> SessionStartEvent | None:
         """Return the newest matching session event from candidate files."""
         sessions.sort(reverse=True)
+        claimed_session_ids = exclude_session_ids or set()
+        claimed_transcript_paths = exclude_transcript_paths or set()
         for mtime, fpath in sessions[:50]:
             if age_limit > 0 and now - mtime > age_limit:
                 break
@@ -647,6 +651,11 @@ class GeminiProvider(JsonlProvider):
             session_id, project_hash = meta
             # Match project strictly to avoid cross-project false positives.
             if project_hash != expected_hash:
+                continue
+            if (
+                session_id in claimed_session_ids
+                or str(fpath) in claimed_transcript_paths
+            ):
                 continue
             return SessionStartEvent(
                 session_id=session_id,
@@ -662,6 +671,8 @@ class GeminiProvider(JsonlProvider):
         window_key: str,
         *,
         max_age: float | None = None,
+        exclude_session_ids: set[str] | None = None,
+        exclude_transcript_paths: set[str] | None = None,
     ) -> SessionStartEvent | None:
         """Discover latest Gemini transcript matching cwd.
 
@@ -692,6 +703,8 @@ class GeminiProvider(JsonlProvider):
             window_key,
             age_limit=age_limit,
             now=now,
+            exclude_session_ids=exclude_session_ids,
+            exclude_transcript_paths=exclude_transcript_paths,
         )
 
     def discover_commands(self, base_dir: str) -> list[DiscoveredCommand]:

@@ -36,6 +36,55 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 
+def _window_claim_rank(window_id: str) -> tuple[int, str]:
+    """Sort native tmux window IDs before foreign IDs using numeric order."""
+    if window_id.startswith("@"):
+        try:
+            return (0, f"{int(window_id[1:]):09d}")
+        except ValueError:
+            return (0, window_id)
+    return (1, window_id)
+
+
+def _claimed_hookless_sessions(
+    window_states: dict[str, "WindowState"],
+    provider_name: str,
+    *,
+    exclude_window_id: str,
+) -> tuple[set[str], set[str]]:
+    """Collect session IDs and transcript paths already claimed by other windows."""
+    claimed_session_ids: set[str] = set()
+    claimed_transcript_paths: set[str] = set()
+    current_state = window_states.get(exclude_window_id)
+    current_session_id = getattr(current_state, "session_id", "")
+    current_transcript_path = getattr(current_state, "transcript_path", "")
+    for other_window_id, other_state in window_states.items():
+        if other_window_id == exclude_window_id:
+            continue
+        if getattr(other_state, "provider_name", "") != provider_name:
+            continue
+        session_id = getattr(other_state, "session_id", "")
+        transcript_path = getattr(other_state, "transcript_path", "")
+        same_current_signature = bool(
+            (current_session_id and session_id == current_session_id)
+            or (
+                current_transcript_path
+                and transcript_path == current_transcript_path
+            )
+        )
+        if (
+            same_current_signature
+            and _window_claim_rank(other_window_id)
+            > _window_claim_rank(exclude_window_id)
+        ):
+            continue
+        if isinstance(session_id, str) and session_id:
+            claimed_session_ids.add(session_id)
+        if isinstance(transcript_path, str) and transcript_path:
+            claimed_transcript_paths.add(transcript_path)
+    return claimed_session_ids, claimed_transcript_paths
+
+
 async def _detect_and_apply_provider(
     window_id: str, state: "WindowState", w: "TmuxWindow"
 ) -> None:
@@ -117,11 +166,21 @@ async def _find_and_register_transcript(
 
     for provider_name, provider in providers_to_try:
         max_age = 0 if pane_alive else None
+        (
+            claimed_session_ids,
+            claimed_transcript_paths,
+        ) = _claimed_hookless_sessions(
+            session_manager.window_states,
+            provider_name,
+            exclude_window_id=window_id,
+        )
         event = await asyncio.to_thread(
             provider.discover_transcript,
             state.cwd,
             window_key,
             max_age=max_age,
+            exclude_session_ids=claimed_session_ids,
+            exclude_transcript_paths=claimed_transcript_paths,
         )
         if not event:
             continue

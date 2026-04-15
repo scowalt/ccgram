@@ -665,6 +665,8 @@ class CodexProvider(JsonlProvider):
         window_key: str,
         *,
         max_age: float | None = None,
+        exclude_session_ids: set[str] | None = None,
+        exclude_transcript_paths: set[str] | None = None,
     ) -> SessionStartEvent | None:
         """Scan ~/.codex/sessions/ for the most recent transcript matching cwd.
 
@@ -683,6 +685,8 @@ class CodexProvider(JsonlProvider):
         import time
 
         age_limit = _TRANSCRIPT_MAX_AGE_SECS if max_age is None else max_age
+        claimed_session_ids = exclude_session_ids or set()
+        claimed_transcript_paths = exclude_transcript_paths or set()
 
         jsonl_files = _collect_codex_sessions(sessions_dir)
         now = time.time()
@@ -696,7 +700,11 @@ class CodexProvider(JsonlProvider):
             file_cwd = meta.get("cwd", "")
             if file_cwd and str(Path(file_cwd).resolve()) == resolved_cwd:
                 session_id = meta.get("id", "")
-                if session_id:
+                if (
+                    session_id
+                    and session_id not in claimed_session_ids
+                    and str(fpath) not in claimed_transcript_paths
+                ):
                     return SessionStartEvent(
                         session_id=session_id,
                         cwd=file_cwd,

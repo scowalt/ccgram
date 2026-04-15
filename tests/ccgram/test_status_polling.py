@@ -1212,6 +1212,121 @@ class TestMaybeDiscoverTranscript:
             transcript_path="/path/to/transcript.jsonl",
             provider_name="codex",
         )
+        mock_provider.discover_transcript.assert_called_once_with(
+            "/my/project",
+            "ccgram:@7",
+            max_age=0,
+            exclude_session_ids=set(),
+            exclude_transcript_paths=set(),
+        )
+
+    async def test_excludes_sessions_claimed_by_other_windows(self) -> None:
+        from ccgram.handlers.transcript_discovery import (
+            discover_and_register_transcript,
+        )
+        from ccgram.providers.base import SessionStartEvent
+
+        mock_provider = MagicMock()
+        mock_provider.capabilities.supports_hook = False
+        mock_provider.capabilities.name = "codex"
+        mock_provider.discover_transcript.return_value = SessionStartEvent(
+            session_id="uuid-new",
+            cwd="/my/project",
+            transcript_path="/path/to/new.jsonl",
+            window_key="ccgram:@7",
+        )
+
+        with (
+            patch("ccgram.handlers.transcript_discovery.session_manager") as mock_sm,
+            patch(
+                "ccgram.handlers.transcript_discovery.get_provider_for_window",
+                return_value=mock_provider,
+            ),
+            patch("ccgram.handlers.transcript_discovery.config") as mock_config,
+            patch("ccgram.handlers.transcript_discovery.tmux_manager") as mock_tmux,
+        ):
+            mock_sm.window_states = {
+                "@7": MagicMock(
+                    session_id="",
+                    cwd="/my/project",
+                    transcript_path="",
+                    provider_name="codex",
+                ),
+                "@9": MagicMock(
+                    session_id="uuid-claimed",
+                    cwd="/my/project",
+                    transcript_path="/path/to/claimed.jsonl",
+                    provider_name="codex",
+                ),
+            }
+            mock_config.tmux_session_name = "ccgram"
+            mock_tmux.find_window_by_id = AsyncMock(
+                return_value=MagicMock(pane_current_command="bun")
+            )
+            mock_tmux.get_pane_title = AsyncMock(return_value="")
+            await discover_and_register_transcript("@7")
+
+        mock_provider.discover_transcript.assert_called_once_with(
+            "/my/project",
+            "ccgram:@7",
+            max_age=0,
+            exclude_session_ids={"uuid-claimed"},
+            exclude_transcript_paths={"/path/to/claimed.jsonl"},
+        )
+
+    async def test_duplicate_signature_prefers_lower_window_id(self) -> None:
+        from ccgram.handlers.transcript_discovery import (
+            discover_and_register_transcript,
+        )
+        from ccgram.providers.base import SessionStartEvent
+
+        mock_provider = MagicMock()
+        mock_provider.capabilities.supports_hook = False
+        mock_provider.capabilities.name = "codex"
+        mock_provider.discover_transcript.return_value = SessionStartEvent(
+            session_id="uuid-claimed",
+            cwd="/my/project",
+            transcript_path="/path/to/claimed.jsonl",
+            window_key="ccgram:@9",
+        )
+
+        with (
+            patch("ccgram.handlers.transcript_discovery.session_manager") as mock_sm,
+            patch(
+                "ccgram.handlers.transcript_discovery.get_provider_for_window",
+                return_value=mock_provider,
+            ),
+            patch("ccgram.handlers.transcript_discovery.config") as mock_config,
+            patch("ccgram.handlers.transcript_discovery.tmux_manager") as mock_tmux,
+        ):
+            mock_sm.window_states = {
+                "@7": MagicMock(
+                    session_id="uuid-claimed",
+                    cwd="/my/project",
+                    transcript_path="/path/to/claimed.jsonl",
+                    provider_name="codex",
+                ),
+                "@9": MagicMock(
+                    session_id="uuid-claimed",
+                    cwd="/my/project",
+                    transcript_path="/path/to/claimed.jsonl",
+                    provider_name="codex",
+                ),
+            }
+            mock_config.tmux_session_name = "ccgram"
+            mock_tmux.find_window_by_id = AsyncMock(
+                return_value=MagicMock(pane_current_command="bun")
+            )
+            mock_tmux.get_pane_title = AsyncMock(return_value="")
+            await discover_and_register_transcript("@9")
+
+        mock_provider.discover_transcript.assert_called_once_with(
+            "/my/project",
+            "ccgram:@9",
+            max_age=0,
+            exclude_session_ids={"uuid-claimed"},
+            exclude_transcript_paths={"/path/to/claimed.jsonl"},
+        )
 
     async def test_updates_when_new_session_discovered_for_same_window(self) -> None:
         from ccgram.handlers.transcript_discovery import (
