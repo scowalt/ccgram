@@ -57,6 +57,7 @@ _BACKOFF_MIN = 2.0
 _BACKOFF_MAX = 30.0
 _MSG_PREVIEW_LENGTH = 80
 _MONITOR_LOOP_WARN_SECS = 1.0
+_TRANSCRIPT_ACTIVE_SECS = 30
 
 logger = structlog.get_logger()
 
@@ -278,10 +279,19 @@ class SessionMonitor:
             ):
                 continue
 
+            # Check if the existing transcript is still actively written to
+            # (mtime within 30s). A stale transcript that merely exists on
+            # disk should not block reconciliation — the new session's
+            # transcript may have been created after the hook fired.
             existing_tp = existing.get("transcript_path", "")
             new_tp = start_data.get("transcript_path", "")
-            if existing_tp and Path(existing_tp).exists():
-                continue
+            if existing_tp:
+                try:
+                    existing_mtime = Path(existing_tp).stat().st_mtime
+                    if time.time() - existing_mtime < _TRANSCRIPT_ACTIVE_SECS:
+                        continue  # existing transcript still active
+                except OSError:
+                    pass  # existing transcript gone
             if not new_tp or not Path(new_tp).exists():
                 continue
 
