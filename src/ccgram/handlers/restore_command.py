@@ -18,10 +18,11 @@ from telegram.ext import ContextTypes
 from ..config import config
 from ..providers import get_provider_for_window, resolve_launch_command
 from ..session import session_manager
+from ..session_map import session_map_sync
 from ..thread_router import thread_router
 from ..tmux_manager import tmux_manager
 from .message_sender import safe_reply
-from .polling_strategies import clear_dead_notification
+from .polling_strategies import lifecycle_strategy
 from .topic_emoji import format_topic_name_for_mode
 
 logger = structlog.get_logger()
@@ -55,18 +56,18 @@ async def restore_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         return
 
-    ws = session_manager.get_window_state(window_id)
-    cwd = ws.cwd or ""
-    if not cwd or not Path(cwd).is_dir():
+    view = session_manager.view_window(window_id)
+    if view is None or not view.cwd or not Path(view.cwd).is_dir():
         await safe_reply(update.message, "Directory no longer exists.")
         return
+    cwd = view.cwd
 
     # Auto-recover: unbind old, create new window with --continue, rebind
     thread_router.unbind_thread(user_id, thread_id)
-    clear_dead_notification(user_id, thread_id)
+    lifecycle_strategy.clear_dead_notification(user_id, thread_id)
 
-    provider = get_provider_for_window(window_id)
-    approval_mode = session_manager.get_approval_mode(window_id)
+    provider = get_provider_for_window(window_id, provider_name=view.provider_name)
+    approval_mode = view.approval_mode
     launch_command = resolve_launch_command(
         provider.capabilities.name, approval_mode=approval_mode
     )
@@ -80,7 +81,7 @@ async def restore_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     if provider.capabilities.supports_hook:
-        await session_manager.wait_for_session_map_entry(wid)
+        await session_map_sync.wait_for_session_map_entry(wid)
 
     session_manager.set_window_provider(wid, provider.capabilities.name)
     session_manager.set_window_approval_mode(wid, approval_mode)

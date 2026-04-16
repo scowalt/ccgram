@@ -26,7 +26,10 @@ from telegram.error import BadRequest, TelegramError
 from telegram.ext import ContextTypes
 
 from ..config import config
+from .. import window_query
 from ..session import AuditIssue, AuditResult, session_manager
+from ..session_map import session_map_sync
+from ..user_preferences import user_preferences
 from ..thread_router import thread_router
 from ..tmux_manager import tmux_manager
 from .callback_data import CB_SYNC_DISMISS, CB_SYNC_FIX
@@ -252,13 +255,15 @@ async def _adopt_orphaned_windows(bot: Bot, issues: list[AuditIssue]) -> None:
         if not match:
             continue
         window_id = match.group(1)
-        ws = session_manager.get_window_state(window_id)
-        name = ws.window_name or thread_router.get_display_name(window_id)
+        view = window_query.view_window(window_id)
+        name = (view.window_name if view else "") or thread_router.get_display_name(
+            window_id
+        )
         event = NewWindowEvent(
             window_id=window_id,
-            session_id=ws.session_id,
+            session_id=view.session_id if view else "",
             window_name=name,
-            cwd=ws.cwd,
+            cwd=view.cwd if view else "",
         )
         try:
             await _handle_new_window(event, bot)
@@ -341,13 +346,15 @@ async def _recreate_dead_topics(bot: Bot, issues: list[AuditIssue]) -> int:
         thread_id = int(match.group(2))
         window_id = match.group(3)
 
-        ws = session_manager.get_window_state(window_id)
-        name = ws.window_name or thread_router.get_display_name(window_id)
+        view = window_query.view_window(window_id)
+        name = (view.window_name if view else "") or thread_router.get_display_name(
+            window_id
+        )
         event = NewWindowEvent(
             window_id=window_id,
-            session_id=ws.session_id,
+            session_id=view.session_id if view else "",
             window_name=name,
-            cwd=ws.cwd,
+            cwd=view.cwd if view else "",
         )
 
         # Preserve group_chat_id before unbinding — unbind_thread deletes it,
@@ -416,13 +423,13 @@ async def handle_sync_fix(query: CallbackQuery) -> None:
     try:
         session_manager.sync_display_names(live_pairs)
         session_manager.prune_stale_state(live_ids)
-        session_manager.prune_session_map(live_ids)
+        session_map_sync.prune_session_map(live_ids)
         session_manager.prune_stale_window_states(live_ids)
         bound_ids: set[str] = {
             wid for _, _, wid in thread_router.iter_thread_bindings()
         }
-        state_ids = set(session_manager.window_states.keys())
-        session_manager.prune_stale_offsets(live_ids | bound_ids | state_ids)
+        state_ids = set(session_manager.iter_window_ids())
+        user_preferences.prune_stale_offsets(live_ids | bound_ids | state_ids)
     except OSError:
         logger.exception("Error during sync fix operations")
 

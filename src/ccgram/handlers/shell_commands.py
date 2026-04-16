@@ -39,7 +39,7 @@ from .callback_helpers import get_thread_id
 from .callback_registry import register
 from .message_sender import safe_edit, safe_reply, safe_send
 from .message_queue import enqueue_status_update
-from .polling_strategies import clear_probe_failures
+from .polling_strategies import lifecycle_strategy
 from ..topic_state_registry import topic_state
 
 logger = structlog.get_logger()
@@ -70,10 +70,9 @@ def clear_shell_pending(chat_id: int, thread_id: int) -> None:
 
 async def _ensure_prompt_marker(window_id: str) -> None:
     """Lazily restore prompt marker if lost (exec bash, profile reload)."""
-    from ..providers.shell import has_prompt_marker, setup_shell_prompt
+    from .shell_prompt_orchestrator import ensure_setup
 
-    if not await has_prompt_marker(window_id):
-        await setup_shell_prompt(window_id, clear=False)
+    await ensure_setup(window_id, "lazy")
 
 
 async def _cancel_stuck_input(window_id: str) -> None:
@@ -136,7 +135,7 @@ async def handle_shell_message(
 ) -> None:
     """Route shell provider messages: ``!`` prefix = raw, else = NL via LLM."""
     await enqueue_status_update(bot, user_id, window_id, None, thread_id)
-    clear_probe_failures(window_id)
+    lifecycle_strategy.clear_probe_failures(window_id)
 
     chat_id = thread_router.resolve_chat_id(user_id, thread_id)
     clear_shell_pending(chat_id, thread_id)

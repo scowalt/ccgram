@@ -83,6 +83,7 @@ from .handlers.polling_coordinator import status_poll_loop
 from .handlers.file_handler import handle_document_message, handle_photo_message
 from .handlers.voice_handler import handle_voice_message
 from .handlers.text_handler import handle_text_message
+from . import window_query
 from .session import session_manager
 from .session_monitor import NewMessage, NewWindowEvent, SessionMonitor
 from .thread_router import thread_router
@@ -145,7 +146,9 @@ async def history_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -
         await safe_reply(update.message, "\u274c No session bound to this topic.")
         return
 
-    provider = get_provider_for_window(window_id)
+    provider = get_provider_for_window(
+        window_id, provider_name=window_query.get_window_provider(window_id)
+    )
     if not provider.capabilities.supports_structured_transcript:
         await safe_reply(update.message, "No transcript available for this provider.")
         return
@@ -167,7 +170,9 @@ async def commands_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) 
         await safe_reply(update.message, "\u274c No session bound to this topic.")
         return
 
-    provider = get_provider_for_window(window_id)
+    provider = get_provider_for_window(
+        window_id, provider_name=window_query.get_window_provider(window_id)
+    )
     await _sync_scoped_provider_menu(update.message, user.id, provider)
     commands = discover_provider_commands(provider)
     if not commands:
@@ -215,13 +220,12 @@ async def toolbar_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -
         )
         return
 
-    from .handlers.toolbar_callbacks import (
+    from .handlers.toolbar_keyboard import (
         build_toolbar_keyboard,
         seed_button_states,
     )
 
-    ws = session_manager.get_window_state(window_id)
-    provider_name = ws.provider_name if ws and ws.provider_name else "claude"
+    provider_name = window_query.get_window_provider(window_id) or "claude"
     # Seed toggle-button labels with the actual current state so the
     # initial render shows "Edit"/"Plan"/"YOLO"/"Def" instead of "Mode".
     await seed_button_states(window_id)
@@ -426,6 +430,27 @@ async def post_init(application: Application) -> None:
         await dispatch_hook_event(event, application.bot)
 
     monitor.set_hook_event_callback(hook_event_callback)
+
+    # Wire module-level callbacks to break cross-subsystem direct imports.
+    from .handlers.hook_events import register_stop_callback
+    from .handlers.periodic_tasks import run_broker_cycle
+    from .handlers.polling_strategies import terminal_screen_buffer
+    from .handlers.shell_capture import register_approval_callback
+    from .handlers.shell_commands import show_command_approval
+    from .handlers.status_bubble import register_rc_active_provider
+
+    # hook_events triggers broker delivery on Stop via callback (not a direct import).
+    async def _on_stop(bot_, window_key: str) -> None:  # type: ignore[no-untyped-def]
+        await run_broker_cycle(bot_, idle_windows=frozenset({window_key}))
+
+    register_stop_callback(_on_stop)
+
+    # status_bubble asks polling layer for RC state via callback (not a direct import).
+    register_rc_active_provider(terminal_screen_buffer.is_rc_active)
+
+    # shell_capture calls show_command_approval via callback to break the runtime cycle.
+    register_approval_callback(show_command_approval)
+
     monitor.start()
     session_monitor = monitor
     logger.info("Session monitor started")

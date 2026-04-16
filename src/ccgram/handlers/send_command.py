@@ -7,7 +7,7 @@ Provides utilities for the /send Telegram command:
   - _format_file_label: human-readable inline keyboard button labels
   - build_file_browser: build paginated inline keyboard for directory browsing
   - build_search_results: build inline keyboard for search result selection
-  - _upload_file: send a file to Telegram (photo or document)
+  - upload_file: send a file to Telegram (photo or document)
   - send_command: handle the /send command
 """
 
@@ -23,7 +23,7 @@ from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from ..config import config
-from ..session import session_manager
+from ..window_query import view_window
 from ..thread_router import thread_router
 from .callback_data import (
     CB_SEND_CANCEL,
@@ -294,7 +294,7 @@ def build_search_results(
     return header, InlineKeyboardMarkup(buttons), shown
 
 
-async def _upload_file(bot: Bot, chat_id: int, thread_id: int, path: Path) -> None:
+async def upload_file(bot: Bot, chat_id: int, thread_id: int, path: Path) -> None:
     """Send *path* to the given Telegram chat/thread as photo or document."""
     try:
         with path.open("rb") as fh:
@@ -358,7 +358,7 @@ async def _upload_with_feedback(
 ) -> None:
     """Upload *path*, replying with a human-readable error on TelegramError."""
     try:
-        await _upload_file(context.bot, chat_id, thread_id, path)
+        await upload_file(context.bot, chat_id, thread_id, path)
     except TelegramError as exc:
         await safe_reply(update.message, f"Upload failed: {exc}")  # type: ignore[arg-type]
 
@@ -445,7 +445,7 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await safe_reply(update.message, "No session bound to this topic.")
         return
 
-    view = session_manager.view_window(window_id)
+    view = view_window(window_id)
     cwd = Path(view.cwd) if view and view.cwd else None
     if not cwd or not cwd.is_dir():
         await safe_reply(update.message, "Working directory not available.")

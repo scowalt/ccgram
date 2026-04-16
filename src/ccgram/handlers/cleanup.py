@@ -21,7 +21,8 @@ if TYPE_CHECKING:
 
 from ..utils import log_throttle_reset
 from .interactive_ui import clear_interactive_msg
-from .message_queue import clear_status_msg_info, enqueue_status_update
+from .message_queue import enqueue_status_update
+from .status_bubble import clear_status_msg_info
 from .user_state import PENDING_THREAD_ID, PENDING_THREAD_TEXT, VOICE_PENDING
 
 
@@ -41,10 +42,12 @@ async def clear_topic_state(
     registered as simple callbacks.
 
     Args:
-        window_dead: When False, skip qualified-scope cleanup (delivery state,
-            peer metadata, spawn requests) because the tmux window is still
-            alive.  Callers that keep the window running (topic close, /unbind)
-            should pass ``window_dead=False``.
+        window_dead: When False, skip mailbox/qualified-scope cleanup because
+            the tmux window is still alive (e.g. topic close, /unbind).
+            Window-scope callbacks (toolbar labels, screen buffer, etc.) always
+            run.  Shell prompt orchestrator state is cleared separately, only
+            when the window is truly dead, to preserve skip/offer state for
+            live sessions.
     """
     from ..config import config
     from ..thread_router import thread_router
@@ -69,7 +72,11 @@ async def clear_topic_state(
     else:
         clear_status_msg_info(user_id, thread_id)
 
-    # Registry dispatch — all module-specific per-topic/window/chat state
+    # Registry dispatch — all module-specific per-topic/window/chat state.
+    # Always pass window_id so window-scope callbacks (toolbar, screen buffer,
+    # monitor state, etc.) run even when the window is still alive.
+    # Shell prompt orchestrator state is excluded from the registry and handled
+    # below so it only clears on true window death.
     topic_state.clear_all(
         user_id,
         thread_id,
@@ -77,6 +84,10 @@ async def clear_topic_state(
         qualified_id=qualified_id,
         chat_id=chat_id,
     )
+    if window_id and window_dead:
+        from .shell_prompt_orchestrator import clear_state as _clear_shell_prompt
+
+        _clear_shell_prompt(window_id)
 
     # Infrastructure cleanup (formatted keys, file I/O — not registerable)
     log_throttle_reset(f"status-update:{user_id}:{thread_id}")

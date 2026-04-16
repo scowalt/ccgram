@@ -85,7 +85,7 @@ class DiscoveredCommand:
 # ── Hook events ─────────────────────────────────────────────────────────
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class HookEvent:
     """A structured event from the hook event log."""
 
@@ -129,6 +129,11 @@ class ProviderCapabilities:
     # → command flow with a prompt-marker terminal loop. Used by handlers to
     # gate shell-specific behavior without checking ``provider_name == "shell"``.
     chat_first_command_path: bool = False
+    has_yolo_confirmation: bool = False
+    # When true, the provider maintains a per-window task-state model seeded
+    # from transcript entries. Callers should invoke seed_task_state() on
+    # session start and apply_task_entries() on each new batch.
+    supports_task_tracking: bool = False
 
 
 # ── Provider protocol ────────────────────────────────────────────────────
@@ -297,3 +302,36 @@ class AgentProvider(Protocol):
         native transcript output, so the caller can skip the snapshot fallback.
         """
         ...
+
+    async def scrape_current_mode(self, window_id: str) -> str | None:  # noqa: ARG002
+        """Scrape the agent CLI's mode-line from the terminal and return a short label.
+
+        Returns a short human-readable label (e.g. "Edit", "Plan", "YOLO")
+        or None if the provider does not expose a mode indicator.
+        """
+        return None
+
+    async def seed_task_state(  # noqa: ARG002
+        self,
+        window_id: str,
+        session_id: str,
+        transcript_path: str,
+    ) -> None:
+        """Seed task-tracking state from a transcript on session start.
+
+        Called once when a new session is discovered, before incremental
+        entry processing begins. Default: no-op.
+        Only providers with ``supports_task_tracking=True`` implement this.
+        """
+
+    def apply_task_entries(  # noqa: ARG002
+        self,
+        window_id: str,
+        session_id: str,
+        entries: list[dict],
+    ) -> None:
+        """Apply parsed transcript entries to task-tracking state.
+
+        Called on each batch of new transcript entries. Default: no-op.
+        Only providers with ``supports_task_tracking=True`` implement this.
+        """

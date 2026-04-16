@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -60,12 +61,16 @@ class TestForwardCommandResolution:
         self.mock_tr.get_display_name.return_value = "project"
         self.mock_tr.set_group_chat_id = MagicMock()
 
-        self.mock_sm = MagicMock()
-        self.mock_sm.get_window_state.return_value = SimpleNamespace(
-            transcript_path="",
+        self.mock_ws = MagicMock()
+
+        self.mock_wq = MagicMock()
+        self.mock_wq.view_window.return_value = SimpleNamespace(
+            transcript_path=None,
             session_id="sess-1",
             cwd="/work/repo",
+            provider_name="claude",
         )
+        self.mock_wq.get_window_provider.return_value = "claude"
 
         self.mock_tm = MagicMock()
         self.mock_tm.find_window_by_id = AsyncMock(
@@ -84,9 +89,8 @@ class TestForwardCommandResolution:
 
         with (
             patch("ccgram.handlers.command_orchestration.thread_router", self.mock_tr),
-            patch(
-                "ccgram.handlers.command_orchestration.session_manager", self.mock_sm
-            ),
+            patch("ccgram.handlers.command_orchestration.window_store", self.mock_ws),
+            patch("ccgram.handlers.command_orchestration.window_query", self.mock_wq),
             patch(
                 "ccgram.handlers.command_orchestration.send_to_window",
                 new_callable=AsyncMock,
@@ -215,17 +219,14 @@ class TestForwardCommandResolution:
         update = _make_update(text="/clear")
         await forward_command_handler(update, _make_context())
 
-        self.mock_sm.clear_window_session.assert_called_once_with("@1")
+        self.mock_ws.clear_window_session.assert_called_once_with("@1")
 
     async def test_clear_enqueues_status_clear_and_resets_idle(self) -> None:
-        from ccgram.handlers.polling_strategies import (
-            reset_seen_status_state,
-            terminal_strategy,
-        )
+        from ccgram.handlers.polling_strategies import terminal_poll_state
 
-        _window_poll_state = terminal_strategy._states
+        _window_poll_state = terminal_poll_state._states
 
-        terminal_strategy.get_state("@1").has_seen_status = True
+        terminal_poll_state.get_state("@1").has_seen_status = True
         try:
             with (
                 patch(
@@ -246,7 +247,7 @@ class TestForwardCommandResolution:
                 and _window_poll_state["@1"].has_seen_status
             )
         finally:
-            reset_seen_status_state()
+            terminal_poll_state.reset_all_seen_status()
 
     async def test_no_session_bound(self) -> None:
         self.mock_tr.resolve_window_for_thread.return_value = None
@@ -299,11 +300,16 @@ class TestForwardCommandResolution:
         self.mock_send_to_window.assert_not_called()
 
     async def test_status_snapshot_sends_reply(self) -> None:
-        self.mock_sm.get_window_state.return_value = SimpleNamespace(
-            transcript_path="/tmp/codex.jsonl",
+        mock_path = MagicMock(spec=Path)
+        mock_path.__str__ = MagicMock(return_value="/tmp/codex.jsonl")
+        mock_path.stat.return_value.st_size = 1024
+        _view = SimpleNamespace(
+            transcript_path=mock_path,
             session_id="sess-1",
             cwd="/work/repo",
+            provider_name="codex",
         )
+        self.mock_wq.view_window.return_value = _view
         codex_provider = SimpleNamespace(
             capabilities=SimpleNamespace(
                 name="codex",
@@ -355,11 +361,16 @@ class TestForwardCommandResolution:
     async def test_status_snapshot_skips_fallback_when_native_reply_exists(
         self,
     ) -> None:
-        self.mock_sm.get_window_state.return_value = SimpleNamespace(
-            transcript_path="/tmp/codex.jsonl",
+        mock_path2 = MagicMock(spec=Path)
+        mock_path2.__str__ = MagicMock(return_value="/tmp/codex.jsonl")
+        mock_path2.stat.return_value.st_size = 1024
+        _view2 = SimpleNamespace(
+            transcript_path=mock_path2,
             session_id="sess-1",
             cwd="/work/repo",
+            provider_name="codex",
         )
+        self.mock_wq.view_window.return_value = _view2
         codex_provider = SimpleNamespace(
             capabilities=SimpleNamespace(
                 name="codex",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -14,7 +15,8 @@ from ccgram.window_view import WindowView
 
 def _wire_store() -> SessionManager:
     """Instantiate a fresh SessionManager so window_store has a real save callback."""
-    return SessionManager()
+    with patch.object(SessionManager, "_load_state"):
+        return SessionManager()
 
 
 class TestWindowViewProjection:
@@ -39,7 +41,11 @@ class TestWindowViewProjection:
             provider_name="claude",
             approval_mode="normal",
             notification_mode="all",
+            batch_mode="batched",
             transcript_path=Path("/tmp/log.jsonl"),
+            window_name="",
+            session_id="",
+            external=False,
         )
         # cleanup
         window_store.window_states.pop("@1", None)

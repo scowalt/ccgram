@@ -185,13 +185,13 @@ async def _edit_topic_name(
 
 def _resolve_approval_mode(chat_id: int, thread_id: int) -> str:
     """Resolve approval mode for a topic via session bindings."""
-    from ..session import DEFAULT_APPROVAL_MODE, session_manager
+    from ..window_query import get_approval_mode
     from ..thread_router import thread_router
 
     window_id = thread_router.get_window_for_chat_thread(chat_id, thread_id)
     if not window_id:
-        return DEFAULT_APPROVAL_MODE
-    return session_manager.get_approval_mode(window_id)
+        return "normal"
+    return get_approval_mode(window_id)
 
 
 def _resolve_rc_mode(chat_id: int, thread_id: int) -> bool:
@@ -201,9 +201,9 @@ def _resolve_rc_mode(chat_id: int, thread_id: int) -> bool:
     window_id = thread_router.get_window_for_chat_thread(chat_id, thread_id)
     if not window_id:
         return False
-    from .polling_strategies import is_rc_active
+    from .polling_strategies import terminal_screen_buffer
 
-    return is_rc_active(window_id)
+    return terminal_screen_buffer.is_rc_active(window_id)
 
 
 def format_topic_name_for_mode(display_name: str, approval_mode: str) -> str:

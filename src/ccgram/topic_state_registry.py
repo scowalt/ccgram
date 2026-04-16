@@ -50,6 +50,25 @@ class TopicStateRegistry:
 
         return decorator
 
+    def register_bound(self, scope: str, method: Callable[..., None]) -> None:
+        """Register a bound method (or any callable) under *scope*.
+
+        Unlike the ``register`` decorator, this accepts an already-bound method
+        and stores it directly.  Intended for strategy classes that register
+        cleanup in ``__init__``.
+        """
+        if scope not in _VALID_SCOPES:
+            msg = f"Unknown cleanup scope {scope!r}; valid: {sorted(_VALID_SCOPES)}"
+            raise ValueError(msg)
+        bucket = self._cleanups[scope]
+        if method not in bucket:
+            bucket.append(method)
+
+    def _reset_for_testing(self) -> None:
+        """Clear all registered callbacks.  Only for use in tests."""
+        for bucket in self._cleanups.values():
+            bucket.clear()
+
     # -- dispatch helpers --------------------------------------------------
 
     def clear_topic(self, user_id: int, thread_id: int) -> None:
@@ -93,7 +112,7 @@ def _safe_call(fn: Callable, *args: object) -> None:
     except (
         OSError,
         ValueError,
-        KeyError,
+        LookupError,
         TypeError,
         RuntimeError,
         AttributeError,

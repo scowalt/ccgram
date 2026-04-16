@@ -15,6 +15,7 @@ from ccgram.handlers.shell_commands import (
     _generation_counter,
     _shell_pending,
     handle_shell_message,
+    show_command_approval,
 )
 from ccgram.llm.base import CommandResult
 
@@ -48,8 +49,8 @@ class TestRawCommandFlow:
 
         with (
             patch(f"{_MOD_CMD}.enqueue_status_update", new_callable=AsyncMock),
-            patch(f"{_MOD_CMD}.clear_probe_failures"),
-            patch("ccgram.handlers.shell_context.session_manager"),
+            patch(f"{_MOD_CMD}.lifecycle_strategy.clear_probe_failures"),
+            patch("ccgram.handlers.shell_context.view_window"),
             patch(f"{_MOD_CMD}.thread_router") as mock_tr,
             patch(f"{_MOD_CMD}.tmux_manager") as mock_tm,
             patch(
@@ -177,7 +178,7 @@ class TestLlmCommandFlow:
 
         with (
             patch(f"{_MOD_CMD}.enqueue_status_update", new_callable=AsyncMock),
-            patch(f"{_MOD_CMD}.clear_probe_failures"),
+            patch(f"{_MOD_CMD}.lifecycle_strategy.clear_probe_failures"),
             patch(f"{_MOD_CMD}.get_completer", return_value=mock_completer),
             patch(f"{_MOD_CMD}.thread_router") as mock_tr,
             patch(f"{_MOD_CMD}.tmux_manager") as mock_tm,
@@ -219,9 +220,9 @@ class TestLlmCommandFlow:
 
         with (
             patch(f"{_MOD_CMD}.enqueue_status_update", new_callable=AsyncMock),
-            patch(f"{_MOD_CMD}.clear_probe_failures"),
+            patch(f"{_MOD_CMD}.lifecycle_strategy.clear_probe_failures"),
             patch(f"{_MOD_CMD}.get_completer", return_value=None),
-            patch("ccgram.handlers.shell_context.session_manager"),
+            patch("ccgram.handlers.shell_context.view_window"),
             patch(f"{_MOD_CMD}.thread_router") as mock_tr,
             patch(
                 f"{_MOD_CMD}.send_to_window",
@@ -288,7 +289,7 @@ class TestErrorRecovery:
             ),
             patch("ccgram.llm.get_completer", return_value=mock_completer),
             patch(
-                "ccgram.handlers.shell_commands.gather_llm_context",
+                "ccgram.handlers.shell_context.gather_llm_context",
                 new_callable=AsyncMock,
                 return_value={"cwd": "/tmp", "shell": "bash", "shell_tools": ""},
             ),
@@ -296,6 +297,7 @@ class TestErrorRecovery:
                 "ccgram.handlers.shell_commands.safe_send",
                 new_callable=AsyncMock,
             ) as mock_send,
+            patch(f"{_MOD_CAP}._approval_callback", new=show_command_approval),
         ):
             mock_sm.resolve_chat_id.return_value = TEST_CHAT_ID
 

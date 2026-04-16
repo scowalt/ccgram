@@ -22,7 +22,9 @@ from telegram.ext import ContextTypes
 
 from ..config import config
 from ..providers import get_provider, get_provider_for_window, resolve_launch_command
+from .. import window_query
 from ..session import session_manager
+from ..session_map import session_map_sync
 from ..thread_router import thread_router
 from ..tmux_manager import send_to_window, tmux_manager
 from ..utils import read_session_metadata_from_jsonl
@@ -65,7 +67,9 @@ def build_recovery_keyboard(window_id: str) -> InlineKeyboardMarkup:
     declares support for those capabilities.
     """
 
-    caps = get_provider_for_window(window_id).capabilities
+    caps = get_provider_for_window(
+        window_id, provider_name=window_query.get_window_provider(window_id)
+    ).capabilities
     options: list[InlineKeyboardButton] = [
         InlineKeyboardButton(
             "\U0001f195 Fresh",
@@ -311,8 +315,8 @@ def _validate_recovery_state(
             context.user_data[PENDING_THREAD_ID] = thread_id
             context.user_data[RECOVERY_WINDOW_ID] = data_suffix
 
-    ws = session_manager.get_window_state(data_suffix)
-    cwd = ws.cwd or ""
+    view = session_manager.view_window(data_suffix)
+    cwd = view.cwd if view else ""
     return thread_id, data_suffix, cwd
 
 
@@ -346,17 +350,20 @@ async def _create_and_bind_window(
     """
     # Unbind old dead window and clear dead-notification tracking
     thread_router.unbind_thread(user_id, thread_id)
-    from .polling_strategies import clear_dead_notification
+    from .polling_strategies import lifecycle_strategy
 
-    clear_dead_notification(user_id, thread_id)
+    lifecycle_strategy.clear_dead_notification(user_id, thread_id)
 
     # Resolve provider from old window (falls back to global default)
-    provider = (
-        get_provider_for_window(old_window_id) if old_window_id else get_provider()
-    )
-    approval_mode = (
-        session_manager.get_approval_mode(old_window_id) if old_window_id else "normal"
-    )
+    if old_window_id:
+        old_view = session_manager.view_window(old_window_id)
+        provider = get_provider_for_window(
+            old_window_id, provider_name=old_view.provider_name if old_view else None
+        )
+        approval_mode = old_view.approval_mode if old_view else "normal"
+    else:
+        provider = get_provider()
+        approval_mode = "normal"
     launch_command = resolve_launch_command(
         provider.capabilities.name, approval_mode=approval_mode
     )
@@ -372,7 +379,7 @@ async def _create_and_bind_window(
 
     # Only wait for session_map if provider supports hooks (avoids 5s timeout)
     if provider.capabilities.supports_hook:
-        await session_manager.wait_for_session_map_entry(created_wid)
+        await session_map_sync.wait_for_session_map_entry(created_wid)
 
     # Propagate provider to new window
     session_manager.set_window_provider(created_wid, provider.capabilities.name)
@@ -492,7 +499,9 @@ async def _handle_continue(
         await query.answer("Failed")
         return
 
-    launch_args = get_provider_for_window(old_wid).make_launch_args(use_continue=True)
+    launch_args = get_provider_for_window(
+        old_wid, provider_name=window_query.get_window_provider(old_wid)
+    ).make_launch_args(use_continue=True)
     await _create_and_bind_window(
         query,
         user_id,
@@ -588,17 +597,17 @@ async def _handle_resume_pick(
         await query.answer("Stale recovery state", show_alert=True)
         return
 
-    ws = session_manager.get_window_state(old_wid)
-    cwd = ws.cwd or ""
-    if not cwd or not Path(cwd).is_dir():
+    view = session_manager.view_window(old_wid)
+    if view is None or not view.cwd or not Path(view.cwd).is_dir():
         await safe_edit(query, "\u274c Directory no longer exists.")
         _clear_recovery_state(context.user_data)
         await query.answer("Failed")
         return
+    cwd = view.cwd
 
-    launch_args = get_provider_for_window(old_wid).make_launch_args(
-        resume_id=session_id
-    )
+    launch_args = get_provider_for_window(
+        old_wid, provider_name=view.provider_name
+    ).make_launch_args(resume_id=session_id)
     await _create_and_bind_window(
         query,
         user_id,
