@@ -29,7 +29,7 @@ from ccgram.handlers.screenshot_callbacks import (
     _handle_live_stop,
     build_screenshot_keyboard,
 )
-from ccgram.handlers.toolbar_callbacks import build_toolbar_keyboard
+from ccgram.handlers.toolbar_keyboard import build_toolbar_keyboard
 
 
 @pytest.fixture(autouse=True)
@@ -224,7 +224,8 @@ class TestBuildScreenshotKeyboard:
 class TestBuildToolbarKeyboard:
     def test_has_live_button(self):
         with patch(
-            "ccgram.handlers.polling_strategies.is_rc_active", return_value=False
+            "ccgram.handlers.polling_strategies.terminal_screen_buffer.is_rc_active",
+            return_value=False,
         ):
             kb = build_toolbar_keyboard("@0")
         flat = [btn for row in kb.inline_keyboard for btn in row]
@@ -233,7 +234,8 @@ class TestBuildToolbarKeyboard:
 
     def test_live_replaces_esc_in_row1(self):
         with patch(
-            "ccgram.handlers.polling_strategies.is_rc_active", return_value=False
+            "ccgram.handlers.polling_strategies.terminal_screen_buffer.is_rc_active",
+            return_value=False,
         ):
             kb = build_toolbar_keyboard("@0")
         row1_labels = [btn.text for btn in kb.inline_keyboard[0]]
@@ -246,7 +248,8 @@ class TestBuildToolbarKeyboard:
         from ccgram.handlers.callback_data import CB_TOOLBAR
 
         with patch(
-            "ccgram.handlers.polling_strategies.is_rc_active", return_value=False
+            "ccgram.handlers.polling_strategies.terminal_screen_buffer.is_rc_active",
+            return_value=False,
         ):
             kb = build_toolbar_keyboard("@0")
         flat = [btn for row in kb.inline_keyboard for btn in row]
@@ -725,7 +728,7 @@ class TestHandleLiveStop:
 
 class TestHandleKeysLiveGuard:
     async def test_skips_refresh_when_live_view_active(self):
-        from ccgram.handlers.screenshot_callbacks import _handle_keys
+        from ccgram.handlers.status_bar_actions import _handle_keys
 
         start_live_view(_make_view(user_id=1, thread_id=42))
         query = AsyncMock()
@@ -736,16 +739,16 @@ class TestHandleKeysLiveGuard:
 
         with (
             patch(
-                "ccgram.handlers.screenshot_callbacks.user_owns_window",
+                "ccgram.handlers.status_bar_actions.user_owns_window",
                 return_value=True,
             ),
             patch(
-                "ccgram.handlers.screenshot_callbacks.get_thread_id",
+                "ccgram.handlers.status_bar_actions.get_thread_id",
                 return_value=42,
             ),
-            patch("ccgram.handlers.screenshot_callbacks.tmux_manager") as mock_tmux,
+            patch("ccgram.handlers.status_bar_actions.tmux_manager") as mock_tmux,
             patch(
-                "ccgram.handlers.screenshot_callbacks.text_to_image",
+                "ccgram.handlers.status_bar_actions.text_to_image",
                 new_callable=AsyncMock,
             ) as mock_img,
         ):
@@ -757,7 +760,7 @@ class TestHandleKeysLiveGuard:
         mock_img.assert_not_awaited()
 
     async def test_refreshes_when_no_live_view(self):
-        from ccgram.handlers.screenshot_callbacks import _handle_keys
+        from ccgram.handlers.status_bar_actions import _handle_keys
 
         assert not is_live(1, 42)
         query = AsyncMock()
@@ -768,20 +771,20 @@ class TestHandleKeysLiveGuard:
 
         with (
             patch(
-                "ccgram.handlers.screenshot_callbacks.user_owns_window",
+                "ccgram.handlers.status_bar_actions.user_owns_window",
                 return_value=True,
             ),
             patch(
-                "ccgram.handlers.screenshot_callbacks.get_thread_id",
+                "ccgram.handlers.status_bar_actions.get_thread_id",
                 return_value=42,
             ),
-            patch("ccgram.handlers.screenshot_callbacks.tmux_manager") as mock_tmux,
+            patch("ccgram.handlers.status_bar_actions.tmux_manager") as mock_tmux,
             patch(
-                "ccgram.handlers.screenshot_callbacks.text_to_image",
+                "ccgram.handlers.status_bar_actions.text_to_image",
                 new_callable=AsyncMock,
                 return_value=b"PNG",
             ) as mock_img,
-            patch("ccgram.handlers.screenshot_callbacks._KEY_REFRESH_DELAY", 0),
+            patch("ccgram.handlers.status_bar_actions._KEY_REFRESH_DELAY", 0),
         ):
             mock_tmux.find_window_by_id = AsyncMock(
                 return_value=MagicMock(window_id="@0")

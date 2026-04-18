@@ -8,19 +8,37 @@ of relying solely on terminal scraping.
 Key function: dispatch_hook_event().
 """
 
+import asyncio
 import structlog
+from collections.abc import Awaitable, Callable
 
 from telegram import Bot
 
-from ..claude_task_state import (
-    add_subagent,
-    claude_task_state,
-    clear_subagents,
-    remove_subagent,
-)
+from ..claude_task_state import classify_wait_message, claude_task_state
 from ..providers.base import HookEvent
-from ..session import session_manager
+from ..window_query import view_window
+from ..session_lifecycle import session_lifecycle
 from ..thread_router import thread_router
+from .interactive_ui import (
+    clear_interactive_mode,
+    get_interactive_window,
+    handle_interactive_ui,
+    set_interactive_mode,
+)
+from .message_queue import enqueue_status_update
+from .polling_strategies import reset_window_polling_state
+from .topic_emoji import update_topic_emoji
+
+# Wired at startup by bot.py to trigger broker delivery on Stop events.
+# Avoids a direct hook_events → periodic_tasks import.
+_stop_callback: Callable[[Bot, str], Awaitable[None]] | None = None
+
+
+def register_stop_callback(fn: Callable[[Bot, str], Awaitable[None]]) -> None:
+    """Register the function called when a Stop event fires (wired by bot.py)."""
+    global _stop_callback
+    _stop_callback = fn
+
 
 logger = structlog.get_logger()
 
@@ -50,13 +68,6 @@ def _resolve_users_for_window_key(
 
 async def _handle_notification(event: HookEvent, bot: Bot) -> None:
     """Handle a Notification event — render interactive UI."""
-    from .interactive_ui import (
-        clear_interactive_mode,
-        get_interactive_window,
-        handle_interactive_ui,
-        set_interactive_mode,
-    )
-
     users = _resolve_users_for_window_key(event.window_key)
     if not users:
         logger.debug(
@@ -65,12 +76,19 @@ async def _handle_notification(event: HookEvent, bot: Bot) -> None:
         return
 
     tool_name = event.data.get("tool_name", "")
+    wait_header = classify_wait_message(event.data.get("message", ""))
     logger.debug(
         "Hook notification: tool_name=%s, window_key=%s",
         tool_name,
         event.window_key,
     )
     for user_id, thread_id, window_id in users:
+        if wait_header:
+            session_lifecycle.handle_notification_wait(window_id, wait_header)
+            await enqueue_status_update(
+                bot, user_id, window_id, None, thread_id=thread_id
+            )
+
         # Skip if already in interactive mode for this window
         existing = get_interactive_window(user_id, thread_id)
         if existing == window_id:
@@ -85,7 +103,6 @@ async def _handle_notification(event: HookEvent, bot: Bot) -> None:
         set_interactive_mode(user_id, window_id, thread_id)
 
         # Wait briefly for Claude Code to render the UI in the terminal
-        import asyncio
 
         await asyncio.sleep(0.3)
 
@@ -133,7 +150,6 @@ async def _handle_stop(event: HookEvent, bot: Bot) -> None:
     topics, so Stop only updates the status bubble and broker delivery state.
     Muted/errors_only windows get their status cleared instead.
     """
-    from .message_queue import enqueue_status_update
 
     users = _resolve_users_for_window_key(event.window_key)
     if not users:
@@ -151,22 +167,20 @@ async def _handle_stop(event: HookEvent, bot: Bot) -> None:
     # Try LLM summary with timeout to avoid flicker (send once, not twice).
     # If LLM is available and responds within timeout, include summary in the
     # initial status message. Otherwise fall back to plain Ready.
+    # All users share the same window_id — fetch view once, reuse in loop.
     first_window_id = users[0][2]
+    view = view_window(first_window_id)
     summary: str | None = None
-    if first_window_id:
-        transcript_path = session_manager.get_window_state(
-            first_window_id
-        ).transcript_path
-        if transcript_path:
-            import asyncio
+    if view and view.transcript_path:
+        try:
+            summary = await asyncio.wait_for(
+                _get_llm_summary(str(view.transcript_path)),
+                timeout=_LLM_SUMMARY_TIMEOUT,
+            )
+        except TimeoutError:
+            logger.debug("LLM summary timed out after %ss", _LLM_SUMMARY_TIMEOUT)
 
-            try:
-                summary = await asyncio.wait_for(
-                    _get_llm_summary(transcript_path),
-                    timeout=_LLM_SUMMARY_TIMEOUT,
-                )
-            except TimeoutError:
-                logger.debug("LLM summary timed out after %ss", _LLM_SUMMARY_TIMEOUT)
+    notif_mode = view.notification_mode if view else "all"
 
     # Guard: if the terminal still shows a spinner, the agent is between
     # turns (e.g. executing tools after end_turn) — skip Ready and let the
@@ -176,8 +190,7 @@ async def _handle_stop(event: HookEvent, bot: Bot) -> None:
         return
 
     for user_id, thread_id, window_id in users:
-        claude_task_state.clear_wait_header(window_id)
-        notif_mode = session_manager.get_notification_mode(window_id)
+        session_lifecycle.handle_stop_task_state(window_id)
         if notif_mode in ("muted", "errors_only"):
             status_text = None
         else:
@@ -192,10 +205,9 @@ async def _handle_stop(event: HookEvent, bot: Bot) -> None:
             bot, user_id, window_id, status_text, thread_id=thread_id
         )
 
-    # Trigger immediate broker delivery for the idle window
-    from .periodic_tasks import run_broker_cycle
-
-    await run_broker_cycle(bot, idle_windows=frozenset({event.window_key}))
+    # Trigger immediate broker delivery for the idle window via registered callback.
+    if _stop_callback is not None:
+        await _stop_callback(bot, event.window_key)
 
 
 async def _handle_subagent_start(event: HookEvent, _bot: Bot) -> None:
@@ -213,7 +225,7 @@ async def _handle_subagent_start(event: HookEvent, _bot: Bot) -> None:
         or "subagent"
     )
 
-    count = add_subagent(window_id, subagent_id, name)
+    count = session_lifecycle.handle_subagent_start(window_id, subagent_id, name)
 
     logger.debug(
         "Subagent started: window=%s, count=%d, name=%s",
@@ -235,7 +247,7 @@ async def _handle_subagent_stop(event: HookEvent, _bot: Bot) -> None:
     window_id = users[0][2]
     subagent_id = event.data.get("subagent_id", "")
 
-    name, remaining = remove_subagent(window_id, subagent_id)
+    name, remaining = session_lifecycle.handle_subagent_stop(window_id, subagent_id)
 
     logger.debug(
         "Subagent stopped: window=%s, remaining=%d, name=%s",
@@ -249,7 +261,6 @@ async def _handle_subagent_stop(event: HookEvent, _bot: Bot) -> None:
 
 async def _handle_teammate_idle(event: HookEvent, bot: Bot) -> None:
     """Handle TeammateIdle — notify topic that a teammate went idle."""
-    from .message_queue import enqueue_status_update
 
     users = _resolve_users_for_window_key(event.window_key)
     if not users:
@@ -294,9 +305,6 @@ async def _handle_stop_failure(event: HookEvent, bot: Bot) -> None:
 
 async def _handle_session_end(event: HookEvent, bot: Bot) -> None:
     """Handle a SessionEnd event — clean up session lifecycle."""
-    from .message_queue import enqueue_status_update
-    from .polling_strategies import clear_seen_status
-    from .topic_emoji import update_topic_emoji
 
     users = _resolve_users_for_window_key(event.window_key)
     if not users:
@@ -309,15 +317,12 @@ async def _handle_session_end(event: HookEvent, bot: Bot) -> None:
         reason,
     )
 
-    # Clear session association and subagent tracking so next launch starts fresh
     if users:
         window_id = users[0][2]
-        claude_task_state.clear_window(window_id)
-        session_manager.clear_window_session(window_id)
-        clear_subagents(window_id)
+        session_lifecycle.handle_session_end(window_id)
 
     for user_id, thread_id, window_id in users:
-        clear_seen_status(window_id)
+        reset_window_polling_state(window_id)
         chat_id = thread_router.resolve_chat_id(user_id, thread_id)
         display = thread_router.get_display_name(window_id)
         await update_topic_emoji(bot, chat_id, thread_id, "done", display)
@@ -326,7 +331,6 @@ async def _handle_session_end(event: HookEvent, bot: Bot) -> None:
 
 async def _handle_task_completed(event: HookEvent, bot: Bot) -> None:
     """Handle TaskCompleted — notify topic that a task was completed."""
-    from .message_queue import enqueue_status_update
 
     users = _resolve_users_for_window_key(event.window_key)
     if not users:
@@ -345,7 +349,7 @@ async def _handle_task_completed(event: HookEvent, bot: Bot) -> None:
         task_id = event.data.get("task_id", "")
         tracked = False
         if task_id:
-            tracked = claude_task_state.mark_task_completed(
+            tracked = session_lifecycle.handle_task_completed(
                 window_id,
                 event.session_id,
                 task_id,

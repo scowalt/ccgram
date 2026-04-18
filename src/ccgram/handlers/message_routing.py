@@ -12,8 +12,8 @@ from pathlib import Path
 import structlog
 from telegram import Bot
 
+from .. import session_query, window_query
 from ..config import config
-from ..session import session_manager
 from ..user_preferences import user_preferences
 from ..session_monitor import NewMessage
 from .interactive_ui import (
@@ -52,7 +52,7 @@ async def handle_new_message(msg: NewMessage, bot: Bot) -> None:  # noqa: C901, 
         len(msg.text),
     )
 
-    active_users = session_manager.find_users_for_session(msg.session_id)
+    active_users = session_query.find_users_for_session(msg.session_id)
 
     if not active_users:
         logger.info("No active users for session %s", msg.session_id)
@@ -63,7 +63,7 @@ async def handle_new_message(msg: NewMessage, bot: Bot) -> None:  # noqa: C901, 
         structlog.contextvars.bind_contextvars(
             window_id=window_id, session_id=msg.session_id
         )
-        notif_mode = session_manager.get_notification_mode(window_id)
+        notif_mode = window_query.get_notification_mode(window_id)
         is_tool_flow = msg.tool_name in INTERACTIVE_TOOL_NAMES or msg.content_type in (
             "tool_use",
             "tool_result",
@@ -93,7 +93,7 @@ async def handle_new_message(msg: NewMessage, bot: Bot) -> None:  # noqa: C901, 
             await asyncio.sleep(0.3)
             handled = await handle_interactive_ui(bot, user_id, window_id, thread_id)
             if handled:
-                session = await session_manager.resolve_session_for_window(window_id)
+                session = await session_query.resolve_session_for_window(window_id)
                 if session and session.file_path:
                     try:
                         file_size = Path(session.file_path).stat().st_size
@@ -124,12 +124,11 @@ async def handle_new_message(msg: NewMessage, bot: Bot) -> None:  # noqa: C901, 
                 parts=parts,
                 tool_use_id=msg.tool_use_id,
                 tool_name=msg.tool_name,
-                content_type=msg.content_type,
-                text=msg.text,
+                content_type=msg.content_type,  # type: ignore[arg-type]  # NewMessage.content_type is str, narrows at runtime
                 thread_id=thread_id,
             )
 
-            session = await session_manager.resolve_session_for_window(window_id)
+            session = await session_query.resolve_session_for_window(window_id)
             if session and session.file_path:
                 try:
                     file_size = Path(session.file_path).stat().st_size

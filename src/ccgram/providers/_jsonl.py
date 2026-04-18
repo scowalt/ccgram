@@ -266,3 +266,25 @@ class JsonlProvider:
         offset: int,  # noqa: ARG002
     ) -> bool:
         return False
+
+    async def scrape_current_mode(
+        self,
+        window_id: str,  # noqa: ARG002 — protocol signature
+    ) -> str | None:
+        return None
+
+    async def seed_task_state(
+        self,
+        window_id: str,  # noqa: ARG002 — protocol signature
+        session_id: str,  # noqa: ARG002
+        transcript_path: str,  # noqa: ARG002
+    ) -> None:
+        return None
+
+    def apply_task_entries(
+        self,
+        window_id: str,  # noqa: ARG002 — protocol signature
+        session_id: str,  # noqa: ARG002
+        entries: list[dict],  # noqa: ARG002
+    ) -> None:
+        return None

@@ -455,7 +455,7 @@ class TestBuildSearchResults:
 
 
 # ---------------------------------------------------------------------------
-# Helpers for _upload_file and send_command tests
+# Helpers for upload_file and send_command tests
 # ---------------------------------------------------------------------------
 
 from unittest.mock import AsyncMock, MagicMock  # noqa: E402 (appended)
@@ -463,7 +463,7 @@ from unittest.mock import AsyncMock, MagicMock  # noqa: E402 (appended)
 import pytest  # noqa: E402
 from telegram.error import TelegramError  # noqa: E402
 
-from ccgram.handlers.send_command import _upload_file, send_command  # noqa: E402
+from ccgram.handlers.send_command import upload_file, send_command  # noqa: E402
 from ccgram.handlers.user_state import (  # noqa: E402
     SEND_CWD_KEY,
     SEND_ITEMS_KEY,
@@ -499,7 +499,7 @@ class TestUploadFile:
         f = tmp_path / "photo.png"
         f.write_bytes(b"imgdata")
         bot = AsyncMock()
-        await _upload_file(bot, chat_id=-100, thread_id=5, path=f)
+        await upload_file(bot, chat_id=-100, thread_id=5, path=f)
         bot.send_photo.assert_awaited_once()
         call_kwargs = bot.send_photo.call_args.kwargs
         assert call_kwargs["chat_id"] == -100
@@ -510,7 +510,7 @@ class TestUploadFile:
         f = tmp_path / "report.pdf"
         f.write_bytes(b"pdfdata")
         bot = AsyncMock()
-        await _upload_file(bot, chat_id=-100, thread_id=5, path=f)
+        await upload_file(bot, chat_id=-100, thread_id=5, path=f)
         bot.send_document.assert_awaited_once()
         call_kwargs = bot.send_document.call_args.kwargs
         assert call_kwargs["filename"] == "report.pdf"
@@ -521,13 +521,13 @@ class TestUploadFile:
         bot = AsyncMock()
         bot.send_document.side_effect = TelegramError("flood")
         with pytest.raises(TelegramError):
-            await _upload_file(bot, chat_id=-100, thread_id=5, path=f)
+            await upload_file(bot, chat_id=-100, thread_id=5, path=f)
 
     async def test_jpg_calls_send_photo(self, tmp_path: Path) -> None:
         f = tmp_path / "img.jpg"
         f.write_bytes(b"jpgdata")
         bot = AsyncMock()
-        await _upload_file(bot, chat_id=-100, thread_id=5, path=f)
+        await upload_file(bot, chat_id=-100, thread_id=5, path=f)
         bot.send_photo.assert_awaited_once()
         bot.send_document.assert_not_awaited()
 
@@ -538,16 +538,15 @@ class TestSendCommand:
         with (
             patch("ccgram.config.Config.is_user_allowed", return_value=True),
             patch("ccgram.handlers.send_command.thread_router") as mock_tr,
-            patch("ccgram.handlers.send_command.session_manager") as mock_sm,
+            patch("ccgram.handlers.send_command.view_window") as mock_view,
         ):
             self.mock_tr = mock_tr
-            self.mock_sm = mock_sm
+            self.mock_view = mock_view
             mock_tr.resolve_window_for_thread.return_value = "@1"
             mock_tr.resolve_chat_id.return_value = -100123
             ws = MagicMock()
             ws.cwd = None  # overridden per test
-            mock_sm.get_window_state.return_value = ws
-            mock_sm.view_window.return_value = ws
+            mock_view.return_value = ws
             self.ws = ws
             yield
 
@@ -587,7 +586,7 @@ class TestSendCommand:
         # view_window returns None (window state was wiped after binding).
         # The new None guard at send_command.py should reject cleanly
         # instead of raising AttributeError.
-        self.mock_sm.view_window.return_value = None
+        self.mock_view.return_value = None
         update = _make_update()
         ctx = _make_context()
         await send_command(update, ctx)
@@ -614,7 +613,7 @@ class TestSendCommand:
         with (
             patch("ccgram.handlers.send_command.validate_sendable", return_value=None),
             patch(
-                "ccgram.handlers.send_command._upload_file", new_callable=AsyncMock
+                "ccgram.handlers.send_command.upload_file", new_callable=AsyncMock
             ) as mock_up,
         ):
             await send_command(update, ctx)
@@ -647,7 +646,7 @@ class TestSendCommand:
         with (
             patch("ccgram.handlers.send_command.validate_sendable", return_value=None),
             patch(
-                "ccgram.handlers.send_command._upload_file", new_callable=AsyncMock
+                "ccgram.handlers.send_command.upload_file", new_callable=AsyncMock
             ) as mock_up,
         ):
             await send_command(update, ctx)
@@ -665,7 +664,7 @@ class TestSendCommand:
                 return_value="File appears to contain credentials",
             ),
             patch(
-                "ccgram.handlers.send_command._upload_file", new_callable=AsyncMock
+                "ccgram.handlers.send_command.upload_file", new_callable=AsyncMock
             ) as mock_up,
         ):
             await send_command(update, ctx)
@@ -680,7 +679,7 @@ class TestSendCommand:
         with (
             patch("ccgram.handlers.send_command.validate_sendable", return_value=None),
             patch(
-                "ccgram.handlers.send_command._upload_file", new_callable=AsyncMock
+                "ccgram.handlers.send_command.upload_file", new_callable=AsyncMock
             ) as mock_up,
         ):
             await send_command(update, ctx)

@@ -7,7 +7,7 @@ import pytest
 from ccgram.tmux_manager import (
     TmuxManager,
     _VIM_PROBE_DELAY,
-    _has_insert_indicator,
+    has_insert_indicator,
     _vim_locks,
     _vim_state,
     clear_vim_state,
@@ -23,44 +23,44 @@ def _reset():
     reset_vim_state()
 
 
-# ── _has_insert_indicator ──────────────────────────────────────────────
+# ── has_insert_indicator ──────────────────────────────────────────────
 
 
 class TestHasInsertIndicator:
     def test_insert_on_last_line(self):
         pane = "some output\nprompt> hello\n-- INSERT --"
-        assert _has_insert_indicator(pane) is True
+        assert has_insert_indicator(pane) is True
 
     def test_insert_second_to_last(self):
         pane = "line1\n-- INSERT --\nlast line"
-        assert _has_insert_indicator(pane) is True
+        assert has_insert_indicator(pane) is True
 
     def test_insert_third_to_last(self):
         pane = "-- INSERT --\nsecond\nthird"
-        assert _has_insert_indicator(pane) is True
+        assert has_insert_indicator(pane) is True
 
     def test_no_insert_indicator(self):
         pane = "some output\nprompt> hello\n"
-        assert _has_insert_indicator(pane) is False
+        assert has_insert_indicator(pane) is False
 
     def test_insert_too_far_up(self):
         pane = "-- INSERT --\nline2\nline3\nline4"
-        assert _has_insert_indicator(pane) is False
+        assert has_insert_indicator(pane) is False
 
     def test_empty_pane(self):
-        assert _has_insert_indicator("") is False
+        assert has_insert_indicator("") is False
 
     def test_insert_with_surrounding_text(self):
         pane = "output\nstatus: -- INSERT -- (paste)\ndone"
-        assert _has_insert_indicator(pane) is False
+        assert has_insert_indicator(pane) is False
 
     def test_insert_with_whitespace(self):
         pane = "output\n  -- INSERT --  \ndone"
-        assert _has_insert_indicator(pane) is True
+        assert has_insert_indicator(pane) is True
 
     def test_claude_status_bar_insert(self):
         pane = "output\n-- INSERT -- ⏸ plan mode on (shift+tab to cycle)\ndone"
-        assert _has_insert_indicator(pane) is False
+        assert has_insert_indicator(pane) is False
 
 
 # ── notify / clear / reset ─────────────────────────────────────────────
@@ -384,11 +384,11 @@ class TestPollingAndCleanupIntegration:
         """Polling calls notify_vim_insert_seen when INSERT is in last 3 lines."""
         with (
             patch(
-                "ccgram.handlers.polling_coordinator.tmux_manager.find_window_by_id",
+                "ccgram.handlers.window_tick.tmux_manager.find_window_by_id",
                 new_callable=AsyncMock,
             ) as mock_find,
             patch(
-                "ccgram.handlers.polling_coordinator.tmux_manager.capture_pane",
+                "ccgram.handlers.window_tick.tmux_manager.capture_pane",
                 new_callable=AsyncMock,
                 return_value="output\nprompt\n-- INSERT --",
             ),
@@ -397,17 +397,18 @@ class TestPollingAndCleanupIntegration:
                 wraps=notify_vim_insert_seen,
             ) as mock_notify,
             patch(
-                "ccgram.handlers.polling_coordinator._parse_with_pyte",
+                "ccgram.handlers.window_tick._parse_with_pyte",
+                return_value=None,
+            ),
+            patch("ccgram.handlers.window_tick.get_provider_for_window") as mock_gpw,
+            patch(
+                "ccgram.handlers.window_tick.get_interactive_window",
                 return_value=None,
             ),
             patch(
-                "ccgram.handlers.polling_coordinator.get_provider_for_window"
-            ) as mock_gpw,
-            patch(
-                "ccgram.handlers.polling_coordinator.get_interactive_window",
-                return_value=None,
+                "ccgram.handlers.window_tick._apply_tick_decision",
+                new_callable=AsyncMock,
             ),
-            patch("ccgram.handlers.polling_coordinator._handle_no_status"),
         ):
             from unittest.mock import MagicMock
 
@@ -420,7 +421,9 @@ class TestPollingAndCleanupIntegration:
             mock_provider.capabilities.uses_pane_title = False
             mock_gpw.return_value = mock_provider
 
-            from ccgram.handlers.polling_coordinator import update_status_message
+            from ccgram.handlers.window_tick import (
+                _update_status as update_status_message,
+            )
 
             await update_status_message(AsyncMock(), 1, "@9", thread_id=42)
         mock_notify.assert_called_once_with("@9")
@@ -429,11 +432,11 @@ class TestPollingAndCleanupIntegration:
         """Polling does NOT call notify when INSERT is only in historical output."""
         with (
             patch(
-                "ccgram.handlers.polling_coordinator.tmux_manager.find_window_by_id",
+                "ccgram.handlers.window_tick.tmux_manager.find_window_by_id",
                 new_callable=AsyncMock,
             ) as mock_find,
             patch(
-                "ccgram.handlers.polling_coordinator.tmux_manager.capture_pane",
+                "ccgram.handlers.window_tick.tmux_manager.capture_pane",
                 new_callable=AsyncMock,
                 return_value="-- INSERT --\nline2\nline3\nline4",
             ),
@@ -442,17 +445,18 @@ class TestPollingAndCleanupIntegration:
                 wraps=notify_vim_insert_seen,
             ) as mock_notify,
             patch(
-                "ccgram.handlers.polling_coordinator._parse_with_pyte",
+                "ccgram.handlers.window_tick._parse_with_pyte",
+                return_value=None,
+            ),
+            patch("ccgram.handlers.window_tick.get_provider_for_window") as mock_gpw,
+            patch(
+                "ccgram.handlers.window_tick.get_interactive_window",
                 return_value=None,
             ),
             patch(
-                "ccgram.handlers.polling_coordinator.get_provider_for_window"
-            ) as mock_gpw,
-            patch(
-                "ccgram.handlers.polling_coordinator.get_interactive_window",
-                return_value=None,
+                "ccgram.handlers.window_tick._apply_tick_decision",
+                new_callable=AsyncMock,
             ),
-            patch("ccgram.handlers.polling_coordinator._handle_no_status"),
         ):
             from unittest.mock import MagicMock
 
@@ -465,7 +469,9 @@ class TestPollingAndCleanupIntegration:
             mock_provider.capabilities.uses_pane_title = False
             mock_gpw.return_value = mock_provider
 
-            from ccgram.handlers.polling_coordinator import update_status_message
+            from ccgram.handlers.window_tick import (
+                _update_status as update_status_message,
+            )
 
             await update_status_message(AsyncMock(), 1, "@9", thread_id=42)
         mock_notify.assert_not_called()

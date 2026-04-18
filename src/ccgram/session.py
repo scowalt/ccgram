@@ -23,7 +23,6 @@ from pathlib import Path
 from typing import Any
 
 from .config import config
-from .session_resolver import ClaudeSession
 from .session_map import session_map_sync
 from .state_persistence import StatePersistence
 from .tmux_manager import tmux_manager
@@ -42,51 +41,6 @@ from .window_state_store import (
 )
 
 logger = structlog.get_logger()
-
-
-_LEGACY_SESSION_PREFIX = "ccbot:"
-
-
-def parse_session_map(raw: dict[str, Any], prefix: str) -> dict[str, dict[str, str]]:
-    """Parse session_map.json entries matching a tmux session prefix.
-
-    Also matches legacy "ccbot:" prefix keys when the current prefix is "ccgram:".
-    Returns {window_name: {"session_id": ..., "cwd": ...}} for matching entries.
-    """
-    result: dict[str, dict[str, str]] = {}
-    # Also accept legacy "ccbot:" prefix keys when session is "ccgram"
-    legacy_prefix = _LEGACY_SESSION_PREFIX if prefix.startswith("ccgram:") else ""
-    for key, info in raw.items():
-        if key.startswith(prefix):
-            window_name = key[len(prefix) :]
-        elif legacy_prefix and key.startswith(legacy_prefix):
-            window_name = key[len(legacy_prefix) :]
-        else:
-            continue
-        if not isinstance(info, dict):
-            continue
-        session_id = info.get("session_id", "")
-        if session_id:
-            result[window_name] = {
-                "session_id": session_id,
-                "cwd": info.get("cwd", ""),
-                "window_name": info.get("window_name", ""),
-                "transcript_path": info.get("transcript_path", ""),
-                "provider_name": info.get("provider_name", ""),
-            }
-    return result
-
-
-def parse_emdash_provider(session_name: str) -> str:
-    """Extract provider name from emdash session name.
-
-    Format: emdash-{provider}-main-{id} or emdash-{provider}-chat-{id}
-    """
-    for sep in ("-main-", "-chat-"):
-        if sep in session_name:
-            prefix = session_name.split(sep)[0]
-            return prefix.removeprefix(EMDASH_SESSION_PREFIX)
-    return ""
 
 
 @dataclass
@@ -304,7 +258,7 @@ class SessionManager:
 
         # Prune session_map.json entries for dead windows
         live_ids = {w.window_id for w in live}
-        self.prune_session_map(live_ids)
+        session_map_sync.prune_session_map(live_ids)
 
         # Sync display names from live tmux windows (detect external renames)
         live_pairs = [(w.window_id, w.window_name) for w in live]
@@ -314,10 +268,6 @@ class SessionManager:
         self.prune_stale_state(live_ids, skip_chat_ids=True)
 
     # --- Display name management (delegated to thread_router) ---
-
-    def get_display_name(self, window_id: str) -> str:
-        """Get display name for a window_id, fallback to window_id itself."""
-        return thread_router.get_display_name(window_id)
 
     def set_display_name(self, window_id: str, window_name: str) -> None:
         """Update display name for a window_id."""
@@ -344,14 +294,6 @@ class SessionManager:
         if ws_changed and not router_changed:
             self._save_state()
         return router_changed or ws_changed
-
-    async def wait_for_session_map_entry(
-        self, window_id: str, timeout: float = 5.0, interval: float = 0.5
-    ) -> bool:
-        """Delegate to session_map_sync — see session_map.py for implementation."""
-        return await session_map_sync.wait_for_session_map_entry(
-            window_id, timeout, interval
-        )
 
     def prune_stale_state(
         self, live_window_ids: set[str], *, skip_chat_ids: bool = False
@@ -389,7 +331,7 @@ class SessionManager:
 
         # Prune stale byte offsets (independent of display/chat pruning)
         all_known = live_window_ids | in_use
-        offsets_changed = self.prune_stale_offsets(all_known)
+        offsets_changed = user_preferences.prune_stale_offsets(all_known)
 
         # Prune dead mailbox directories
         qualified_live: set[str] = set()
@@ -406,22 +348,14 @@ class SessionManager:
             return offsets_changed
 
         for wid in stale_display:
-            logger.info(
-                "Pruning stale display name: %s (%s)",
-                wid,
-                thread_router.window_display_names[wid],
-            )
-            del thread_router.window_display_names[wid]
+            name = thread_router.pop_display_name(wid)
+            logger.info("Pruning stale display name: %s (%s)", wid, name)
         for key in stale_chat:
             logger.info("Pruning stale group_chat_id: %s", key)
             del thread_router.group_chat_ids[key]
 
         self._save_state()
         return True
-
-    def prune_session_map(self, live_window_ids: set[str]) -> None:
-        """Delegate to session_map_sync — see session_map.py for implementation."""
-        session_map_sync.prune_session_map(live_window_ids)
 
     def _get_session_map_window_ids(self) -> set[str]:
         """Read session_map.json and return window IDs tracked by ccgram.
@@ -479,7 +413,7 @@ class SessionManager:
         for uid, bindings in thread_router.thread_bindings.items():
             for tid, wid in bindings.items():
                 if wid not in live_window_ids:
-                    display = self.get_display_name(wid)
+                    display = thread_router.get_display_name(wid)
                     issues.append(
                         AuditIssue(
                             category="ghost_binding",
@@ -492,7 +426,7 @@ class SessionManager:
         in_use = set(self.window_states.keys()) | bound_window_ids
         for wid in thread_router.window_display_names:
             if wid not in live_window_ids and wid not in in_use:
-                name = thread_router.window_display_names[wid]
+                name = thread_router.get_display_name(wid)
                 issues.append(
                     AuditIssue(
                         category="orphaned_display_name",
@@ -576,13 +510,6 @@ class SessionManager:
             live_binding_count=live_binding_count,
         )
 
-    def prune_stale_offsets(self, known_window_ids: set[str]) -> bool:
-        """Remove user_window_offsets entries for unknown windows.
-
-        Returns True if any changes were made.
-        """
-        return user_preferences.prune_stale_offsets(known_window_ids)
-
     def prune_stale_window_states(self, live_window_ids: set[str]) -> bool:
         """Remove window_states not in session_map, not bound, and not live.
 
@@ -610,45 +537,7 @@ class SessionManager:
         self._save_state()
         return True
 
-    async def load_session_map(self) -> None:
-        """Delegate to session_map_sync — see session_map.py for implementation."""
-        await session_map_sync.load_session_map()
-
-    def register_hookless_session(
-        self,
-        window_id: str,
-        session_id: str,
-        cwd: str,
-        transcript_path: str,
-        provider_name: str,
-    ) -> None:
-        """Delegate to session_map_sync — see session_map.py for implementation."""
-        session_map_sync.register_hookless_session(
-            window_id, session_id, cwd, transcript_path, provider_name
-        )
-
-    def write_hookless_session_map(
-        self,
-        window_id: str,
-        session_id: str,
-        cwd: str,
-        transcript_path: str,
-        provider_name: str,
-    ) -> None:
-        """Delegate to session_map_sync — see session_map.py for implementation."""
-        session_map_sync.write_hookless_session_map(
-            window_id, session_id, cwd, transcript_path, provider_name
-        )
-
-    def get_session_id_for_window(self, window_id: str) -> str | None:
-        """Look up session_id for a window from window_states."""
-        return window_store.get_session_id_for_window(window_id)
-
     # --- Window state management ---
-
-    def get_window_state(self, window_id: str) -> WindowState:
-        """Get or create window state."""
-        return window_store.get_window_state(window_id)
 
     def view_window(self, window_id: str) -> WindowView | None:
         """Read-only snapshot of a window's state.
@@ -667,12 +556,21 @@ class SessionManager:
             provider_name=ws.provider_name,
             approval_mode=ws.approval_mode,
             notification_mode=ws.notification_mode,
+            batch_mode=ws.batch_mode,
             transcript_path=Path(ws.transcript_path) if ws.transcript_path else None,
+            window_name=ws.window_name,
+            session_id=ws.session_id,
+            external=ws.external,
         )
 
-    def clear_window_session(self, window_id: str) -> None:
-        """Clear session association for a window (e.g., after /clear command)."""
-        window_store.clear_window_session(window_id)
+    @property
+    def window_count(self) -> int:
+        """Number of tracked windows — use instead of accessing window_states directly."""
+        return len(window_store.window_states)
+
+    def iter_window_ids(self) -> list[str]:
+        """All tracked window IDs — use instead of accessing window_states.keys() directly."""
+        return list(window_store.window_states.keys())
 
     # --- Provider management ---
 
@@ -683,12 +581,35 @@ class SessionManager:
         *,
         cwd: str | None = None,
     ) -> None:
-        """Set the provider for a window."""
-        window_store.set_window_provider(window_id, provider_name, cwd=cwd)
+        """Set the provider for a window.
+
+        Resolves whether the new provider supports hooks so that
+        ``window_state_store`` remains free of provider imports.
+        """
+        supports_hook = True
+        if provider_name:
+            from .providers.registry import UnknownProviderError, registry
+
+            try:
+                supports_hook = registry.get(provider_name).capabilities.supports_hook
+            except UnknownProviderError:
+                supports_hook = True
+        window_store.set_window_provider(
+            window_id,
+            provider_name,
+            cwd=cwd,
+            new_provider_supports_hook=supports_hook,
+        )
 
     def _clear_session_map_entry(self, window_id: str) -> None:
         """Delegate to session_map_sync — see session_map.py for implementation."""
         session_map_sync.clear_session_map_entry(window_id)
+
+    def set_window_cwd(self, window_id: str, cwd: str) -> None:
+        """Set the working directory for a window and persist state."""
+        state = window_store.get_window_state(window_id)
+        state.cwd = cwd
+        self._save_state()
 
     def get_approval_mode(self, window_id: str) -> str:
         """Get approval mode for a window (default: 'normal')."""
@@ -701,13 +622,9 @@ class SessionManager:
         normalized = mode.lower()
         if normalized not in APPROVAL_MODES:
             raise ValueError(f"Invalid approval mode: {mode!r}")
-        state = self.get_window_state(window_id)
+        state = window_store.get_window_state(window_id)
         state.approval_mode = normalized
         self._save_state()
-
-    def get_window_for_chat_thread(self, chat_id: int, thread_id: int) -> str | None:
-        """Resolve window_id for a specific Telegram chat/thread pair."""
-        return thread_router.get_window_for_chat_thread(chat_id, thread_id)
 
     # --- Notification mode ---
 
@@ -722,7 +639,7 @@ class SessionManager:
         """Set notification mode for a window."""
         if mode not in self._NOTIFICATION_MODES:
             raise ValueError(f"Invalid notification mode: {mode!r}")
-        state = self.get_window_state(window_id)
+        state = window_store.get_window_state(window_id)
         if state.notification_mode != mode:
             state.notification_mode = mode
             self._save_state()
@@ -748,7 +665,7 @@ class SessionManager:
         """Set batch mode for a window."""
         if mode not in BATCH_MODES:
             raise ValueError(f"Invalid batch mode: {mode!r}")
-        state = self.get_window_state(window_id)
+        state = window_store.get_window_state(window_id)
         if state.batch_mode != mode:
             state.batch_mode = mode
             self._save_state()
@@ -759,49 +676,6 @@ class SessionManager:
         new_mode = "verbose" if current == "batched" else "batched"
         self.set_batch_mode(window_id, new_mode)
         return new_mode
-
-    # --- Window → Session resolution (delegated to session_resolver) ---
-
-    async def _get_session_direct(
-        self, session_id: str, cwd: str, window_id: str = ""
-    ) -> "ClaudeSession | None":
-        """Delegate to session_resolver._get_session_direct."""
-        from .session_resolver import session_resolver
-
-        return await session_resolver._get_session_direct(session_id, cwd, window_id)
-
-    async def resolve_session_for_window(
-        self, window_id: str
-    ) -> "ClaudeSession | None":
-        """Delegate to session_resolver.resolve_session_for_window."""
-        from .session_resolver import session_resolver
-
-        return await session_resolver.resolve_session_for_window(window_id)
-
-    def find_users_for_session(
-        self,
-        session_id: str,
-    ) -> list[tuple[int, str, int]]:
-        """Delegate to session_resolver.find_users_for_session."""
-        from .session_resolver import session_resolver
-
-        return session_resolver.find_users_for_session(session_id)
-
-    # --- Message history (delegated to session_resolver) ---
-
-    async def get_recent_messages(
-        self,
-        window_id: str,
-        *,
-        start_byte: int = 0,
-        end_byte: int | None = None,
-    ) -> tuple[list[dict], int]:
-        """Delegate to session_resolver.get_recent_messages."""
-        from .session_resolver import session_resolver
-
-        return await session_resolver.get_recent_messages(
-            window_id, start_byte=start_byte, end_byte=end_byte
-        )
 
 
 session_manager = SessionManager()

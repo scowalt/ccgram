@@ -226,15 +226,15 @@ class TestCallbackErrorWidened:
 class TestProbeFailureClearing:
     def test_clear_probe_failures_resets_counter(self):
         from ccgram.handlers.polling_strategies import (
-            clear_probe_failures,
-            terminal_strategy,
+            lifecycle_strategy,
+            terminal_poll_state,
         )
 
-        _window_poll_state = terminal_strategy._states
-        ws = terminal_strategy.get_state("@test-probe")
+        _window_poll_state = terminal_poll_state._states
+        ws = terminal_poll_state.get_state("@test-probe")
         ws.probe_failures = 5
 
-        clear_probe_failures("@test-probe")
+        lifecycle_strategy.clear_probe_failures("@test-probe")
 
         ws2 = _window_poll_state.get("@test-probe")
         assert ws2 is not None
@@ -245,16 +245,13 @@ class TestProbeFailureClearing:
 
 class TestPollStateCleanup:
     def test_clear_window_poll_state_removes_entry(self):
-        from ccgram.handlers.polling_strategies import (
-            clear_window_poll_state,
-            terminal_strategy,
-        )
+        from ccgram.handlers.polling_strategies import terminal_poll_state
 
-        _window_poll_state = terminal_strategy._states
-        terminal_strategy.get_state("@cleanup-test")
+        _window_poll_state = terminal_poll_state._states
+        terminal_poll_state.get_state("@cleanup-test")
         assert "@cleanup-test" in _window_poll_state
 
-        clear_window_poll_state("@cleanup-test")
+        terminal_poll_state.clear_state("@cleanup-test")
         assert "@cleanup-test" not in _window_poll_state
 
 

@@ -35,7 +35,8 @@ from ..providers import (
     get_provider_for_window,
     registry,
 )
-from ..session import session_manager
+from .. import window_query
+from ..window_state_store import window_store
 from ..thread_router import thread_router
 from ..tmux_manager import send_to_window, tmux_manager
 from ..utils import task_done_callback
@@ -271,7 +272,9 @@ async def sync_scoped_menu_for_text_context(update: Update, user_id: int) -> Non
     window_id = thread_router.resolve_window_for_thread(user_id, thread_id)
     if not window_id:
         return
-    provider = get_provider_for_window(window_id)
+    provider = get_provider_for_window(
+        window_id, provider_name=window_query.get_window_provider(window_id)
+    )
     await sync_scoped_provider_menu(message, user_id, provider)
 
 
@@ -294,7 +297,10 @@ async def _capture_command_probe_context(
     provider: AgentProvider,
 ) -> tuple[str | None, int | None, str | None]:
     """Capture transcript offset + pane snapshot before sending a command."""
-    transcript_path = session_manager.get_window_state(window_id).transcript_path
+    view = window_query.view_window(window_id)
+    transcript_path: str | None = (
+        str(view.transcript_path) if view and view.transcript_path else None
+    )
     since_offset: int | None = None
     if transcript_path:
         try:
@@ -309,7 +315,7 @@ async def _capture_command_probe_context(
         except OSError:
             since_offset = None
     pane_before = await tmux_manager.capture_pane(window_id)
-    return transcript_path or None, since_offset, pane_before
+    return transcript_path, since_offset, pane_before
 
 
 async def _probe_transcript_command_error(
@@ -423,16 +429,18 @@ def _status_snapshot_probe_offset(window_id: str, cc_slash: str) -> int | None:
     if command not in ("/status", "/stats"):
         return None
 
-    provider = get_provider_for_window(window_id)
+    view = window_query.view_window(window_id)
+    provider = get_provider_for_window(
+        window_id, provider_name=view.provider_name if view else None
+    )
     if not provider.capabilities.supports_status_snapshot:
         return None
 
-    transcript_path = session_manager.get_window_state(window_id).transcript_path
-    if not transcript_path:
+    if not view or not view.transcript_path:
         return None
 
     try:
-        return Path(transcript_path).stat().st_size
+        return view.transcript_path.stat().st_size
     except OSError:
         return None
 
@@ -450,18 +458,20 @@ async def _maybe_send_status_snapshot(
     if command not in ("/status", "/stats"):
         return
 
-    provider = get_provider_for_window(window_id)
+    view = window_query.view_window(window_id)
+    provider = get_provider_for_window(
+        window_id, provider_name=view.provider_name if view else None
+    )
     if not provider.capabilities.supports_status_snapshot:
         return
 
-    state = session_manager.get_window_state(window_id)
-    transcript_path = state.transcript_path
-    if not transcript_path:
+    if not view or not view.transcript_path:
         await safe_reply(
             message,
             f"[{display}] Status snapshot unavailable (no transcript path).",
         )
         return
+    transcript_path = str(view.transcript_path)
 
     if since_offset is not None:
         await asyncio.sleep(_CODEX_STATUS_FALLBACK_DELAY_SECONDS)
@@ -477,8 +487,8 @@ async def _maybe_send_status_snapshot(
         provider.build_status_snapshot,
         transcript_path,
         display_name=display,
-        session_id=state.session_id,
-        cwd=state.cwd,
+        session_id=view.session_id,
+        cwd=view.cwd,
     )
     if snapshot:
         await safe_reply(message, snapshot)
@@ -525,18 +535,14 @@ async def _handle_clear_command(
     if cc_slash.strip().lower() != "/clear":
         return
     logger.info("Clearing session for window %s after /clear", display)
-    session_manager.clear_window_session(window_id)
+    window_store.clear_window_session(window_id)
     from .message_queue import enqueue_status_update
-    from .polling_strategies import (
-        clear_screen_buffer,
-        clear_seen_status,
-    )
+    from .polling_strategies import reset_window_polling_state
 
     await enqueue_status_update(
         update.get_bot(), user_id, window_id, None, thread_id=thread_id
     )
-    clear_seen_status(window_id)
-    clear_screen_buffer(window_id)
+    reset_window_polling_state(window_id)
 
 
 # --- Main command handler ---
@@ -576,7 +582,9 @@ async def forward_command_handler(
         return
 
     display = thread_router.get_display_name(window_id)
-    provider = get_provider_for_window(window_id)
+    provider = get_provider_for_window(
+        window_id, provider_name=window_query.get_window_provider(window_id)
+    )
     await sync_scoped_provider_menu(update.message, user.id, provider)
     provider_map, current_supported = _build_provider_command_metadata(provider)
     resolved_name = provider_map.get(tg_cmd, tg_cmd)
@@ -612,11 +620,9 @@ async def forward_command_handler(
         probe_pane_before,
     ) = await _capture_command_probe_context(window_id, provider)
     status_probe_offset = _status_snapshot_probe_offset(window_id, cc_slash)
-    from .polling_strategies import clear_probe_failures
+    from .polling_strategies import lifecycle_strategy
 
-    clear_probe_failures(window_id)
-    # Send to tmux FIRST — typing indicator goes through the rate limiter
-    # and can block for seconds when the outbound message budget is exhausted.
+    lifecycle_strategy.clear_probe_failures(window_id)
     success, error_msg = await send_to_window(window_id, cc_slash)
     if not success:
         await safe_reply(update.message, f"\u274c {error_msg}")

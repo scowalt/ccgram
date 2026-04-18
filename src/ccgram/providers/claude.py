@@ -5,8 +5,13 @@ cc_commands.py without changing any behavior. This is a thin adapter layer
 that translates between the provider protocol and existing module APIs.
 """
 
+from __future__ import annotations
+
 import os
+from collections.abc import Awaitable, Callable
 from typing import Any, cast
+
+import structlog
 
 from ccgram.cc_commands import CC_BUILTINS
 from ccgram.providers.base import UUID_RE
@@ -23,10 +28,61 @@ from ccgram.providers.base import (
 from ccgram.terminal_parser import (
     extract_bash_output,
     extract_interactive_content,
+    find_chrome_boundary,
     format_status_display,
     parse_status_block,
 )
 from ccgram.transcript_parser import TranscriptParser
+
+_log = structlog.get_logger(__name__)
+
+_MODE_MARKERS: tuple[str, ...] = ("\u23f5\u23f5", "\u23f8")
+_MODE_HINTS: tuple[str, ...] = (
+    "auto mode",
+    "auto-accept",
+    "accept edits",
+    "plan mode",
+    "bypass permissions",
+    "yolo",
+    "auto-approve",
+)
+_MODE_SHORT_LABELS: tuple[tuple[str, str], ...] = (
+    ("accept edits", "Edit"),
+    ("auto-accept", "Edit"),
+    ("plan", "Plan"),
+    ("auto mode", "Auto"),
+    ("bypass", "YOLO"),
+    ("yolo", "YOLO"),
+    ("auto-approve", "YOLO"),
+)
+_LINE_LIMIT = 80
+
+
+def _find_mode_line(capture: str) -> str | None:
+    lines = capture.splitlines()
+    boundary = find_chrome_boundary(lines)
+    chrome_lines = lines[boundary + 1 :] if boundary is not None else lines[-20:]
+    for line in reversed(chrome_lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if any(marker in stripped for marker in _MODE_MARKERS):
+            return stripped[:_LINE_LIMIT]
+    for line in reversed(lines[-25:]):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if any(hint in stripped.lower() for hint in _MODE_HINTS):
+            return stripped[:_LINE_LIMIT]
+    return None
+
+
+def _mode_short_label(mode_line: str) -> str | None:
+    lower = mode_line.lower()
+    for pattern, label in _MODE_SHORT_LABELS:
+        if pattern in lower:
+            return label
+    return None
 
 
 class ClaudeProvider:
@@ -53,6 +109,8 @@ class ClaudeProvider:
         transcript_format="jsonl",
         builtin_commands=tuple(CC_BUILTINS.keys()),
         supports_user_command_discovery=True,
+        has_yolo_confirmation=True,
+        supports_task_tracking=True,
     )
 
     @property
@@ -239,3 +297,64 @@ class ClaudeProvider:
     def has_output_since(self, transcript_path: str, offset: int) -> bool:
         _ = transcript_path, offset
         return False
+
+    async def scrape_current_mode(
+        self,
+        window_id: str,
+        *,
+        capture_fn: Callable[[str], Awaitable[str | None]] | None = None,
+    ) -> str | None:
+        """Return the short mode label visible in the Claude Code status line.
+
+        ``capture_fn`` is optional and injectable for tests — defaults to
+        ``tmux_manager.capture_pane`` so production callers need no changes.
+        """
+        if capture_fn is not None:
+            _fn: Callable[[str], Awaitable[str | None]] = capture_fn
+        else:
+            from ccgram.tmux_manager import tmux_manager
+
+            _fn = tmux_manager.capture_pane
+        try:
+            capture = await _fn(window_id)
+        except OSError as exc:
+            _log.warning("Mode scrape: capture_pane failed %s (%s)", window_id, exc)
+            return None
+        if not capture:
+            return None
+        mode_line = _find_mode_line(capture)
+        return _mode_short_label(mode_line) if mode_line else None
+
+    async def seed_task_state(
+        self,
+        window_id: str,
+        session_id: str,
+        transcript_path: str,
+    ) -> None:
+        """Seed Claude task-tracking state by reading the full transcript once."""
+        import aiofiles
+
+        from ccgram.claude_task_state import claude_task_state
+
+        entries: list[dict] = []
+        try:
+            async with aiofiles.open(transcript_path, "r", encoding="utf-8") as f:
+                async for line in f:
+                    data = self.parse_transcript_line(line)
+                    if data:
+                        entries.append(data)
+        except OSError:
+            _log.exception("seed_task_state: error reading %s", transcript_path)
+            return
+        claude_task_state.rebuild_from_entries(window_id, session_id, entries)
+
+    def apply_task_entries(
+        self,
+        window_id: str,
+        session_id: str,
+        entries: list[dict],
+    ) -> None:
+        """Apply parsed transcript entries to Claude task-tracking state."""
+        from ccgram.claude_task_state import claude_task_state
+
+        claude_task_state.apply_entries(window_id, session_id, entries)

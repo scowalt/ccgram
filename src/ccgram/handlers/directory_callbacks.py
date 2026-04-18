@@ -25,6 +25,7 @@ from telegram.ext import ContextTypes
 
 from ..providers import registry as provider_registry
 from ..session import session_manager
+from ..session_map import session_map_sync
 from ..user_preferences import user_preferences
 from ..thread_router import thread_router
 from ..tmux_manager import send_to_window, tmux_manager
@@ -556,8 +557,7 @@ async def _create_window_and_bind(
         return
 
     user_preferences.update_user_mru(user_id, selected_path)
-    window_state = session_manager.get_window_state(created_wid)
-    window_state.cwd = selected_path
+    session_manager.set_window_cwd(created_wid, selected_path)
     session_manager.set_window_provider(created_wid, provider_name)
     session_manager.set_window_approval_mode(created_wid, approval_mode)
     logger.info(
@@ -574,10 +574,10 @@ async def _create_window_and_bind(
 
     provider_caps = provider_registry.get(provider_name).capabilities
     if provider_caps.chat_first_command_path:
-        from ccgram.providers.shell import setup_shell_prompt
+        from .shell_prompt_orchestrator import ensure_setup
 
         await _wait_for_shell_ready(created_wid)
-        await setup_shell_prompt(created_wid)
+        await ensure_setup(created_wid, "auto")
 
     _try_install_messaging_skill(provider_name, selected_path)
 
@@ -590,11 +590,12 @@ async def _create_window_and_bind(
         if chat and chat.type in ("group", "supergroup"):
             thread_router.set_group_chat_id(user_id, pending_thread_id, chat.id)
 
-    if approval_mode == "yolo" and provider_name == "claude":
+    provider = provider_registry.get(provider_name)
+    if approval_mode == "yolo" and provider.capabilities.has_yolo_confirmation:
         await _accept_yolo_confirmation(created_wid)
 
-    if provider_registry.get(provider_name).capabilities.supports_hook:
-        await session_manager.wait_for_session_map_entry(created_wid)
+    if provider.capabilities.supports_hook:
+        await session_map_sync.wait_for_session_map_entry(created_wid)
 
     if pending_thread_id is None:
         await safe_edit(query, f"✅ {message}")

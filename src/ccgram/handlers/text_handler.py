@@ -35,10 +35,10 @@ from .message_sender import (
     safe_reply,
 )
 from .recovery_callbacks import build_recovery_keyboard
-from .polling_strategies import clear_probe_failures
+from .polling_strategies import lifecycle_strategy
 from ..topic_state_registry import topic_state
 from .user_state import PENDING_THREAD_ID, PENDING_THREAD_TEXT, RECOVERY_WINDOW_ID
-from ..session import session_manager
+from .. import window_query
 from ..thread_router import thread_router
 from ..providers import get_provider_for_window
 from ..tmux_manager import send_to_window, tmux_manager
@@ -93,9 +93,10 @@ async def _capture_bash_output(
             if raw is None:
                 return
 
-            output = get_provider_for_window(window_id).extract_bash_output(
-                raw, command
-            )
+            output = get_provider_for_window(
+                window_id,
+                provider_name=window_query.get_window_provider(window_id),
+            ).extract_bash_output(raw, command)
             if not output or output == last_output:
                 await asyncio.sleep(1.0)
                 continue
@@ -252,7 +253,7 @@ async def _handle_dead_window(
         return False
 
     display = thread_router.get_display_name(window_id)
-    view = session_manager.view_window(window_id)
+    view = window_query.view_window(window_id)
     cwd = view.cwd if view else ""
 
     if not cwd or not Path(cwd).is_dir():
@@ -265,9 +266,7 @@ async def _handle_dead_window(
             thread_id,
         )
         thread_router.unbind_thread(user_id, thread_id)
-        from .polling_strategies import clear_dead_notification
-
-        clear_dead_notification(user_id, thread_id)
+        lifecycle_strategy.clear_dead_notification(user_id, thread_id)
         start_path = str(Path.cwd())
         msg_text, keyboard, subdirs = build_directory_browser(
             start_path, user_id=user_id
@@ -317,7 +316,7 @@ async def _forward_message(
     # Cancel any running bash capture — new message pushes pane content down
     cancel_bash_capture(user_id, thread_id)
 
-    clear_probe_failures(window_id)
+    lifecycle_strategy.clear_probe_failures(window_id)
 
     # Send to tmux FIRST — this is the latency-critical path.
     # Telegram API calls (typing indicator, ack reaction) go through the
@@ -403,7 +402,9 @@ async def handle_text_message(
         return
 
     # Shell provider: route through LLM or raw execution
-    provider = get_provider_for_window(window_id)
+    provider = get_provider_for_window(
+        window_id, provider_name=window_query.get_window_provider(window_id)
+    )
     if not provider.capabilities.supports_mailbox_delivery:
         from .shell_commands import handle_shell_message
 

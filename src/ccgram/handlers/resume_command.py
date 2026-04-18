@@ -28,7 +28,9 @@ from telegram.ext import ContextTypes
 
 from ..config import config
 from ..providers import get_provider, get_provider_for_window, resolve_launch_command
+from .. import window_query
 from ..session import session_manager
+from ..session_map import session_map_sync
 from ..thread_router import thread_router
 from ..tmux_manager import tmux_manager
 from ..utils import read_session_metadata_from_jsonl
@@ -233,7 +235,14 @@ async def resume_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # Check resume capability using per-window provider (or global fallback)
     window_id = thread_router.get_window_for_thread(user.id, thread_id)
-    provider = get_provider_for_window(window_id) if window_id else get_provider()
+    provider = (
+        get_provider_for_window(
+            window_id,
+            provider_name=window_query.get_window_provider(window_id),
+        )
+        if window_id
+        else get_provider()
+    )
     if not provider.capabilities.supports_resume:
         await safe_reply(
             update.message,
@@ -290,16 +299,19 @@ async def _create_resume_window(
     old_window_id = thread_router.get_window_for_thread(user_id, thread_id)
     if old_window_id:
         thread_router.unbind_thread(user_id, thread_id)
-        from .polling_strategies import clear_dead_notification
+        from .polling_strategies import lifecycle_strategy
 
-        clear_dead_notification(user_id, thread_id)
+        lifecycle_strategy.clear_dead_notification(user_id, thread_id)
 
-    provider = (
-        get_provider_for_window(old_window_id) if old_window_id else get_provider()
-    )
-    approval_mode = (
-        session_manager.get_approval_mode(old_window_id) if old_window_id else "normal"
-    )
+    if old_window_id:
+        old_view = session_manager.view_window(old_window_id)
+        provider = get_provider_for_window(
+            old_window_id, provider_name=old_view.provider_name if old_view else None
+        )
+        approval_mode = old_view.approval_mode if old_view else "normal"
+    else:
+        provider = get_provider()
+        approval_mode = "normal"
     launch_args = provider.make_launch_args(resume_id=session_id)
     launch_command = resolve_launch_command(
         provider.capabilities.name, approval_mode=approval_mode
@@ -309,7 +321,7 @@ async def _create_resume_window(
     )
     if success:
         if provider.capabilities.supports_hook:
-            await session_manager.wait_for_session_map_entry(created_wid)
+            await session_map_sync.wait_for_session_map_entry(created_wid)
         session_manager.set_window_provider(created_wid, provider.capabilities.name)
         session_manager.set_window_approval_mode(created_wid, approval_mode)
 
