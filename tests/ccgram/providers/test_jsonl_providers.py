@@ -1412,6 +1412,29 @@ class TestCodexDiscoverTranscript:
         assert event is not None
         assert event.session_id == "uuid-fresh"
 
+    def test_skips_claimed_session_and_uses_next_match(self, tmp_path: Path) -> None:
+        sessions_dir = tmp_path / ".codex" / "sessions"
+        claimed = _write_codex_session(
+            sessions_dir, "2026/03/02", "claimed", "uuid-claimed", "/my/project"
+        )
+        time.sleep(0.05)
+        fallback = _write_codex_session(
+            sessions_dir, "2026/03/02", "fallback", "uuid-fallback", "/my/project"
+        )
+        os.utime(claimed, (fallback.stat().st_mtime + 5, fallback.stat().st_mtime + 5))
+
+        codex = CodexProvider()
+        with patch.object(Path, "home", return_value=tmp_path):
+            event = codex.discover_transcript(
+                "/my/project",
+                "ccgram:@7",
+                exclude_session_ids={"uuid-claimed"},
+                exclude_transcript_paths={str(claimed)},
+            )
+        assert event is not None
+        assert event.session_id == "uuid-fallback"
+        assert event.transcript_path == str(fallback)
+
 
 class TestCodexDiscoverTranscriptMaxAge:
     def test_max_age_zero_ignores_staleness(self, tmp_path: Path) -> None:
