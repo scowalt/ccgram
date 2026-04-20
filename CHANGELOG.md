@@ -4,10 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [2.11.0] - 2026-04-19
+
+### Added
+- Add pi coding agent provider ([#59](https://github.com/alexei-led/ccgram/pull/59))
+
+
+### Documentation
+- Clean up design and modularity review artifacts [skip ci]
+
 ## [2.10.0] - 2026-04-16
 
 ### Changed
 - Architecture round 2 — modularity fixes + target design ([#57](https://github.com/alexei-led/ccgram/pull/57))
+
+
+### Documentation
+- Update CHANGELOG.md for v2.10.0
 
 ## [2.9.0] - 2026-04-13
 
