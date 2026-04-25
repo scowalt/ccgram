@@ -247,6 +247,8 @@ class PiProvider(JsonlProvider):
         window_key: str,
         *,
         max_age: float | None = None,
+        exclude_session_ids: set[str] | None = None,  # noqa: ARG002
+        exclude_transcript_paths: set[str] | None = None,  # noqa: ARG002
     ) -> SessionStartEvent | None:
         """Return the newest pi transcript whose header cwd matches."""
         if not cwd:
