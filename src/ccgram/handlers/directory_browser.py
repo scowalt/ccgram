@@ -302,7 +302,7 @@ def build_directory_browser(
 _PROVIDER_META: dict[str, tuple[str, str]] = {
     "claude": ("Claude", "\U0001f7e0"),
     "codex": ("Codex", "\U0001f9e9"),
-    "gemini": ("Gemini", "\u264a"),
+    "pi": ("Pi", "\U0001f4d0"),
     "shell": ("Shell", "\U0001f41a"),
 }
 
