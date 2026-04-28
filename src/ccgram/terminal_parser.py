@@ -114,10 +114,20 @@ UI_PATTERNS: list[UIPattern] = [
             re.compile(r"^\s*Esc to exit"),
         ),
     ),
+    # Numbered selection menu (e.g. /remote-control) — ❯ cursor on a
+    # numbered item line, with other numbered items below.  Must precede
+    # the generic SelectionUI so the tighter pattern wins.
+    UIPattern(
+        name="SelectionUI",
+        top=(re.compile(r"^\s*[❯›]\s*\d+\.\s"),),
+        bottom=(re.compile(r"^\s+\d+\.\s"),),
+        min_gap=1,
+        context_above=10,
+    ),
     # ── Structural catch-all (MUST be last — catches anything above) ─
     # Ink's SelectInput renders ❯ (U+276F) as the selection cursor for
-    # the highlighted option.  Combined with a bottom action hint OR a
-    # non-selected list item, this catches ANY selection UI.
+    # the highlighted option.  Combined with a bottom action hint, this
+    # catches ANY selection UI.
     # context_above=10 pulls in the question/description text above the
     # cursor.  min_gap=1 for compact prompts.
     UIPattern(
@@ -129,8 +139,6 @@ UI_PATTERNS: list[UIPattern] = [
             re.compile(r"^\s*ctrl-g to edit"),
             re.compile(r"(?i)^\s*Press enter to (confirm|select|continue|submit)"),
             re.compile(r"(?i)^\s*enter to (submit|confirm|select)"),
-            # Non-selected list items (e.g. /remote-control has no footer)
-            re.compile(r"^\s+\d+\.\s"),
         ),
         min_gap=1,
         context_above=10,

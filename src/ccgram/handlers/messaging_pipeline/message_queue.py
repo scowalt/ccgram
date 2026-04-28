@@ -137,14 +137,17 @@ def _queue_key(user_id: int, thread_id: int | None = None) -> QueueKey:
 
 
 def get_message_queue(
-    user_id: int, thread_id: int | None = None
+    user_id: int,
+    thread_id: int | None = None,
 ) -> asyncio.Queue[MessageTask] | None:
     """Get the message queue for a user's topic (if it exists)."""
     return _message_queues.get(_queue_key(user_id, thread_id))
 
 
 def get_or_create_queue(
-    client: TelegramClient, user_id: int, thread_id: int | None = None
+    client: TelegramClient,
+    user_id: int,
+    thread_id: int | None = None,
 ) -> asyncio.Queue[MessageTask]:
     """Get or create message queue and worker for a user's topic.
 
