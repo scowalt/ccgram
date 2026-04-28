@@ -2,6 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from ccgram.handlers.topics.topic_orchestration import _topic_create_failed_windows
 from ccgram.multiplexer.base import ForegroundInfo
 from ccgram.providers import (
     _reset_provider,
@@ -12,6 +13,13 @@ from ccgram.providers import (
 )
 from ccgram.providers.process_detection import _pgid_cache
 from ccgram.session_monitor import SessionMonitor
+
+
+@pytest.fixture(autouse=True)
+def _clear_failed_windows():
+    _topic_create_failed_windows.clear()
+    yield
+    _topic_create_failed_windows.clear()
 
 
 class TestDetectProviderFromPane:
@@ -72,9 +80,6 @@ class TestDetectProviderFromPane:
         mock_mux.foreground.assert_awaited_once_with("@0")
 
     async def test_empty_command_classifies_shell_via_foreground(self) -> None:
-        # herdr reports no pane_current_command for a bare shell pane; the
-        # foreground argv must still classify it as a shell so binding/adopting
-        # the pane sets the shell provider.
         mock_mux = MagicMock()
         mock_mux.foreground = AsyncMock(
             return_value=ForegroundInfo(pid=4242, pgid=4242, argv=["-fish"], cwd="/tmp")
