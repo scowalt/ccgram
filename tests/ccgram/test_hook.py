@@ -10,9 +10,12 @@ import pytest
 from ccgram.hook import (
     UUID_RE,
     _claude_settings_file,
+    _closest_claude_ancestor,
+    _foreground_pgid_on_tty,
     _hook_status,
     _install_hook,
     _is_hook_installed,
+    _is_nested_session,
     _uninstall_hook,
     hook_main,
 )
@@ -674,3 +677,241 @@ class TestClaudeSettingsFile:
 
         monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "custom"))
         assert _claude_settings_file() == tmp_path / "custom" / "settings.json"
+
+
+class TestNestedSessionDetection:
+    """Hook fired by a nested claude (e.g. claude-mem observer) must not
+    overwrite session_map.json or write events for the bound topic.
+
+    Process model: a tmux pane is hosting a primary claude that the user
+    launched from their shell. The shell put claude in its own pgrp, so
+    primary's PID == pgid == foreground PGID on the tty. Any subprocess claude
+    inherits that pgid (without setpgid) but has a different PID — so its
+    closest-claude-ancestor (itself) does not equal foreground PGID.
+    """
+
+    @staticmethod
+    def _ps_lines(rows: list[tuple[int, int, int, str, str]]) -> str:
+        return "\n".join(
+            f"{pid} {ppid} {pgid} {stat} {cmd}" for pid, ppid, pgid, stat, cmd in rows
+        )
+
+    def test_foreground_claude_is_not_nested(self, monkeypatch) -> None:
+        snapshot = {
+            7818: (1, 7818, "Ss", "fish"),
+            72211: (7818, 72211, "S+", "claude"),
+            99999: (72211, 72211, "S+", "python"),
+        }
+        monkeypatch.setattr("ccgram.hook._ps_snapshot", lambda: snapshot)
+        monkeypatch.setattr("ccgram.hook._foreground_pgid_on_tty", lambda *_: 72211)
+        monkeypatch.setattr("os.getpid", lambda: 99999)
+        assert _is_nested_session("/dev/ttys005") is False
+
+    def test_observer_claude_is_nested(self, monkeypatch) -> None:
+        snapshot = {
+            7818: (1, 7818, "Ss", "fish"),
+            72211: (7818, 72211, "S+", "claude"),
+            72281: (72211, 72211, "S+", "bun"),
+            80000: (72281, 72211, "S+", "claude"),
+            99999: (80000, 72211, "S+", "python"),
+        }
+        monkeypatch.setattr("ccgram.hook._ps_snapshot", lambda: snapshot)
+        monkeypatch.setattr("ccgram.hook._foreground_pgid_on_tty", lambda *_: 72211)
+        monkeypatch.setattr("os.getpid", lambda: 99999)
+        assert _is_nested_session("/dev/ttys005") is True
+
+    def test_empty_pane_tty_fails_open(self, monkeypatch) -> None:
+        monkeypatch.setattr(
+            "ccgram.hook._ps_snapshot", lambda: pytest.fail("should not be called")
+        )
+        assert _is_nested_session("") is False
+
+    def test_empty_snapshot_fails_open(self, monkeypatch) -> None:
+        monkeypatch.setattr("ccgram.hook._ps_snapshot", lambda: {})
+        assert _is_nested_session("/dev/ttys005") is False
+
+    def test_unknown_foreground_pgid_fails_open(self, monkeypatch) -> None:
+        monkeypatch.setattr(
+            "ccgram.hook._ps_snapshot",
+            lambda: {99999: (1, 99999, "S+", "python")},
+        )
+        monkeypatch.setattr("ccgram.hook._foreground_pgid_on_tty", lambda *_: None)
+        assert _is_nested_session("/dev/ttys005") is False
+
+    def test_no_claude_in_ancestry_fails_open(self, monkeypatch) -> None:
+        snapshot = {
+            7818: (1, 7818, "Ss", "fish"),
+            99999: (7818, 7818, "S+", "python"),
+        }
+        monkeypatch.setattr("ccgram.hook._ps_snapshot", lambda: snapshot)
+        monkeypatch.setattr("ccgram.hook._foreground_pgid_on_tty", lambda *_: 7818)
+        monkeypatch.setattr("os.getpid", lambda: 99999)
+        assert _is_nested_session("/dev/ttys005") is False
+
+    def test_closest_claude_ancestor_picks_nearest(self) -> None:
+        snapshot = {
+            7818: (1, 7818, "Ss", "fish"),
+            72211: (7818, 72211, "S+", "claude"),
+            72281: (72211, 72211, "S+", "bun"),
+            80000: (72281, 72211, "S+", "claude"),
+            99999: (80000, 72211, "S+", "python"),
+        }
+        assert _closest_claude_ancestor(snapshot, 99999) == 80000
+        assert _closest_claude_ancestor(snapshot, 72281) == 72211
+
+    def test_closest_claude_ancestor_breaks_on_cycle(self) -> None:
+        snapshot = {
+            10: (20, 10, "S", "a"),
+            20: (10, 20, "S", "b"),
+        }
+        assert _closest_claude_ancestor(snapshot, 10) is None
+
+    def test_foreground_pgid_finds_plus_row(self) -> None:
+        snapshot = {
+            7818: (1, 7818, "Ss", "fish"),
+            72211: (7818, 72211, "S+", "claude"),
+        }
+        mock_result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="7818\n72211\n", stderr=""
+        )
+        with patch("ccgram.hook.subprocess.run", return_value=mock_result):
+            assert _foreground_pgid_on_tty(snapshot, "/dev/ttys005") == 72211
+
+    def test_foreground_pgid_handles_subprocess_error(self) -> None:
+        with patch(
+            "ccgram.hook.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="ps", timeout=5),
+        ):
+            assert _foreground_pgid_on_tty({1: (0, 1, "S+", "x")}, "ttys005") is None
+
+
+class TestNestedHookEndToEnd:
+    """Drive ``hook_main`` end-to-end through ``subprocess.run`` mocking and
+    assert that observer SessionStart/Stop events do NOT poison session_map
+    or events.jsonl.
+    """
+
+    _OBSERVER_PAYLOAD = {
+        "session_id": "35339b36-8b46-41eb-98fc-df51cd1ff498",
+        "cwd": "/Users/alexei/.claude-mem/observer-sessions",
+        "transcript_path": "/Users/alexei/.claude-team/projects/x/35339b36.jsonl",
+        "hook_event_name": "SessionStart",
+    }
+
+    _PRIMARY_PAYLOAD = {
+        "session_id": "550e8400-e29b-41d4-a716-446655440000",
+        "cwd": "/Users/alexei/Workspace/reflex",
+        "transcript_path": "/Users/alexei/.claude/projects/y/550e8400.jsonl",
+        "hook_event_name": "SessionStart",
+    }
+
+    def _drive_hook(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        payload: dict,
+        *,
+        hook_pid: int,
+        snapshot: dict[int, tuple[int, int, str, str]],
+        fg_pgid: int,
+    ) -> None:
+        monkeypatch.setattr(sys, "argv", ["ccgram", "hook"])
+        monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+        monkeypatch.setenv("TMUX_PANE", "%6")
+        monkeypatch.setattr("os.getpid", lambda: hook_pid)
+        monkeypatch.setattr("ccgram.hook._ps_snapshot", lambda: snapshot)
+        monkeypatch.setattr("ccgram.hook._foreground_pgid_on_tty", lambda *_: fg_pgid)
+
+        tmux_result = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="ccgram\t@6\treflex-gh\t/dev/ttys012\n",
+            stderr="",
+        )
+        with patch("ccgram.hook.subprocess.run", return_value=tmux_result):
+            hook_main()
+
+    def test_observer_session_start_does_not_overwrite_session_map(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        monkeypatch.setenv("CCGRAM_DIR", str(tmp_path))
+        snapshot = {
+            7818: (1, 7818, "Ss", "fish"),
+            72211: (7818, 72211, "S+", "claude"),
+            72281: (72211, 72211, "S+", "bun"),
+            80000: (72281, 72211, "S+", "claude"),
+            99999: (80000, 72211, "S+", "python"),
+        }
+        self._drive_hook(
+            monkeypatch,
+            self._OBSERVER_PAYLOAD,
+            hook_pid=99999,
+            snapshot=snapshot,
+            fg_pgid=72211,
+        )
+        assert not (tmp_path / "session_map.json").exists()
+        assert not (tmp_path / "events.jsonl").exists()
+
+    def test_observer_stop_event_dropped(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setenv("CCGRAM_DIR", str(tmp_path))
+        payload = {
+            "session_id": "35339b36-8b46-41eb-98fc-df51cd1ff498",
+            "cwd": "/Users/alexei/.claude-mem/observer-sessions",
+            "hook_event_name": "Stop",
+            "stop_reason": "end_turn",
+        }
+        snapshot = {
+            7818: (1, 7818, "Ss", "fish"),
+            72211: (7818, 72211, "S+", "claude"),
+            80000: (72211, 72211, "S+", "claude"),
+            99999: (80000, 72211, "S+", "python"),
+        }
+        self._drive_hook(
+            monkeypatch,
+            payload,
+            hook_pid=99999,
+            snapshot=snapshot,
+            fg_pgid=72211,
+        )
+        assert not (tmp_path / "events.jsonl").exists()
+
+    def test_primary_session_start_writes_session_map(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        monkeypatch.setenv("CCGRAM_DIR", str(tmp_path))
+        snapshot = {
+            7818: (1, 7818, "Ss", "fish"),
+            72211: (7818, 72211, "S+", "claude"),
+            99999: (72211, 72211, "S+", "python"),
+        }
+        self._drive_hook(
+            monkeypatch,
+            self._PRIMARY_PAYLOAD,
+            hook_pid=99999,
+            snapshot=snapshot,
+            fg_pgid=72211,
+        )
+        session_map = json.loads((tmp_path / "session_map.json").read_text())
+        assert "ccgram:@6" in session_map
+        assert (
+            session_map["ccgram:@6"]["session_id"]
+            == self._PRIMARY_PAYLOAD["session_id"]
+        )
+
+    def test_introspection_failure_fails_open(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setenv("CCGRAM_DIR", str(tmp_path))
+        monkeypatch.setattr("ccgram.hook._ps_snapshot", lambda: {})
+        monkeypatch.setattr("ccgram.hook._foreground_pgid_on_tty", lambda *_: None)
+        monkeypatch.setattr(sys, "argv", ["ccgram", "hook"])
+        monkeypatch.setattr(
+            sys, "stdin", io.StringIO(json.dumps(self._OBSERVER_PAYLOAD))
+        )
+        monkeypatch.setenv("TMUX_PANE", "%6")
+        tmux_result = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="ccgram\t@6\treflex-gh\t/dev/ttys012\n",
+            stderr="",
+        )
+        with patch("ccgram.hook.subprocess.run", return_value=tmux_result):
+            hook_main()
+        assert (tmp_path / "session_map.json").exists()
