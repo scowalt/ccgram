@@ -279,6 +279,22 @@ class TestExtractInteractiveContent:
         assert "Remote Control" in result.content
         assert "❯" in result.content
 
+    def test_numbered_list_in_prose_not_detected(self):
+        pane = (
+            "● Hey! What can I help you with?\n"
+            "\n"
+            "❯ Can you help me with my TODOs?\n"
+            "\n"
+            "● Let me check and find your TODOs file.\n"
+            "\n"
+            "  Priority items:\n"
+            "  1. Progression audit — verify all exercises\n"
+            "  2. Lat Raise duplication — remove duplicate\n"
+            "  3. Lower A — reorder superset exercises\n"
+        )
+        result = extract_interactive_content(pane)
+        assert result is None
+
     def test_codex_selection_cursor(self):
         pane = "  Which option?\n\n  › Option A    Option B\n\n  Esc to cancel\n"
         result = extract_interactive_content(pane)

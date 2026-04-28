@@ -70,16 +70,11 @@ def _claimed_hookless_sessions(
         transcript_path = getattr(other_state, "transcript_path", "")
         same_current_signature = bool(
             (current_session_id and session_id == current_session_id)
-            or (
-                current_transcript_path
-                and transcript_path == current_transcript_path
-            )
+            or (current_transcript_path and transcript_path == current_transcript_path)
         )
-        if (
-            same_current_signature
-            and _window_claim_rank(other_window_id)
-            > _window_claim_rank(exclude_window_id)
-        ):
+        if same_current_signature and _window_claim_rank(
+            other_window_id
+        ) > _window_claim_rank(exclude_window_id):
             continue
         if isinstance(session_id, str) and session_id:
             claimed_session_ids.add(session_id)

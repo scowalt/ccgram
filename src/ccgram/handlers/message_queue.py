@@ -57,14 +57,17 @@ _tool_msg_ids: dict[tuple[str, int, int], int] = {}
 
 
 def get_message_queue(
-    user_id: int, thread_id: int | None = None  # noqa: ARG001
+    user_id: int,
+    thread_id: int | None = None,  # noqa: ARG001
 ) -> asyncio.Queue[MessageTask] | None:
     """Get the message queue for a user's topic (if it exists)."""
     return _message_queues.get(user_id)
 
 
 def get_or_create_queue(
-    bot: Bot, user_id: int, thread_id: int | None = None  # noqa: ARG001
+    bot: Bot,
+    user_id: int,
+    thread_id: int | None = None,  # noqa: ARG001
 ) -> asyncio.Queue[MessageTask]:
     """Get or create message queue and worker for a user.
 

@@ -534,10 +534,7 @@ def _update_session_map(
                 existing = session_map.get(session_window_key)
                 if existing and transcript_path:
                     existing_tp = existing.get("transcript_path", "")
-                    if (
-                        existing_tp
-                        and existing.get("session_id") != session_id
-                    ):
+                    if existing_tp and existing.get("session_id") != session_id:
                         try:
                             existing_mtime = Path(existing_tp).stat().st_mtime
                             if time.time() - existing_mtime < _TRANSCRIPT_ACTIVE_SECS:

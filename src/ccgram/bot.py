@@ -340,8 +340,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await handle_text_message(update, context)
 
 
-
-
 # --- App lifecycle ---
 
 
