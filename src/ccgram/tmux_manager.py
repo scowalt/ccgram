@@ -193,8 +193,12 @@ class TmuxManager:
                 if name.startswith("_"):
                     continue
 
+                cwd = ""
+                pane_cmd = ""
+                pane_tty = ""
+                pw = 0
+                ph = 0
                 try:
-                    # Get the active pane's current path, command, and dimensions
                     pane = window.active_pane
                     if pane:
                         cwd = pane.pane_current_path or ""
@@ -202,26 +206,20 @@ class TmuxManager:
                         pane_tty = getattr(pane, "pane_tty", "") or ""
                         pw = int(pane.pane_width or 0)
                         ph = int(pane.pane_height or 0)
-                    else:
-                        cwd = ""
-                        pane_cmd = ""
-                        pane_tty = ""
-                        pw = 0
-                        ph = 0
-
-                    windows.append(
-                        TmuxWindow(
-                            window_id=window.window_id or "",
-                            window_name=name,
-                            cwd=cwd,
-                            pane_current_command=pane_cmd,
-                            pane_tty=pane_tty,
-                            pane_width=pw,
-                            pane_height=ph,
-                        )
-                    )
                 except _TmuxError as e:
-                    logger.debug("Error getting window info: %s", e)
+                    logger.debug("Error getting pane info for %s: %s", window_id, e)
+
+                windows.append(
+                    TmuxWindow(
+                        window_id=window.window_id or "",
+                        window_name=name,
+                        cwd=cwd,
+                        pane_current_command=pane_cmd,
+                        pane_tty=pane_tty,
+                        pane_width=pw,
+                        pane_height=ph,
+                    )
+                )
 
             return windows
 
