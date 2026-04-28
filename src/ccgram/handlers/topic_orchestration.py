@@ -39,6 +39,9 @@ logger = structlog.get_logger()
 _topic_create_retry_until: dict[int, float] = {}
 _TOPIC_CREATE_RETRY_BUFFER_SECONDS = 1
 
+# Windows where auto-topic creation failed with a permanent error (permissions).
+_topic_create_failed_windows: set[str] = set()
+
 
 def clear_topic_create_retry(chat_id: int, _thread_id: int = 0) -> None:
     """Clear topic creation retry backoff for this chat.
@@ -193,6 +196,7 @@ async def create_topic_in_chat(
             window_id,
             chat_id,
         )
+        _topic_create_failed_windows.add(window_id)
 
 
 async def _topic_exists(bot: Bot, chat_id: int, thread_id: int) -> bool | None:
@@ -284,6 +288,9 @@ async def handle_new_window(event: NewWindowEvent, bot: Bot) -> None:
         logger.debug(
             "New window %s already bound, skipping topic creation", event.window_id
         )
+        return
+
+    if event.window_id in _topic_create_failed_windows:
         return
 
     await _auto_detect_provider(event.window_id)

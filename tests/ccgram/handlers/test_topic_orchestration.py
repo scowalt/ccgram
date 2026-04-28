@@ -9,6 +9,7 @@ from telegram.error import BadRequest, RetryAfter, TelegramError
 from ccgram.handlers.topic_orchestration import (
     collect_target_chats,
     _is_window_already_bound,
+    _topic_create_failed_windows,
     _topic_create_retry_until,
     adopt_unbound_windows,
     handle_new_window,
@@ -19,8 +20,10 @@ from ccgram.session_monitor import NewWindowEvent
 @pytest.fixture(autouse=True)
 def _clear_retry_state():
     _topic_create_retry_until.clear()
+    _topic_create_failed_windows.clear()
     yield
     _topic_create_retry_until.clear()
+    _topic_create_failed_windows.clear()
 
 
 @pytest.fixture(autouse=True)

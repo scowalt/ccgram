@@ -382,6 +382,9 @@ async def _create_and_bind_window(
     if provider.capabilities.supports_hook:
         await session_map_sync.wait_for_session_map_entry(created_wid)
 
+    if old_window_id:
+        await tmux_manager.kill_window(old_window_id)
+
     # Propagate provider to new window
     session_manager.set_window_origin(created_wid, CCGRAM_CREATED_WINDOW_ORIGIN)
     session_manager.set_window_provider(created_wid, provider.capabilities.name)

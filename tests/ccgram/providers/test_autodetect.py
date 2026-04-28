@@ -2,6 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from ccgram.handlers.topic_orchestration import _topic_create_failed_windows
 from ccgram.providers import (
     _reset_provider,
     detect_provider_from_command,
@@ -9,6 +10,13 @@ from ccgram.providers import (
     should_probe_pane_title_for_provider_detection,
 )
 from ccgram.session_monitor import SessionMonitor
+
+
+@pytest.fixture(autouse=True)
+def _clear_failed_windows():
+    _topic_create_failed_windows.clear()
+    yield
+    _topic_create_failed_windows.clear()
 
 
 class TestDetectProviderFromCommand:
