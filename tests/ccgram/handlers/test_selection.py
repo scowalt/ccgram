@@ -30,7 +30,7 @@ class TestBuildProviderPicker:
         labels = [btn.text for row in buttons for btn in row]
         assert any("Claude" in label for label in labels)
         assert any("Codex" in label for label in labels)
-        assert any("Gemini" in label for label in labels)
+        assert any("Pi" in label for label in labels)
 
     def test_claude_marked_as_default(self) -> None:
         _text, keyboard = build_provider_picker("/tmp/test")
@@ -52,7 +52,7 @@ class TestBuildProviderPicker:
         ]
         assert f"{CB_PROV_SELECT}claude" in provider_callbacks
         assert f"{CB_PROV_SELECT}codex" in provider_callbacks
-        assert f"{CB_PROV_SELECT}gemini" in provider_callbacks
+        assert f"{CB_PROV_SELECT}pi" in provider_callbacks
 
     def test_has_cancel_button(self) -> None:
         _text, keyboard = build_provider_picker("/tmp/test")
