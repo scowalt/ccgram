@@ -550,6 +550,7 @@ class TestRecoveryFreshCallback:
         mock_tm.create_window = AsyncMock(
             return_value=(True, "Window created", "project", "@5")
         )
+        mock_tm.kill_window = AsyncMock(return_value=True)
         mock_sm.wait_for_session_map_entry = AsyncMock()
         mock_sm.send_to_window = AsyncMock(return_value=(True, "ok"))
         mock_tr.resolve_chat_id.return_value = -100999
@@ -567,6 +568,7 @@ class TestRecoveryFreshCallback:
         mock_tm.create_window.assert_called_once_with(
             "/tmp/project", agent_args="", launch_command="claude"
         )
+        mock_tm.kill_window.assert_called_once_with("@0")
         mock_tr.bind_thread.assert_called_once_with(
             100, 42, "@5", window_name="project"
         )
@@ -591,6 +593,7 @@ class TestRecoveryFreshCallback:
         mock_tm.create_window = AsyncMock(
             return_value=(True, "Window created", "project", "@5")
         )
+        mock_tm.kill_window = AsyncMock(return_value=True)
         mock_sm.wait_for_session_map_entry = AsyncMock()
         mock_send_to_window.return_value = (True, "ok")
         mock_tr.resolve_chat_id.return_value = -100999
@@ -691,6 +694,7 @@ class TestRecoveryContinueCallback:
         mock_tm.create_window = AsyncMock(
             return_value=(True, "Window created", "project", "@5")
         )
+        mock_tm.kill_window = AsyncMock(return_value=True)
         mock_sm.wait_for_session_map_entry = AsyncMock()
         mock_sm.send_to_window = AsyncMock(return_value=(True, "ok"))
         mock_tr.resolve_chat_id.return_value = -100999
@@ -704,6 +708,7 @@ class TestRecoveryContinueCallback:
             mock_path.return_value.is_dir.return_value = True
             await handle_recovery_callback(query, 100, query.data, update, ctx)
 
+        mock_tm.kill_window.assert_called_once_with("@0")
         mock_tm.create_window.assert_called_once_with(
             "/tmp/project", agent_args="--continue", launch_command="claude"
         )
@@ -732,6 +737,7 @@ class TestRecoveryContinueCallback:
         mock_tm.create_window = AsyncMock(
             return_value=(True, "Window created", "project", "@5")
         )
+        mock_tm.kill_window = AsyncMock(return_value=True)
         mock_sm.wait_for_session_map_entry = AsyncMock()
         mock_send_to_window.return_value = (True, "ok")
         mock_tr.resolve_chat_id.return_value = -100999
@@ -875,6 +881,7 @@ class TestRecoveryResumePickCallback:
         mock_tm.create_window = AsyncMock(
             return_value=(True, "Window created", "project", "@5")
         )
+        mock_tm.kill_window = AsyncMock(return_value=True)
         mock_sm.wait_for_session_map_entry = AsyncMock()
         mock_sm.send_to_window = AsyncMock(return_value=(True, "ok"))
         mock_tr.resolve_chat_id.return_value = -100999
@@ -928,6 +935,7 @@ class TestRecoveryResumePickCallback:
         mock_tm.create_window = AsyncMock(
             return_value=(True, "Window created", "project", "@5")
         )
+        mock_tm.kill_window = AsyncMock(return_value=True)
         mock_sm.wait_for_session_map_entry = AsyncMock()
         mock_sm.send_to_window = AsyncMock(return_value=(True, "ok"))
         mock_tr.resolve_chat_id.return_value = -100999
@@ -1537,6 +1545,7 @@ class TestRecoveryPerWindowProvider:
         mock_tm.create_window = AsyncMock(
             return_value=(True, "Window created", "project", "@5")
         )
+        mock_tm.kill_window = AsyncMock(return_value=True)
         mock_sm.wait_for_session_map_entry = AsyncMock()
         mock_sm.send_to_window = AsyncMock(return_value=(True, "ok"))
         mock_tr.resolve_chat_id.return_value = -100999
@@ -1579,6 +1588,7 @@ class TestRecoveryPerWindowProvider:
         mock_tm.create_window = AsyncMock(
             return_value=(True, "Window created", "project", "@5")
         )
+        mock_tm.kill_window = AsyncMock(return_value=True)
         mock_sm.wait_for_session_map_entry = AsyncMock()
         mock_sm.send_to_window = AsyncMock(return_value=(True, "ok"))
         mock_tr.resolve_chat_id.return_value = -100999

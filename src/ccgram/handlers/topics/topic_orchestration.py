@@ -47,6 +47,9 @@ _TOPIC_CREATE_RETRY_BUFFER_SECONDS = 1
 _TOPIC_CREATE_TRANSIENT_RETRIES = 1
 _TOPIC_CREATE_TRANSIENT_BACKOFF_S = 1.0
 
+# Windows where auto-topic creation failed with a permanent error (permissions).
+_topic_create_failed_windows: set[str] = set()
+
 
 async def _create_forum_topic_with_retry(
     client: TelegramClient, chat_id: int, topic_name: str
@@ -278,6 +281,7 @@ async def create_topic_in_chat(
             window_id,
             chat_id,
         )
+        _topic_create_failed_windows.add(window_id)
 
 
 async def _topic_exists(
@@ -379,6 +383,9 @@ async def handle_new_window(event: NewWindowEvent, client: TelegramClient) -> No
             "skipping auto topic creation",
             event.window_id,
         )
+        return
+
+    if event.window_id in _topic_create_failed_windows:
         return
 
     await _auto_detect_provider(event.window_id)
