@@ -866,6 +866,169 @@ class TestWholeFileTranscriptReading:
         assert new_messages[1].text == "hi there"
 
 
+class TestCatchUpNewSessions:
+    async def test_catch_up_delivers_first_assistant_response(self, tmp_path) -> None:
+        user_line = '{"type":"user","message":{"content":[{"type":"text","text":"hello world"}]}}\n'
+        assistant_line = '{"type":"assistant","message":{"content":[{"type":"text","text":"Hello!"}]}}\n'
+        session_file = tmp_path / "transcript.jsonl"
+        session_file.write_text(user_line + assistant_line)
+
+        monitor = SessionMonitor(
+            projects_path=tmp_path / "projects",
+            state_file=tmp_path / "ms.json",
+        )
+        monitor._transcript_reader.mark_catch_up("sess-catchup")
+
+        current_map = {
+            "@13": {
+                "session_id": "sess-catchup",
+                "cwd": "/proj",
+                "window_name": "proj",
+                "transcript_path": str(session_file),
+            },
+        }
+        msgs = await monitor.check_for_updates(current_map)
+
+        assert len(msgs) == 1
+        assert "Hello!" in msgs[0].text
+
+    async def test_no_catch_up_skips_existing_content(self, tmp_path) -> None:
+        user_line = (
+            '{"type":"user","message":{"content":[{"type":"text","text":"hello"}]}}\n'
+        )
+        assistant_line = '{"type":"assistant","message":{"content":[{"type":"text","text":"Hi!"}]}}\n'
+        session_file = tmp_path / "transcript.jsonl"
+        session_file.write_text(user_line + assistant_line)
+
+        monitor = SessionMonitor(
+            projects_path=tmp_path / "projects",
+            state_file=tmp_path / "ms.json",
+        )
+
+        current_map = {
+            "@13": {
+                "session_id": "sess-normal",
+                "cwd": "/proj",
+                "window_name": "proj",
+                "transcript_path": str(session_file),
+            },
+        }
+        msgs = await monitor.check_for_updates(current_map)
+
+        assert msgs == []
+        tracked = monitor.state.get_session("sess-normal")
+        assert tracked is not None
+        assert tracked.last_byte_offset == session_file.stat().st_size
+
+    async def test_catch_up_no_user_entry_falls_back_to_eof(self, tmp_path) -> None:
+        assistant_line = '{"type":"assistant","message":{"content":[{"type":"text","text":"Hi!"}]}}\n'
+        session_file = tmp_path / "transcript.jsonl"
+        session_file.write_text(assistant_line)
+
+        monitor = SessionMonitor(
+            projects_path=tmp_path / "projects",
+            state_file=tmp_path / "ms.json",
+        )
+        monitor._transcript_reader.mark_catch_up("sess-nouser")
+
+        current_map = {
+            "@1": {
+                "session_id": "sess-nouser",
+                "cwd": "/proj",
+                "window_name": "proj",
+                "transcript_path": str(session_file),
+            },
+        }
+        msgs = await monitor.check_for_updates(current_map)
+
+        assert msgs == []
+        tracked = monitor.state.get_session("sess-nouser")
+        assert tracked is not None
+        assert tracked.last_byte_offset == session_file.stat().st_size
+
+    async def test_detect_changes_marks_new_window_for_catch_up(self, tmp_path) -> None:
+        monitor = SessionMonitor(
+            projects_path=tmp_path / "projects",
+            state_file=tmp_path / "ms.json",
+        )
+        monitor._last_session_map = {}
+
+        new_map = {
+            "@5": {
+                "session_id": "new-sess",
+                "cwd": "/proj",
+                "window_name": "proj",
+            }
+        }
+        with patch.object(
+            monitor,
+            "_load_current_session_map",
+            spec=True,
+            new_callable=AsyncMock,
+            return_value=new_map,
+        ):
+            await monitor._detect_and_cleanup_changes()
+
+        assert "new-sess" in monitor._transcript_reader._catch_up_sessions
+
+    async def test_detect_changes_marks_changed_session_for_catch_up(
+        self, tmp_path
+    ) -> None:
+        monitor = SessionMonitor(
+            projects_path=tmp_path / "projects",
+            state_file=tmp_path / "ms.json",
+        )
+        monitor._last_session_map = {
+            "@5": {"session_id": "old-sess", "cwd": "/proj", "window_name": "proj"}
+        }
+        monitor.state.update_session(
+            TrackedSession(session_id="old-sess", file_path="/fake")
+        )
+
+        new_map = {
+            "@5": {
+                "session_id": "new-sess",
+                "cwd": "/proj",
+                "window_name": "proj",
+            }
+        }
+        with patch.object(
+            monitor,
+            "_load_current_session_map",
+            spec=True,
+            new_callable=AsyncMock,
+            return_value=new_map,
+        ):
+            await monitor._detect_and_cleanup_changes()
+
+        assert "new-sess" in monitor._transcript_reader._catch_up_sessions
+
+    async def test_catch_up_consumed_after_first_read(self, tmp_path) -> None:
+        user_line = (
+            '{"type":"user","message":{"content":[{"type":"text","text":"hi"}]}}\n'
+        )
+        session_file = tmp_path / "transcript.jsonl"
+        session_file.write_text(user_line)
+
+        monitor = SessionMonitor(
+            projects_path=tmp_path / "projects",
+            state_file=tmp_path / "ms.json",
+        )
+        monitor._transcript_reader.mark_catch_up("sess-once")
+
+        current_map = {
+            "@1": {
+                "session_id": "sess-once",
+                "cwd": "/proj",
+                "window_name": "proj",
+                "transcript_path": str(session_file),
+            },
+        }
+        await monitor.check_for_updates(current_map)
+
+        assert "sess-once" not in monitor._transcript_reader._catch_up_sessions
+
+
 def _make_gemini_provider():
     from ccgram.providers.gemini import GeminiProvider
 

@@ -81,13 +81,39 @@ class TranscriptReader:
         self._idle_tracker = idle_tracker
         self._pending_tools: dict[str, dict[str, Any]] = {}
         self._file_mtimes: dict[str, float] = {}
+        self._catch_up_sessions: set[str] = set()
+
+    def mark_catch_up(self, session_id: str) -> None:
+        """Mark a session for catch-up on first read (don't skip to EOF)."""
+        self._catch_up_sessions.add(session_id)
 
     def clear_session(self, session_id: str) -> None:
         """Remove all per-session state for a cleaned-up session."""
         self._state.remove_session(session_id)
         self._file_mtimes.pop(session_id, None)
         self._pending_tools.pop(session_id, None)
+        self._catch_up_sessions.discard(session_id)
         log_throttle_reset(f"partial-jsonl:{session_id}")
+
+    async def _offset_after_last_user_entry(
+        self, file_path: Path, provider: Any
+    ) -> int | None:
+        """Find the byte offset just past the last user entry in a transcript.
+
+        Returns None if no user entry is found (caller should fall back to
+        file_size to avoid replaying an entire old transcript).
+        """
+        offset_after_last_user: int | None = None
+        try:
+            async with aiofiles.open(file_path, "r", encoding="utf-8") as f:
+                async for line in f:
+                    after = await f.tell()
+                    entry = provider.parse_transcript_line(line)
+                    if entry and provider.is_user_transcript_entry(entry):
+                        offset_after_last_user = after
+        except OSError:
+            logger.debug("Error scanning transcript for catch-up: %s", file_path)
+        return offset_after_last_user
 
     async def _process_session_file(
         self,
@@ -109,8 +135,17 @@ class TranscriptReader:
                 file_size = 0
                 current_mtime = 0.0
 
+            should_catch_up = session_id in self._catch_up_sessions
+
             if provider.capabilities.supports_incremental_read:
-                initial_offset = file_size
+                if should_catch_up:
+                    initial_offset = await self._offset_after_last_user_entry(
+                        file_path, provider
+                    )
+                    if initial_offset is None:
+                        initial_offset = file_size
+                else:
+                    initial_offset = file_size
             else:
                 _, initial_offset = await asyncio.to_thread(
                     provider.read_transcript_file, str(file_path), 0
@@ -123,10 +158,13 @@ class TranscriptReader:
             )
             self._state.update_session(tracked)
             self._file_mtimes[session_id] = current_mtime
+            self._catch_up_sessions.discard(session_id)
             if provider.capabilities.supports_task_tracking and window_id:
                 await provider.seed_task_state(window_id, session_id, str(file_path))
             logger.debug("Started tracking session: %s", session_id)
-            return
+
+            if not should_catch_up or initial_offset >= file_size:
+                return
 
         try:
             st = file_path.stat()
