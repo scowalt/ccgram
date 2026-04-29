@@ -355,6 +355,11 @@ class SessionMonitor:
         if result.sessions_to_remove:
             self.state.save_if_dirty()
 
+        for details in result.new_windows.values():
+            self._transcript_reader.mark_catch_up(details["session_id"])
+        for details in result.changed_windows.values():
+            self._transcript_reader.mark_catch_up(details["session_id"])
+
         adoption_windows = dict(result.new_windows)
         # Lazy: thread_router is wired into session_manager which imports
         # session_monitor; hoisting forms a startup cycle.
