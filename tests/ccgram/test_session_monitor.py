@@ -1029,6 +1029,19 @@ class TestCatchUpNewSessions:
         assert "sess-once" not in monitor._transcript_reader._catch_up_sessions
 
 
+class TestNewWindowDeduplication:
+    async def test_emitted_set_starts_empty(self, monitor: SessionMonitor) -> None:
+        assert monitor._emitted_new_window_ids == set()
+
+    async def test_emitted_set_pruned_when_window_disappears(
+        self, monitor: SessionMonitor
+    ) -> None:
+        monitor._emitted_new_window_ids = {"@5", "@6", "@7"}
+        live = {"@5", "@7"}
+        monitor._emitted_new_window_ids &= live
+        assert monitor._emitted_new_window_ids == {"@5", "@7"}
+
+
 def _make_gemini_provider():
     from ccgram.providers.gemini import GeminiProvider
 

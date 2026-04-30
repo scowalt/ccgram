@@ -387,6 +387,7 @@ async def _create_and_bind_window(
 
     # Propagate provider to new window
     session_manager.set_window_origin(created_wid, CCGRAM_CREATED_WINDOW_ORIGIN)
+    session_manager.set_window_cwd(created_wid, cwd)
     session_manager.set_window_provider(created_wid, provider.capabilities.name)
     session_manager.set_window_approval_mode(created_wid, approval_mode)
 

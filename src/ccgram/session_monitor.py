@@ -97,6 +97,7 @@ class SessionMonitor:
 
         self._idle_tracker = IdleTracker()
         self._transcript_reader = TranscriptReader(self.state, self._idle_tracker)
+        self._emitted_new_window_ids: set[str] = set()
 
     # Delegation properties for backward-compatible test access
     @property
@@ -339,9 +340,12 @@ class SessionMonitor:
                 all_windows = all_windows + external_windows
                 live_window_ids = {w.window_id for w in all_windows}
                 session_map_sync.prune_session_map(live_window_ids)
+                self._emitted_new_window_ids &= live_window_ids
                 known_window_ids = set(current_map.keys())
                 for window in all_windows:
                     if window.window_id in known_window_ids:
+                        continue
+                    if window.window_id in self._emitted_new_window_ids:
                         continue
                     from .thread_router import thread_router
 
@@ -350,6 +354,7 @@ class SessionMonitor:
                         for _, _, wid in thread_router.iter_thread_bindings()
                     )
                     if not already_bound and self._new_window_callback:
+                        self._emitted_new_window_ids.add(window.window_id)
                         event = NewWindowEvent(
                             window_id=window.window_id,
                             session_id="",

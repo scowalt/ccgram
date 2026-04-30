@@ -87,7 +87,7 @@ async def _auto_detect_provider(window_id: str) -> None:
             pane_title=pane_title,
         )
     if detected:
-        session_manager.set_window_provider(window_id, detected)
+        session_manager.set_window_provider(window_id, detected, cwd=w.cwd or None)
         logger.info(
             "Auto-detected provider %r for window %s (command=%s)",
             detected,

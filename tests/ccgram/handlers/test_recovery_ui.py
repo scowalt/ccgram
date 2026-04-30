@@ -492,6 +492,7 @@ class TestRecoveryFreshCallback:
             "/tmp/project", agent_args="", launch_command="claude"
         )
         mock_tm.kill_window.assert_called_once_with("@0")
+        mock_sm.set_window_cwd.assert_called_once_with("@5", "/tmp/project")
         mock_tr.bind_thread.assert_called_once_with(
             100, 42, "@5", window_name="project"
         )

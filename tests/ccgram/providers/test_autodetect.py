@@ -137,7 +137,9 @@ class TestHandleNewWindowAutoDetection:
         await _handle_new_window(event, bot)
 
         mock_detect.assert_awaited_once()
-        mock_sm.set_window_provider.assert_called_once_with("@5", "codex")
+        mock_sm.set_window_provider.assert_called_once_with(
+            "@5", "codex", cwd=mock_window.cwd
+        )
 
     @patch("ccgram.handlers.topic_orchestration.tmux_manager")
     @patch("ccgram.handlers.topic_orchestration.session_manager")
@@ -247,7 +249,9 @@ class TestHandleNewWindowAutoDetection:
 
         mock_detect.assert_awaited_once()
         mock_tmux.get_pane_title.assert_awaited_once_with("@8")
-        mock_sm.set_window_provider.assert_called_once_with("@8", "gemini")
+        mock_sm.set_window_provider.assert_called_once_with(
+            "@8", "gemini", cwd=mock_window.cwd
+        )
 
     @patch("ccgram.handlers.topic_orchestration.tmux_manager")
     @patch("ccgram.handlers.topic_orchestration.session_manager")
