@@ -1034,6 +1034,22 @@ class TestResolveStaleIdsPreservesDeadBindings:
 
         assert thread_router.get_window_for_thread(100, 1) == "@1"
 
+    async def test_stale_same_name_topic_does_not_steal_live_binding(
+        self, mgr: SessionManager
+    ) -> None:
+        thread_router.bind_thread(100, 514, "@97", window_name="majesty-ai")
+        thread_router.bind_thread(100, 2433, "@10", window_name="majesty-ai")
+        alive = SimpleNamespace(window_id="@97", window_name="majesty-ai")
+        from ccgram.tmux_manager import tmux_manager
+
+        with patch.object(
+            tmux_manager, "list_windows", AsyncMock(return_value=[alive])
+        ):
+            await mgr.resolve_stale_ids()
+
+        assert thread_router.get_window_for_thread(100, 514) == "@97"
+        assert thread_router.get_window_for_thread(100, 2433) == "@10"
+
     async def test_dead_window_state_preserved(self, mgr: SessionManager) -> None:
         thread_router.bind_thread(100, 1, "@1", window_name="proj")
         mgr.window_states["@1"] = WindowState(cwd="/my/project", provider_name="codex")

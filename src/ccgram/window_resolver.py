@@ -89,6 +89,63 @@ def _resolve_window_states(
     return changed
 
 
+def _resolve_thread_binding_value(
+    val: str,
+    *,
+    user_id: int,
+    thread_id: int,
+    window_display_names: dict,
+    live_by_name: dict[str, str],
+    live_ids: set[str],
+    reserved_window_ids: set[str],
+) -> tuple[str | None, bool]:
+    """Resolve one thread binding value. Returns (new_value, changed)."""
+    if is_foreign_window(val):
+        return val, False
+    if is_window_id(val):
+        if val in live_ids:
+            return val, False
+        display = window_display_names.get(val, val)
+        new_id = live_by_name.get(display)
+        if not new_id:
+            return val, False
+        if new_id in reserved_window_ids:
+            logger.debug(
+                "Keeping stale thread binding %s because live window %s "
+                "is already bound",
+                val,
+                new_id,
+            )
+            return val, False
+        logger.debug("Re-resolved thread binding %s -> %s", val, new_id)
+        reserved_window_ids.add(new_id)
+        window_display_names[new_id] = display
+        return new_id, True
+
+    new_id = live_by_name.get(val)
+    if new_id:
+        if new_id in reserved_window_ids:
+            logger.debug(
+                "Dropping old-format thread binding %s because live window %s "
+                "is already bound",
+                val,
+                new_id,
+            )
+            return None, True
+        logger.debug("Migrating thread binding %s -> %s", val, new_id)
+        reserved_window_ids.add(new_id)
+        window_display_names[new_id] = val
+        return new_id, True
+
+    logger.debug(
+        "Dropping old-format thread binding: user=%d, thread=%d, name=%s",
+        user_id,
+        thread_id,
+        val,
+    )
+    return None, True
+
+
 def _resolve_thread_bindings(
     thread_bindings: dict,
     window_display_names: dict,
@@ -99,35 +156,24 @@ def _resolve_thread_bindings(
     changed = False
     for uid, bindings in thread_bindings.items():
         new_bindings: dict[int, str] = {}
+        reserved_window_ids = {
+            val
+            for val in bindings.values()
+            if is_foreign_window(val) or val in live_ids
+        }
         for tid, val in bindings.items():
-            # Foreign windows (emdash) — preserve as-is
-            if is_foreign_window(val):
-                new_bindings[tid] = val
-                continue
-            if is_window_id(val):
-                if val in live_ids:
-                    new_bindings[tid] = val
-                elif new_id := live_by_name.get(window_display_names.get(val, val)):
-                    logger.debug("Re-resolved thread binding %s -> %s", val, new_id)
-                    new_bindings[tid] = new_id
-                    window_display_names[new_id] = window_display_names.get(val, val)
-                    changed = True
-                else:
-                    # Keep dead window binding — /restore needs it
-                    new_bindings[tid] = val
-            elif new_id := live_by_name.get(val):
-                logger.debug("Migrating thread binding %s -> %s", val, new_id)
-                new_bindings[tid] = new_id
-                window_display_names[new_id] = val
-                changed = True
-            else:
-                logger.debug(
-                    "Dropping old-format thread binding: user=%d, thread=%d, name=%s",
-                    uid,
-                    tid,
-                    val,
-                )
-                changed = True
+            new_val, value_changed = _resolve_thread_binding_value(
+                val,
+                user_id=uid,
+                thread_id=tid,
+                window_display_names=window_display_names,
+                live_by_name=live_by_name,
+                live_ids=live_ids,
+                reserved_window_ids=reserved_window_ids,
+            )
+            changed |= value_changed
+            if new_val is not None:
+                new_bindings[tid] = new_val
         bindings.clear()
         bindings.update(new_bindings)
 

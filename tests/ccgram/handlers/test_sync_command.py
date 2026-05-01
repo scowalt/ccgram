@@ -522,6 +522,7 @@ class TestDeadTopicRecreation:
             session_id="s1", cwd="/tmp/proj", window_name="qmd-go"
         )
         mock_tr.get_window_for_thread.return_value = "@2"
+        mock_tr.has_window.return_value = True
 
         issues = [
             AuditIssue(
@@ -545,6 +546,42 @@ class TestDeadTopicRecreation:
             assert event.window_id == "@2"
             assert event.window_name == "qmd-go"
 
+    async def test_recreate_restores_binding_when_no_new_binding(
+        self, _patch_deps
+    ) -> None:
+        _mock_sm, _, mock_wq, mock_tr, _, _ = _patch_deps
+        mock_wq.view_window.return_value = MagicMock(
+            session_id="s1", cwd="/tmp/proj", window_name="qmd-go"
+        )
+        mock_tr.get_window_for_thread.return_value = "@2"
+        mock_tr.resolve_chat_id.return_value = -100123
+        mock_tr.group_chat_ids = {}
+        mock_tr.has_window.return_value = False
+
+        issues = [
+            AuditIssue(
+                "dead_topic",
+                "user:100 thread:42 window:@2 (qmd-go)",
+                fixable=True,
+            ),
+        ]
+
+        mock_bot = AsyncMock()
+
+        with patch(
+            "ccgram.handlers.topic_orchestration.handle_new_window",
+            new_callable=AsyncMock,
+        ) as mock_handle:
+            count = await _recreate_dead_topics(mock_bot, issues)
+
+        assert count == 0
+        mock_tr.unbind_thread.assert_called_once_with(100, 42)
+        mock_handle.assert_called_once()
+        mock_tr.bind_thread.assert_called_once_with(
+            100, 42, "@2", window_name="qmd-go"
+        )
+        mock_tr.set_group_chat_id.assert_called_once_with(100, 42, -100123)
+
     async def test_recreate_skips_non_dead_topic_issues(self, _patch_deps) -> None:
         issues = [
             AuditIssue("ghost_binding", "user:100 thread:42 window:@7", fixable=True),
@@ -565,6 +602,7 @@ class TestDeadTopicRecreation:
             session_id="s1", cwd="/tmp", window_name="proj"
         )
         mock_tr.get_window_for_thread.return_value = "@2"
+        mock_tr.has_window.return_value = False
 
         issues = [
             AuditIssue(

@@ -330,6 +330,25 @@ async def _probe_dead_topics(bot: Bot) -> list[AuditIssue]:
     return issues
 
 
+def _parse_dead_topic_issue(issue: AuditIssue) -> tuple[int, int, str] | None:
+    """Extract user, thread, and window IDs from a dead_topic audit issue."""
+    if issue.category != "dead_topic":
+        return None
+    match = _GHOST_RE.search(issue.detail)
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2)), match.group(3)
+
+
+def _restore_dead_topic_binding(
+    user_id: int, thread_id: int, window_id: str, name: str, chat_id: int
+) -> None:
+    """Restore a topic binding after failed dead-topic recreation."""
+    thread_router.bind_thread(user_id, thread_id, window_id, window_name=name)
+    if chat_id != user_id:
+        thread_router.set_group_chat_id(user_id, thread_id, chat_id)
+
+
 async def _recreate_dead_topics(bot: Bot, issues: list[AuditIssue]) -> int:
     """Unbind dead topics and recreate them via _handle_new_window.
 
@@ -340,14 +359,10 @@ async def _recreate_dead_topics(bot: Bot, issues: list[AuditIssue]) -> int:
 
     recreated = 0
     for issue in issues:
-        if issue.category != "dead_topic":
+        parsed = _parse_dead_topic_issue(issue)
+        if parsed is None:
             continue
-        match = _GHOST_RE.search(issue.detail)
-        if not match:
-            continue
-        user_id = int(match.group(1))
-        thread_id = int(match.group(2))
-        window_id = match.group(3)
+        user_id, thread_id, window_id = parsed
         current_window_id = thread_router.get_window_for_thread(user_id, thread_id)
         if current_window_id != window_id:
             continue
@@ -380,13 +395,25 @@ async def _recreate_dead_topics(bot: Bot, issues: list[AuditIssue]) -> int:
 
         try:
             await _handle_new_window(event, bot)
-            recreated += 1
         except TelegramError, OSError:
             logger.exception("Failed to recreate topic for window %s", window_id)
-            # Restore binding so the window isn't orphaned
-            thread_router.bind_thread(user_id, thread_id, window_id, window_name=name)
-            if chat_id != user_id:
-                thread_router.set_group_chat_id(user_id, thread_id, chat_id)
+            if not thread_router.has_window(window_id):
+                _restore_dead_topic_binding(
+                    user_id, thread_id, window_id, name, chat_id
+                )
+        else:
+            if thread_router.has_window(window_id):
+                recreated += 1
+            else:
+                logger.warning(
+                    "Topic recreation for window %s did not produce a binding; "
+                    "restoring thread %d",
+                    window_id,
+                    thread_id,
+                )
+                _restore_dead_topic_binding(
+                    user_id, thread_id, window_id, name, chat_id
+                )
         finally:
             thread_router.group_chat_ids.pop(_placeholder_key, None)
     return recreated
