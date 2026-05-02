@@ -911,6 +911,124 @@ class TestProviderSwitchPromptSetup:
         assert mock_ensure.call_args[0] == ("@7", "provider_switch")
 
 
+class TestProviderSwitchChain:
+    async def test_claude_to_shell_to_gemini_to_shell(self) -> None:
+        from ccgram.handlers.transcript_discovery import (
+            discover_and_register_transcript,
+        )
+        from ccgram.window_state_store import WindowState
+
+        state = WindowState(
+            cwd="/proj", provider_name="claude", transcript_path="/tx/claude.jsonl"
+        )
+
+        def _set_provider(window_id: str, name: str, cwd: str | None = None) -> None:
+            state.provider_name = name
+            if cwd is not None:
+                state.cwd = cwd
+
+        claude_caps = MagicMock()
+        claude_caps.capabilities.supports_hook = True
+        claude_caps.capabilities.chat_first_command_path = False
+        shell_caps = MagicMock()
+        shell_caps.capabilities.supports_hook = False
+        shell_caps.capabilities.chat_first_command_path = True
+        shell_caps.capabilities.supports_mailbox_delivery = False
+        gemini_caps = MagicMock()
+        gemini_caps.capabilities.supports_hook = False
+        gemini_caps.capabilities.chat_first_command_path = False
+        gemini_caps.capabilities.supports_mailbox_delivery = True
+        gemini_caps.capabilities.name = "gemini"
+        gemini_caps.discover_transcript.return_value = None
+
+        provider_map: dict[str, MagicMock] = {
+            "claude": claude_caps,
+            "shell": shell_caps,
+            "gemini": gemini_caps,
+        }
+
+        def _provider_for(window_id: str, name: str | None = None) -> MagicMock:
+            return provider_map.get(name or "", claude_caps)
+
+        bot = AsyncMock(spec=Bot)
+        with (
+            patch("ccgram.handlers.transcript_discovery.session_manager") as mock_sm,
+            patch("ccgram.handlers.transcript_discovery.tmux_manager") as mock_tmux,
+            patch("ccgram.handlers.transcript_discovery.config") as mock_config,
+            patch(
+                "ccgram.handlers.transcript_discovery.detect_provider_from_pane",
+                new_callable=AsyncMock,
+            ) as mock_detect,
+            patch(
+                "ccgram.handlers.transcript_discovery.get_provider_for_window",
+                side_effect=_provider_for,
+            ),
+            patch(
+                "ccgram.handlers.shell_prompt_orchestrator.ensure_setup",
+                new_callable=AsyncMock,
+            ) as mock_ensure,
+            patch(
+                "ccgram.handlers.shell_capture.clear_shell_monitor_state"
+            ) as mock_clear_capture,
+            patch(
+                "ccgram.handlers.shell_prompt_orchestrator.clear_state"
+            ) as mock_clear_orch,
+        ):
+            mock_sm.window_states = {"@7": state}
+            mock_sm.set_window_provider.side_effect = _set_provider
+            mock_config.tmux_session_name = "ccgram"
+
+            # Step 1: claude → shell. User exits claude, pane shows fish.
+            mock_detect.return_value = "shell"
+            mock_tmux.find_window_by_id = AsyncMock(
+                return_value=MagicMock(
+                    pane_current_command="fish", cwd="/proj", pane_tty=""
+                )
+            )
+            await discover_and_register_transcript(
+                "@7", bot=bot, user_id=1, thread_id=42
+            )
+            assert state.provider_name == "shell"
+            assert state.transcript_path == ""
+            assert mock_ensure.await_count == 1
+            assert mock_ensure.call_args is not None
+            assert mock_ensure.call_args.args == ("@7", "provider_switch")
+            mock_clear_capture.assert_not_called()
+            mock_clear_orch.assert_not_called()
+
+            # Step 2: shell → gemini. User runs `gemini` in shell.
+            mock_detect.return_value = "gemini"
+            mock_tmux.find_window_by_id = AsyncMock(
+                return_value=MagicMock(
+                    pane_current_command="gemini", cwd="/proj", pane_tty=""
+                )
+            )
+            await discover_and_register_transcript(
+                "@7", bot=bot, user_id=1, thread_id=42
+            )
+            assert state.provider_name == "gemini"
+            mock_clear_capture.assert_called_once_with("@7")
+            mock_clear_orch.assert_called_once_with("@7")
+            # No new ensure_setup call — we're leaving shell, not entering it.
+            assert mock_ensure.await_count == 1
+
+            # Step 3: gemini → shell. User exits gemini, pane shows fish.
+            mock_detect.return_value = "shell"
+            mock_tmux.find_window_by_id = AsyncMock(
+                return_value=MagicMock(
+                    pane_current_command="fish", cwd="/proj", pane_tty=""
+                )
+            )
+            await discover_and_register_transcript(
+                "@7", bot=bot, user_id=1, thread_id=42
+            )
+            assert state.provider_name == "shell"
+            assert state.transcript_path == ""
+            assert mock_ensure.await_count == 2
+            assert mock_ensure.call_args is not None
+            assert mock_ensure.call_args.args == ("@7", "provider_switch")
+
+
 class TestMaybeDiscoverTranscript:
     async def test_noop_when_discovered_session_matches_current(self) -> None:
         from ccgram.handlers.transcript_discovery import (
@@ -1668,8 +1786,8 @@ class TestDeadWindowNotification:
                 new_callable=AsyncMock,
             ),
             patch(
-                "ccgram.handlers.window_tick.build_recovery_keyboard",
-                return_value=None,
+                "ccgram.handlers.window_tick.render_banner",
+                return_value=("⚠ Session ended", None),
             ),
             patch(
                 "ccgram.handlers.window_tick.asyncio.to_thread",
@@ -1699,8 +1817,8 @@ class TestDeadWindowNotification:
                 new_callable=AsyncMock,
             ),
             patch(
-                "ccgram.handlers.window_tick.build_recovery_keyboard",
-                return_value=None,
+                "ccgram.handlers.window_tick.render_banner",
+                return_value=("⚠ Session ended", None),
             ),
             patch(
                 "ccgram.handlers.window_tick.asyncio.to_thread",
@@ -1782,7 +1900,7 @@ class TestScanWindowPanes:
     async def test_skips_single_pane_window(self) -> None:
         bot = AsyncMock(spec=Bot)
         with (
-            patch("ccgram.handlers.window_tick.tmux_manager") as mock_tm,
+            patch("ccgram.tmux_manager.tmux_manager") as mock_tm,
             patch(
                 "ccgram.handlers.window_tick.handle_interactive_ui",
                 new_callable=AsyncMock,
@@ -1805,9 +1923,9 @@ class TestScanWindowPanes:
         mock_provider = MagicMock()
         mock_provider.parse_terminal_status.return_value = interactive
         with (
-            patch("ccgram.handlers.window_tick.tmux_manager") as mock_tm,
+            patch("ccgram.tmux_manager.tmux_manager") as mock_tm,
             patch(
-                "ccgram.handlers.window_tick.get_provider_for_window",
+                "ccgram.providers.get_provider_for_window",
                 return_value=mock_provider,
             ),
             patch(
@@ -1827,9 +1945,9 @@ class TestScanWindowPanes:
         mock_provider = MagicMock()
         mock_provider.parse_terminal_status.return_value = None
         with (
-            patch("ccgram.handlers.window_tick.tmux_manager") as mock_tm,
+            patch("ccgram.tmux_manager.tmux_manager") as mock_tm,
             patch(
-                "ccgram.handlers.window_tick.get_provider_for_window",
+                "ccgram.providers.get_provider_for_window",
                 return_value=mock_provider,
             ),
             patch(
@@ -1858,9 +1976,9 @@ class TestScanWindowPanes:
         mock_provider = MagicMock()
         mock_provider.parse_terminal_status.return_value = interactive
         with (
-            patch("ccgram.handlers.window_tick.tmux_manager") as mock_tm,
+            patch("ccgram.tmux_manager.tmux_manager") as mock_tm,
             patch(
-                "ccgram.handlers.window_tick.get_provider_for_window",
+                "ccgram.providers.get_provider_for_window",
                 return_value=mock_provider,
             ),
             patch(
@@ -1879,7 +1997,7 @@ class TestScanWindowPanes:
     async def test_clears_stale_alert_when_pane_disappears(self) -> None:
         _pane_alert_hashes["%2"] = ("old prompt", 100.0, "@0")
         bot = AsyncMock(spec=Bot)
-        with patch("ccgram.handlers.window_tick.tmux_manager") as mock_tm:
+        with patch("ccgram.tmux_manager.tmux_manager") as mock_tm:
             mock_tm.list_panes = AsyncMock(return_value=[_make_pane()])
             await _scan_window_panes(bot, 1, "@0", 42)
         assert "%2" not in _pane_alert_hashes
@@ -1890,9 +2008,9 @@ class TestScanWindowPanes:
         mock_provider = MagicMock()
         mock_provider.parse_terminal_status.return_value = None
         with (
-            patch("ccgram.handlers.window_tick.tmux_manager") as mock_tm,
+            patch("ccgram.tmux_manager.tmux_manager") as mock_tm,
             patch(
-                "ccgram.handlers.window_tick.get_provider_for_window",
+                "ccgram.providers.get_provider_for_window",
                 return_value=mock_provider,
             ),
             patch(
@@ -1910,7 +2028,7 @@ class TestScanWindowPanes:
 
     async def test_cached_pane_count_skips_subprocess(self) -> None:
         bot = AsyncMock(spec=Bot)
-        with patch("ccgram.handlers.window_tick.tmux_manager") as mock_tm:
+        with patch("ccgram.tmux_manager.tmux_manager") as mock_tm:
             mock_tm.list_panes = AsyncMock(return_value=[_make_pane()])
             await _scan_window_panes(bot, 1, "@0", 42)
             await _scan_window_panes(bot, 1, "@0", 42)

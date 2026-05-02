@@ -193,6 +193,21 @@ class Config:
         self._init_send()
         self._init_lifecycle()
 
+        # Global default for hiding tool_use/tool_result content in Telegram.
+        # Per-window override via WindowState.tool_call_visibility takes precedence.
+        self.hide_tool_calls: bool = os.getenv(
+            "CCGRAM_HIDE_TOOL_CALLS", ""
+        ).lower() in ("1", "true", "yes")
+
+        # Color mapping for the topic state emoji prefix.
+        # "system" (default): green=active, yellow=idle (system POV: green=working).
+        # "user": green=idle, yellow=active (user POV: green=ready for me).
+        # Invalid values fall back to "system".
+        raw_status_mode = os.getenv("CCGRAM_STATUS_MODE", "").strip().lower()
+        self.status_mode: str = (
+            raw_status_mode if raw_status_mode in ("system", "user") else "system"
+        )
+
         logger.debug(
             "Config initialized: dir=%s, token=%s..., allowed_users=%d, "
             "tmux_session=%s",
@@ -250,6 +265,18 @@ class Config:
         self.autoclose_dead_minutes: int = int(
             os.getenv("AUTOCLOSE_DEAD_MINUTES", "10")
         )
+        self.pane_lifecycle_notify: bool = os.getenv(
+            "CCGRAM_PANE_LIFECYCLE_NOTIFY", ""
+        ).lower() in ("1", "true", "yes")
+        self._init_miniapp()
+
+    def _init_miniapp(self) -> None:
+        # Mini App backend (Phase 3 / Theme 6) — disabled when base URL is empty.
+        # base_url is the externally reachable URL Telegram uses to open the
+        # WebApp; host/port control the local aiohttp listener.
+        self.miniapp_base_url: str = os.getenv("CCGRAM_MINIAPP_BASE_URL", "").strip()
+        self.miniapp_host: str = os.getenv("CCGRAM_MINIAPP_HOST", "127.0.0.1")
+        self.miniapp_port: int = _parse_int_env("CCGRAM_MINIAPP_PORT", 8765)
 
     def is_user_allowed(self, user_id: int) -> bool:
         """Check if a user is in the allowed list."""

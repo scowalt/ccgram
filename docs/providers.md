@@ -8,7 +8,7 @@ CCGram supports multiple agent CLI backends. Each Telegram topic can use a diffe
 | ----------- | ----------- | ----------- | ------ | -------- | ---------- | --------------------------------------------------------- |
 | Claude Code | `claude`    | Yes         | Yes    | Yes      | JSONL      | Hook events + pyte VT100 + spinner                        |
 | Codex CLI   | `codex`     | No          | Yes    | Yes      | JSONL      | pyte VT100 interactive UI + transcript activity heuristic |
-| Gemini CLI  | `gemini`    | No          | Yes    | Yes      | JSON       | Pane title + interactive UI                               |
+| Gemini CLI  | `gemini`    | No          | Yes    | Yes      | JSONL      | Pane title + interactive UI + `/status` snapshot          |
 | Pi          | `pi`        | No          | Yes    | Yes      | JSONL (v3) | Transcript activity heuristic                             |
 | Shell       | `bash`      | No          | No     | No       | None       | Shell prompt idle detection                               |
 
@@ -140,7 +140,13 @@ For ccgram-managed Gemini launches, CCGram injects `GEMINI_CLI_SYSTEM_SETTINGS_P
 
 ### Transcript
 
-Gemini transcripts are JSON files (whole-file read, not incremental) under `~/.gemini/tmp/`.
+As of Gemini CLI v0.40+, transcripts are append-only JSONL files under `~/.gemini/tmp/<project-hash>/chats/`. Each line is a JSON record (header with `sessionId`/`projectHash`/`startTime`, then message records and `{"$set": {...}}` metadata updates). CCGram reads them incrementally via the shared `JsonlProvider` byte-offset reader and dedupes repeated message ids and pending tool_use ids — a single tool announcement, then one tool_result on the update that carries the result.
+
+Older `session-*.json` whole-file transcripts are no longer monitored; only `.jsonl` files are picked up.
+
+### Status Snapshot
+
+Gemini supports `/status` snapshots: CCGram parses recent transcript activity to render an inline summary of the current session (last activity, pending tools, tool_use counts) without waiting for the next pane refresh.
 
 ## Pi
 

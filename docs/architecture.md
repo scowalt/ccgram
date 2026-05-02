@@ -1,6 +1,6 @@
 # ccgram Architecture
 
-Generated from code state 2026-04-16 (post modularity round 3).
+Generated from code state 2026-04-29 (v3.0.x).
 
 ## System Overview
 
@@ -301,3 +301,6 @@ graph LR
 | Session map direct imports              | Lifecycle handlers use `session_map_sync` directly; no facade needed                                                                       |
 | File-based mailbox                      | Agents exchange messages via `~/.ccgram/mailbox/`; broker injects via `send_keys`                                                          |
 | Shell leak accepted                     | `match_prompt`, `KNOWN_SHELLS` imports in shell handlers are low-volatility supporting domain — balance rule satisfied by `NOT VOLATILITY` |
+| Tool-call visibility on `WindowState`   | Per-window `tool_call_visibility` (`default`/`shown`/`hidden`) gates `_handle_content_task` before batch eligibility; hook events bypass   |
+| Status-mode color schemes               | `CCGRAM_STATUS_MODE` selects `system` (green=working) or `user` (green=ready) — affects only emoji rendering, not internal state names     |
+| Gemini JSONL incremental reads          | Gemini CLI v0.40+ uses append-only JSONL; provider inherits `JsonlProvider` byte-offset reader, dedups by message id and pending tool_use  |

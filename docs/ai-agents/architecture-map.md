@@ -125,7 +125,7 @@ Provider transcript sources (read-only):
 
 - Claude: `~/.claude/projects/`
 - Codex: `~/.codex/sessions/`
-- Gemini: `~/.gemini/tmp/`
+- Gemini: `~/.gemini/tmp/<project-hash>/chats/*.jsonl` (Gemini CLI v0.40+; append-only JSONL, byte-offset incremental reads via `JsonlProvider`).
   - Gemini discovery matches by `projectHash` (or configured project alias dir) and does not full-scan unrelated project dirs.
 - Pi: `~/.pi/agent/sessions/--<encoded-cwd>--/<timestamp>_<uuid>.jsonl` (JSONL v3; discovery matches the header `cwd` against the window cwd).
 - Shell: no transcript files; output is captured directly from the tmux pane by `handlers/shell_capture.py`.

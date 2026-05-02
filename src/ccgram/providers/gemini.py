@@ -9,8 +9,11 @@ Terminal UI: Gemini CLI uses ``@inquirer/select`` for interactive prompts.
 Permission prompts start with "Action Required" and list numbered options
 with a ``●`` (U+25CF) marker on the selected choice.
 
-Transcript format: single JSON file per session (NOT JSONL) with structure:
-  ``{sessionId, projectHash, startTime, lastUpdated, messages: [...]}``
+Transcript format: incremental JSONL files per session with structure:
+  - Header: ``{"sessionId", "projectHash", "startTime", ...}``
+  - Entries: ``{"id", "timestamp", "type", "content": [...]}``
+  - Updates: ``{"$set": {"lastUpdated": "..."}}``
+
 Messages use ``type`` field with values ``"user"`` / ``"gemini"`` and can
 store content as either a string or a list of ``{text: ...}`` fragments.
 """
@@ -21,7 +24,6 @@ import os
 from pathlib import Path
 import re
 import shlex
-import threading
 import time
 import tomllib
 from typing import Any, cast
@@ -144,14 +146,10 @@ GEMINI_UI_PATTERNS: list[UIPattern] = [
 ]
 
 
-# Cache: file_path -> (mtime_ns, size, parsed_messages)
-# Bounded to prevent unbounded growth; oldest entries evicted when full.
-# Lock required: read_transcript_file runs in asyncio.to_thread() workers.
-_TRANSCRIPT_CACHE_MAX = 64
-_transcript_cache: dict[str, tuple[int, int, list[dict[str, Any]]]] = {}
-_transcript_cache_lock = threading.Lock()
 _TRANSCRIPT_MAX_AGE_SECS = 120.0
 _MAX_TOOL_SUMMARY = 200
+_SHORT_SESSION_ID_LEN = 8
+_SHORT_SESSION_ID_THRESHOLD = 10
 _JSON_READ_ERRORS = (OSError, json.JSONDecodeError)
 _TOML_READ_ERRORS = (OSError, tomllib.TOMLDecodeError)
 _GEMINI_SYSTEM_SETTINGS_FILE = "gemini-system-settings.json"
@@ -285,6 +283,62 @@ def _extract_tool_result_text(tool_call: dict[str, Any]) -> str:
     return ""
 
 
+def _emit_tool_calls(
+    tool_calls: list[Any],
+    entry: dict[str, Any],
+    pending: dict[str, Any],
+) -> list[AgentMessage]:
+    """Emit tool_use / tool_result messages from a Gemini toolCalls list.
+
+    Skips re-announcing a tool whose id is already in ``pending`` (Gemini
+    re-appends the same message line on every toolCalls update). Emits
+    ``tool_result`` once a result payload becomes available and pops the
+    tool from ``pending``.
+    """
+    out: list[AgentMessage] = []
+    timestamp = entry.get("timestamp")
+    for tc in tool_calls:
+        if not isinstance(tc, dict):
+            continue
+        raw_name = tc.get("displayName") or tc.get("name") or "unknown"
+        tool_name = raw_name if isinstance(raw_name, str) else "unknown"
+        call_id = tc.get("id")
+        tool_use_id = call_id if isinstance(call_id, str) and call_id else None
+        already_announced = bool(tool_use_id) and tool_use_id in pending
+        if tool_use_id:
+            pending[tool_use_id] = tool_name
+        if not already_announced:
+            summary = _summarize_tool_args(tc.get("args"))
+            tool_use_text = (
+                f"**{tool_name}** `{summary}`" if summary else f"**{tool_name}**"
+            )
+            out.append(
+                AgentMessage(
+                    text=tool_use_text,
+                    role="assistant",
+                    content_type="tool_use",
+                    tool_use_id=tool_use_id,
+                    tool_name=tool_name,
+                    timestamp=timestamp,
+                )
+            )
+        result_text = _extract_tool_result_text(tc)
+        if result_text:
+            out.append(
+                AgentMessage(
+                    text=result_text,
+                    role="assistant",
+                    content_type="tool_result",
+                    tool_use_id=tool_use_id,
+                    tool_name=tool_name,
+                    timestamp=timestamp,
+                )
+            )
+            if tool_use_id:
+                pending.pop(tool_use_id, None)
+    return out
+
+
 def _read_project_alias(config_dir: Path, resolved_cwd: str) -> str:
     """Read the project alias for cwd from ~/.gemini/projects.json."""
     projects_path = config_dir / "projects.json"
@@ -306,7 +360,8 @@ def _collect_gemini_sessions(chats_dir: Path) -> list[tuple[float, Path]]:
     """Collect Gemini chat transcripts from a chats directory."""
     result: list[tuple[float, Path]] = []
     try:
-        files = sorted(chats_dir.glob("session-*.json"))
+        # Gemini CLI now uses .jsonl for incremental transcripts.
+        files = sorted(chats_dir.glob("session-*.jsonl"))
     except OSError:
         return result
     for fpath in files:
@@ -318,10 +373,16 @@ def _collect_gemini_sessions(chats_dir: Path) -> list[tuple[float, Path]]:
 
 
 def _read_gemini_session_meta(fpath: Path) -> tuple[str, str] | None:
-    """Read (session_id, project_hash) from a Gemini transcript JSON file."""
+    """Read (session_id, project_hash) from a Gemini transcript JSONL file.
+
+    Gemini's JSONL format stores session metadata in the first line.
+    """
     try:
         with open(fpath, encoding="utf-8") as f:
-            data = json.load(f)
+            line = f.readline()
+            if not line:
+                return None
+            data = json.loads(line)
     except _JSON_READ_ERRORS:
         return None
     if not isinstance(data, dict):
@@ -406,10 +467,11 @@ class GeminiProvider(JsonlProvider):
         supports_resume=True,
         supports_continue=True,
         supports_structured_transcript=True,
-        supports_incremental_read=False,
-        transcript_format="plain",
+        supports_incremental_read=True,
+        transcript_format="jsonl",
         uses_pane_title=True,
         builtin_commands=tuple(_GEMINI_BUILTINS.keys()),
+        supports_status_snapshot=True,
     )
 
     _BUILTINS = _GEMINI_BUILTINS
@@ -446,57 +508,6 @@ class GeminiProvider(JsonlProvider):
 
     # ── Gemini-specific transcript parsing ────────────────────────────
 
-    def read_transcript_file(
-        self, file_path: str, last_offset: int
-    ) -> tuple[list[dict[str, Any]], int]:
-        """Read Gemini's single-JSON transcript and return new messages.
-
-        Gemini transcripts are a single JSON object with a ``messages`` array,
-        not JSONL. ``last_offset`` tracks the number of messages already seen.
-        Returns (new_message_entries, updated_offset).
-
-        Uses an mtime+size cache to skip re-parsing when the file is unchanged.
-        """
-
-        try:
-            st = os.stat(file_path)
-        except OSError:
-            return [], last_offset
-
-        with _transcript_cache_lock:
-            cached = _transcript_cache.get(file_path)
-        if cached and cached[0] == st.st_mtime_ns and cached[1] == st.st_size:
-            messages = list(cached[2])
-        else:
-            try:
-                with open(file_path, encoding="utf-8") as f:
-                    data = json.load(f)
-            except (json.JSONDecodeError, OSError):  # fmt: skip
-                return [], last_offset
-
-            if not isinstance(data, dict):
-                return [], last_offset
-
-            messages = data.get("messages", [])
-            if not isinstance(messages, list):
-                return [], last_offset
-
-            # Store a copy to prevent mutation of cached data
-            messages = list(messages)
-            with _transcript_cache_lock:
-                if len(_transcript_cache) >= _TRANSCRIPT_CACHE_MAX:
-                    # Evict first-inserted entry
-                    _transcript_cache.pop(next(iter(_transcript_cache)))
-                _transcript_cache[file_path] = (
-                    st.st_mtime_ns,
-                    st.st_size,
-                    messages,
-                )
-
-        new_entries = messages[last_offset:]
-        new_offset = len(messages)
-        return [m for m in new_entries if isinstance(m, dict)], new_offset
-
     def parse_transcript_entries(
         self,
         entries: list[dict[str, Any]],
@@ -512,6 +523,12 @@ class GeminiProvider(JsonlProvider):
         """
         messages: list[AgentMessage] = []
         pending = dict(pending_tools)
+        # Gemini's JSONL transcript re-appends the same message id on every
+        # toolCalls update (see chatRecordingService.pushMessage upstream).
+        # Track seen message ids to avoid duplicate text emission; track
+        # tool_use ids in `pending` so we only announce a tool once and emit
+        # tool_result on the update that carries the result payload.
+        seen_msg_ids: set[str] = pending.setdefault("__seen_msg_ids__", set())
 
         for entry in entries:
             msg_type = entry.get("type", "")
@@ -519,54 +536,15 @@ class GeminiProvider(JsonlProvider):
             if not role:
                 continue
 
-            # Gemini tool calls are attached to a gemini turn and may contain
-            # both input args and immediate result payloads.
+            entry_id = entry.get("id")
+            msg_id = entry_id if isinstance(entry_id, str) else ""
+
             tool_calls = entry.get("toolCalls", [])
             if isinstance(tool_calls, list):
-                for tc in tool_calls:
-                    if not isinstance(tc, dict):
-                        continue
-                    raw_name = tc.get("displayName") or tc.get("name") or "unknown"
-                    tool_name = raw_name if isinstance(raw_name, str) else "unknown"
-                    call_id = tc.get("id")
-                    tool_use_id = (
-                        call_id if isinstance(call_id, str) and call_id else None
-                    )
-                    if tool_use_id:
-                        pending[tool_use_id] = tool_name
-                    summary = _summarize_tool_args(tc.get("args"))
-                    tool_use_text = (
-                        f"**{tool_name}** `{summary}`"
-                        if summary
-                        else f"**{tool_name}**"
-                    )
-                    messages.append(
-                        AgentMessage(
-                            text=tool_use_text,
-                            role="assistant",
-                            content_type="tool_use",
-                            tool_use_id=tool_use_id,
-                            tool_name=tool_name,
-                            timestamp=entry.get("timestamp"),
-                        )
-                    )
-                    result_text = _extract_tool_result_text(tc)
-                    if result_text:
-                        messages.append(
-                            AgentMessage(
-                                text=result_text,
-                                role="assistant",
-                                content_type="tool_result",
-                                tool_use_id=tool_use_id,
-                                tool_name=tool_name,
-                                timestamp=entry.get("timestamp"),
-                            )
-                        )
-                        if tool_use_id:
-                            pending.pop(tool_use_id, None)
+                messages.extend(_emit_tool_calls(tool_calls, entry, pending))
 
             text = _entry_text(entry)
-            if text:
+            if text and msg_id not in seen_msg_ids:
                 messages.append(
                     AgentMessage(
                         text=text,
@@ -575,6 +553,9 @@ class GeminiProvider(JsonlProvider):
                         timestamp=entry.get("timestamp"),
                     )
                 )
+
+            if msg_id:
+                seen_msg_ids.add(msg_id)
 
         return messages, pending
 
@@ -676,7 +657,7 @@ class GeminiProvider(JsonlProvider):
     ) -> SessionStartEvent | None:
         """Discover latest Gemini transcript matching cwd.
 
-        Gemini stores chats under ``~/.gemini/tmp/<project>/chats/session-*.json``
+        Gemini stores chats under ``~/.gemini/tmp/<project>/chats/session-*.jsonl``
         (project alias) and older versions may use ``<projectHash>`` directory
         names. We match by ``projectHash`` (sha256 of resolved cwd).
         """
@@ -764,3 +745,37 @@ class GeminiProvider(JsonlProvider):
 
         # 5. Ready title or unknown — no status (let activity heuristic handle)
         return None
+
+    def build_status_snapshot(
+        self,
+        transcript_path: str,
+        *,
+        display_name: str = "",
+        session_id: str = "",
+        cwd: str = "",
+    ) -> str | None:
+        """Build a basic status snapshot for Gemini sessions."""
+        try:
+            size = os.path.getsize(transcript_path)
+        except OSError:
+            return None
+
+        short_id = (
+            session_id[:_SHORT_SESSION_ID_LEN]
+            if len(session_id) > _SHORT_SESSION_ID_THRESHOLD
+            else session_id
+        )
+
+        return (
+            f"\u2726 [{display_name}] Gemini session active.\n"
+            f"\U0001f4c2 `{cwd}`\n"
+            f"\ud83d\udcc4 `{os.path.basename(transcript_path)}` ({size} bytes)\n"
+            f"\u2b50 ID: `{short_id}`"
+        )
+
+    def has_output_since(self, transcript_path: str, offset: int) -> bool:
+        """Check if any assistant output appeared after *offset*."""
+        try:
+            return os.path.getsize(transcript_path) > offset
+        except OSError:
+            return False

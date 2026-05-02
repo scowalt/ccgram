@@ -122,6 +122,48 @@ class TestShowHiddenDirs:
 
 
 @pytest.mark.usefixtures("_base_env")
+class TestHideToolCalls:
+    def test_hide_tool_calls_default_false(self, monkeypatch):
+        monkeypatch.delenv("CCGRAM_HIDE_TOOL_CALLS", raising=False)
+        cfg = Config()
+        assert cfg.hide_tool_calls is False
+
+    @pytest.mark.parametrize("value", ["1", "true", "yes", "True", "YES", "Yes"])
+    def test_hide_tool_calls_enabled(self, monkeypatch, value):
+        monkeypatch.setenv("CCGRAM_HIDE_TOOL_CALLS", value)
+        cfg = Config()
+        assert cfg.hide_tool_calls is True
+
+    @pytest.mark.parametrize("value", ["", "0", "false", "no", "off"])
+    def test_hide_tool_calls_disabled(self, monkeypatch, value):
+        monkeypatch.setenv("CCGRAM_HIDE_TOOL_CALLS", value)
+        cfg = Config()
+        assert cfg.hide_tool_calls is False
+
+
+@pytest.mark.usefixtures("_base_env")
+class TestStatusMode:
+    def test_default_is_system(self, monkeypatch):
+        monkeypatch.delenv("CCGRAM_STATUS_MODE", raising=False)
+        assert Config().status_mode == "system"
+
+    @pytest.mark.parametrize("value", ["user", "USER", "User", " user "])
+    def test_user_mode_normalized(self, monkeypatch, value):
+        monkeypatch.setenv("CCGRAM_STATUS_MODE", value)
+        assert Config().status_mode == "user"
+
+    @pytest.mark.parametrize("value", ["system", "SYSTEM", " System "])
+    def test_system_mode_normalized(self, monkeypatch, value):
+        monkeypatch.setenv("CCGRAM_STATUS_MODE", value)
+        assert Config().status_mode == "system"
+
+    @pytest.mark.parametrize("value", ["", "garbage", "1", "off", "default"])
+    def test_invalid_falls_back_to_system(self, monkeypatch, value):
+        monkeypatch.setenv("CCGRAM_STATUS_MODE", value)
+        assert Config().status_mode == "system"
+
+
+@pytest.mark.usefixtures("_base_env")
 class TestMessagingConfig:
     def test_msg_auto_spawn_default_false(self):
         cfg = Config()

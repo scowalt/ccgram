@@ -52,8 +52,14 @@ _PATH_HOOK_MARKER = "ccgram hook"
 # Legacy marker from pre-rename ccbot — used for detection and cleanup.
 _LEGACY_HOOK_MARKER = "ccbot hook"
 
-# Expected number of parts when parsing "session_name\t@id\twindow_name"
+# Expected number of parts when parsing tmux display-message output.
+# Minimum is 3 (session_name\t@id\twindow_name); a fourth pane_tty field is
+# optional so older test mocks keep working with a 3-part stdout.
 _TMUX_FORMAT_PARTS = 3
+_TMUX_FORMAT_PARTS_WITH_TTY = 4
+
+# ps -A output is split into 5 fields: pid, ppid, pgid, stat, command.
+_PS_SNAPSHOT_FIELDS = 5
 
 # Hook event types ccgram handles (order matters for status display)
 _HOOK_EVENT_TYPES: tuple[str, ...] = (
@@ -332,10 +338,11 @@ def _hook_status() -> int:
     return 1
 
 
-def _resolve_window_id(pane_id: str) -> tuple[str, str, str] | None:
-    """Resolve tmux pane ID to (session_window_key, window_id, window_name).
+def _resolve_window_id(pane_id: str) -> tuple[str, str, str, str] | None:
+    """Resolve tmux pane ID to (session_window_key, window_id, window_name, pane_tty).
 
-    Returns None if resolution fails.
+    Returns None if resolution fails. pane_tty is the pane's controlling tty path
+    (e.g. ``/dev/ttys012``) or "" when older tmux mocks omit the field.
     """
     try:
         result = subprocess.run(
@@ -345,7 +352,7 @@ def _resolve_window_id(pane_id: str) -> tuple[str, str, str] | None:
                 "-t",
                 pane_id,
                 "-p",
-                "#{session_name}\t#{window_id}\t#{window_name}",
+                "#{session_name}\t#{window_id}\t#{window_name}\t#{pane_tty}",
             ],
             capture_output=True,
             text=True,
@@ -355,7 +362,7 @@ def _resolve_window_id(pane_id: str) -> tuple[str, str, str] | None:
         logger.warning("tmux display-message timed out for pane %s", pane_id)
         return None
     raw_output = result.stdout.strip()
-    parts = raw_output.split("\t", 2)
+    parts = raw_output.split("\t", 3)
     if len(parts) < _TMUX_FORMAT_PARTS:
         logger.warning(
             "Failed to parse session:window_id:window_name from tmux "
@@ -365,9 +372,118 @@ def _resolve_window_id(pane_id: str) -> tuple[str, str, str] | None:
         )
         return None
 
-    tmux_session_name, window_id, window_name = parts
+    tmux_session_name, window_id, window_name = parts[0], parts[1], parts[2]
+    pane_tty = parts[3] if len(parts) >= _TMUX_FORMAT_PARTS_WITH_TTY else ""
     session_window_key = f"{tmux_session_name}:{window_id}"
-    return session_window_key, window_id, window_name
+    return session_window_key, window_id, window_name, pane_tty
+
+
+def _ps_snapshot() -> dict[int, tuple[int, int, str, str]]:
+    """Return ``{pid: (ppid, pgid, stat, command_basename)}`` for all processes.
+
+    Empty dict on subprocess failure or unparseable output — callers must
+    fail-open when the snapshot is empty.
+    """
+    try:
+        result = subprocess.run(
+            ["ps", "-A", "-o", "pid=,ppid=,pgid=,stat=,command="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired, OSError:
+        return {}
+    snapshot: dict[int, tuple[int, int, str, str]] = {}
+    for line in result.stdout.splitlines():
+        parts = line.split(None, _PS_SNAPSHOT_FIELDS - 1)
+        if len(parts) < _PS_SNAPSHOT_FIELDS:
+            continue
+        try:
+            pid = int(parts[0])
+            ppid = int(parts[1])
+            pgid = int(parts[2])
+        except ValueError:
+            continue
+        stat = parts[3]
+        cmd_argv0 = parts[4].split(None, 1)[0] if parts[4] else ""
+        cmd_base = cmd_argv0.rsplit("/", 1)[-1]
+        snapshot[pid] = (ppid, pgid, stat, cmd_base)
+    return snapshot
+
+
+def _foreground_pgid_on_tty(
+    snapshot: dict[int, tuple[int, int, str, str]], pane_tty: str
+) -> int | None:
+    """Return the foreground process group id on ``pane_tty``, or None."""
+    if not pane_tty or not snapshot:
+        return None
+    tty_name = pane_tty.removeprefix("/dev/")
+    if not tty_name:
+        return None
+    try:
+        result = subprocess.run(
+            ["ps", "-t", tty_name, "-o", "pid="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired, OSError:
+        return None
+    for line in result.stdout.splitlines():
+        try:
+            pid = int(line.strip())
+        except ValueError:
+            continue
+        info = snapshot.get(pid)
+        if info and "+" in info[2]:
+            return info[1]
+    return None
+
+
+def _closest_claude_ancestor(
+    snapshot: dict[int, tuple[int, int, str, str]], start_pid: int
+) -> int | None:
+    """Walk parent chain from ``start_pid``; return the closest claude PID, or None."""
+    cur = start_pid
+    visited: set[int] = set()
+    for _ in range(40):
+        if cur <= 1 or cur in visited:
+            return None
+        visited.add(cur)
+        info = snapshot.get(cur)
+        if info is None:
+            return None
+        ppid, _pgid, _stat, cmd_base = info
+        if cmd_base == "claude":
+            return cur
+        cur = ppid
+    return None
+
+
+def _is_nested_session(pane_tty: str) -> bool:
+    """Return True if the hook was fired by a nested (non-foreground) claude.
+
+    The "primary" claude in a tmux pane is launched by the user's shell, so
+    its PID equals the foreground process group id on the pane's tty. Any
+    claude spawned beneath that primary (e.g. an MCP-server-launched observer
+    such as claude-mem) is a *descendant* — its PID differs from the
+    foreground PGID even though it shares the pgid via inheritance.
+
+    Fails open: returns False on any subprocess error or missing data so
+    hook delivery is never made *more* fragile than the status quo.
+    """
+    if not pane_tty:
+        return False
+    snapshot = _ps_snapshot()
+    if not snapshot:
+        return False
+    fg_pgid = _foreground_pgid_on_tty(snapshot, pane_tty)
+    if fg_pgid is None:
+        return False
+    owner = _closest_claude_ancestor(snapshot, os.getpid())
+    if owner is None:
+        return False
+    return owner != fg_pgid
 
 
 def _write_event(
@@ -614,6 +730,40 @@ def _clear_session_map_entry(session_window_key: str, session_id: str) -> None:
         logger.exception("Failed to clear session_map entry")
 
 
+def _locate_primary_window(session_id: str, event: str) -> tuple[str, str, str] | None:
+    """Resolve TMUX_PANE → primary window, or None to drop the hook.
+
+    Returns ``(session_window_key, window_id, window_name)`` for the foreground
+    claude in the pane. Returns ``None`` when the pane can't be resolved or
+    when a nested claude (e.g. claude-mem observer) fired the hook — the
+    nested case is logged at info so the rejection is visible to operators.
+    """
+    pane_id = os.environ.get("TMUX_PANE", "")
+    if not pane_id:
+        logger.warning("TMUX_PANE not set, cannot determine window")
+        return None
+    resolved = _resolve_window_id(pane_id)
+    if not resolved:
+        return None
+    session_window_key, window_id, window_name, pane_tty = resolved
+    logger.debug(
+        "tmux key=%s, window_name=%s, session_id=%s, event=%s",
+        session_window_key,
+        window_name,
+        session_id,
+        event,
+    )
+    if _is_nested_session(pane_tty):
+        logger.info(
+            "Skipping hook from nested claude (window_key=%s, session_id=%s, event=%s)",
+            session_window_key,
+            session_id,
+            event,
+        )
+        return None
+    return session_window_key, window_id, window_name
+
+
 def _process_hook_stdin() -> None:
     """Process a Claude Code hook event from stdin."""
     logger.debug("Processing hook event from stdin")
@@ -647,25 +797,10 @@ def _process_hook_stdin() -> None:
         logger.debug("Ignoring unhandled event: %s", event)
         return
 
-    # Get tmux session:window key for the pane running this hook.
-    # TMUX_PANE is set by tmux for every process inside a pane.
-    pane_id = os.environ.get("TMUX_PANE", "")
-    if not pane_id:
-        logger.warning("TMUX_PANE not set, cannot determine window")
+    located = _locate_primary_window(session_id, event)
+    if located is None:
         return
-
-    resolved = _resolve_window_id(pane_id)
-    if not resolved:
-        return
-    session_window_key, window_id, window_name = resolved
-
-    logger.debug(
-        "tmux key=%s, window_name=%s, session_id=%s, event=%s",
-        session_window_key,
-        window_name,
-        session_id,
-        event,
-    )
+    session_window_key, window_id, window_name = located
 
     # SessionStart: update session_map.json AND write event
     if event == "SessionStart":

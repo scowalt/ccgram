@@ -69,7 +69,11 @@ from .handlers.directory_browser import clear_browse_state
 from .handlers.cleanup import unbind_command
 from .handlers.command_history import recall_command
 from .handlers.message_routing import handle_new_message
-from .handlers.screenshot_callbacks import panes_command, screenshot_command
+from .handlers.screenshot_callbacks import (
+    live_command,
+    panes_command,
+    screenshot_command,
+)
 from .handlers.topic_lifecycle import topic_closed_handler, topic_edited_handler
 from .handlers.history import send_history
 from .handlers.sessions_dashboard import sessions_command
@@ -280,6 +284,59 @@ async def verbose_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -
         )
 
 
+async def toolcalls_command(
+    update: Update, _context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Cycle tool-call visibility for this topic: default \u2192 shown \u2192 hidden \u2192 default."""
+    user = update.effective_user
+    if not user or not is_user_allowed(user.id):
+        return
+    if not update.message:
+        return
+
+    thread_id = _get_thread_id(update)
+    if thread_id is None:
+        if (
+            update.message
+            and update.effective_chat
+            and is_general_topic(update.message)
+        ):
+            await handle_general_topic_message(
+                update.get_bot(), update.message, update.effective_chat.id
+            )
+        else:
+            await safe_reply(update.message, "\u274c Use this command inside a topic.")
+        return
+
+    window_id = thread_router.get_window_for_thread(user.id, thread_id)
+    if not window_id:
+        await safe_reply(
+            update.message, "\u274c This topic is not bound to any session."
+        )
+        return
+
+    new_mode = session_manager.cycle_tool_call_visibility(window_id)
+    if new_mode == "shown":
+        await safe_reply(
+            update.message,
+            "\u26a1 Tool calls *shown* for this topic (overrides global default).",
+        )
+    elif new_mode == "hidden":
+        await safe_reply(
+            update.message,
+            "\U0001f507 Tool calls *hidden* for this topic (overrides global default).",
+        )
+    else:
+        # new_mode == "default" \u2014 describe the resolved global behavior
+        from .config import config
+
+        resolved = "hidden" if config.hide_tool_calls else "shown"
+        await safe_reply(
+            update.message,
+            f"\U0001f504 Tool calls follow the global default (currently *{resolved}*).",
+        )
+
+
 async def inline_query_handler(
     update: Update, _context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -462,6 +519,11 @@ async def post_init(application: Application) -> None:
     _status_poll_task.add_done_callback(task_done_callback)
     logger.info("Status polling task started")
 
+    # Optional Mini App server — starts only when CCGRAM_MINIAPP_BASE_URL is set.
+    from .main import start_miniapp_if_enabled
+
+    await start_miniapp_if_enabled()
+
 
 async def _send_shutdown_notification(application: Application) -> None:
     """Send a shutdown notification to the General topic if a group is configured."""
@@ -515,6 +577,11 @@ async def post_shutdown(_application: Application) -> None:
 
     Mailbox(config.mailbox_dir).sweep()
 
+    # Tear down the Mini App server if it was started.
+    from .main import stop_miniapp_if_enabled
+
+    await stop_miniapp_if_enabled()
+
     # Flush debounced state to disk AFTER workers/monitor stop (captures final mutations)
     session_manager.flush_state()
 
@@ -534,7 +601,8 @@ async def _error_handler(_update: object, context: ContextTypes.DEFAULT_TYPE) ->
     if isinstance(context.error, NetworkError) and not isinstance(
         context.error, BadRequest
     ):
-        logger.warning("Transient network error (PTB will retry): %s", context.error)
+        # PTB will retry automatically — not actionable; demoted from warning.
+        logger.info("Transient network error (PTB will retry): %s", context.error)
         return
     logger.error("Unhandled bot error", exc_info=context.error)
 
@@ -585,6 +653,7 @@ def create_bot() -> Application:
     application.add_handler(
         CommandHandler("screenshot", screenshot_command, filters=_group_filter)
     )
+    application.add_handler(CommandHandler("live", live_command, filters=_group_filter))
     application.add_handler(
         CommandHandler("panes", panes_command, filters=_group_filter)
     )
@@ -595,6 +664,9 @@ def create_bot() -> Application:
     application.add_handler(CommandHandler("send", send_command, filters=_group_filter))
     application.add_handler(
         CommandHandler("verbose", verbose_command, filters=_group_filter)
+    )
+    application.add_handler(
+        CommandHandler("toolcalls", toolcalls_command, filters=_group_filter)
     )
     application.add_handler(
         CommandHandler("restore", restore_command, filters=_group_filter)

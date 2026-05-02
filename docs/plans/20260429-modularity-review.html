@@ -1,0 +1,507 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ccgram Modularity Review — 2026-04-29</title>
+<style>
+  :root { --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --bg: #ffffff; --code-bg: #f6f8fa; --accent: #0969da; --warn: #9a6700; --bad: #d1242f; --good: #1a7f37; }
+  body { margin: 0 auto; max-width: 920px; padding: 2rem 1.5rem 5rem; color: var(--fg); background: var(--bg);
+         font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  h1, h2, h3 { line-height: 1.25; }
+  h1 { font-size: 1.9rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1.45rem; margin: 2.2rem 0 .8rem; padding-bottom: .25rem; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 1.15rem; margin: 1.6rem 0 .5rem; }
+  p, ul, ol { margin: .65rem 0; }
+  ul, ol { padding-left: 1.4rem; }
+  li { margin: .2rem 0; }
+  code { font: 13px/1.4 ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+         background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--code-bg); padding: 1rem; border-radius: 6px; overflow-x: auto; }
+  pre code { background: transparent; padding: 0; }
+  table { border-collapse: collapse; margin: 1rem 0; width: 100%; font-size: .92rem; }
+  th, td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--code-bg); }
+  td.center, th.center { text-align: center; }
+  .muted { color: var(--muted); font-size: .9rem; }
+  .ok { color: var(--good); font-weight: 600; }
+  .bad { color: var(--bad); font-weight: 600; }
+  .warn { color: var(--warn); font-weight: 600; }
+  blockquote { border-left: 3px solid var(--line); margin: 1rem 0; padding: .25rem 1rem; color: var(--muted); }
+  .scoreCell { font-variant-numeric: tabular-nums; font-weight: 600; }
+  details { margin: .5rem 0; }
+  summary { cursor: pointer; }
+</style>
+</head>
+<body>
+
+<h1>ccgram Modularity Review — 2026-04-29</h1>
+<p class="muted">
+Honest review of the entire codebase against the Balanced Coupling model
+(Khononov: integration strength × distance × volatility). Goal stated by
+maintainer: focused, narrow-context changes — both for humans and for AI
+agents working on the code. Lower coupling here directly translates into
+fewer files in any AI-agent context window per task.
+</p>
+<p class="muted">
+Scope: <code>src/ccgram/</code> (~40 KLOC, ~120 modules, 5 providers, 50+
+handlers, optional Mini App). Method: read code + docs
+(<code>docs/architecture.md</code>,
+<code>docs/ai-agents/architecture-map.md</code>,
+<code>docs/ai-agents/codebase-index.md</code>), trace imports, sample
+largest modules and integration points.
+</p>
+
+<h2>TL;DR</h2>
+<ul>
+  <li>Strong refactor history is visible. Provider abstraction, query-only
+      decoupling layers (<code>window_query.py</code>, <code>session_query.py</code>,
+      <code>WindowView</code>), pure-data decision kernels
+      (<code>TickContext</code>/<code>TickDecision</code>/<code>decide_tick</code>),
+      <code>topic_state_registry</code>, capability flags — all good moves
+      already shipped.</li>
+  <li>Three coupling problems still drive context bloat:
+    <ol>
+      <li><b>Flat <code>handlers/</code> namespace</b> (50+ peer modules).
+          Feature cohesion is informal (file-name prefixes). A "recovery"
+          or "shell" change touches 5–10 sibling files that are not
+          grouped.</li>
+      <li><b>Implicit-singleton DI everywhere.</b> <code>session_manager</code>,
+          <code>tmux_manager</code>, <code>thread_router</code>,
+          <code>window_store</code>, <code>terminal_screen_buffer</code>
+          etc. are module-level globals imported by handlers. Wiring them
+          requires <code>_wire_singletons</code> monkey-patch + three
+          <code>register_*_callback</code> calls in <code>bot.py</code>. Order
+          matters; defaults silently mask missing wires.</li>
+      <li><b>PTB / <code>telegram.*</code> leakage into 38 modules.</b> The
+          Bot/Update/Markup types appear deep inside handlers,
+          status-bubble, queue worker. Most handler logic cannot be
+          reasoned about without loading PTB context.</li>
+    </ol>
+  </li>
+  <li>Provider subsystem is exemplary; the rest of the code can converge on
+      that pattern.</li>
+</ul>
+
+<h2>Domain Classification</h2>
+<table>
+  <thead>
+    <tr><th>Subsystem</th><th>Type</th><th>Volatility</th><th>Comment</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Telegram UX (handlers/)</td><td>Core</td><td>High</td>
+        <td>Recurrent UX overhaul plans (<code>docs/plans/completed/</code>). Where competitive value is.</td></tr>
+    <tr><td>Provider abstraction</td><td>Core</td><td>High</td>
+        <td>5 providers in 6 months, more landing (Pi v3 Apr 28, Gemini JSONL Apr 29).</td></tr>
+    <tr><td>Inter-agent messaging</td><td>Core</td><td>Medium</td>
+        <td>New feature still maturing (mailbox, spawn flow).</td></tr>
+    <tr><td>Mini App</td><td>Core</td><td>High</td>
+        <td>New in v3.0; HTTP/WS surface still expanding.</td></tr>
+    <tr><td>Session monitoring</td><td>Supporting</td><td>Medium</td>
+        <td>Hooks vs hookless variants; refactored multiple times.</td></tr>
+    <tr><td>State persistence</td><td>Supporting</td><td>Low</td>
+        <td><code>state.json</code> schema is stable; mostly forward-compatible.</td></tr>
+    <tr><td>tmux integration</td><td>Generic</td><td>Low</td>
+        <td>tmux API stable; libtmux interface stable.</td></tr>
+    <tr><td>Telegram client (PTB)</td><td>Generic</td><td>Low</td>
+        <td>API surface stable.</td></tr>
+  </tbody>
+</table>
+
+<h2>Integration Map</h2>
+<p>
+For each significant pair of modules: <i>what knowledge</i> flows,
+<i>strength level</i> (intrusive / functional / model / contract),
+<i>distance</i> (same module / sibling / cross-package / 3rd-party), and
+<i>volatility</i> (from the table above).
+</p>
+<table>
+  <thead>
+    <tr>
+      <th class="center">#</th><th>From → To</th><th>Knowledge</th>
+      <th>Strength</th><th>Distance</th><th>Volatility</th>
+      <th class="center">Balanced?</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td class="center">1</td><td>handlers/* → <code>session_manager</code> (singleton)</td>
+        <td>mutate window state, audit, prune</td><td>functional</td><td>sibling</td><td>medium</td>
+        <td class="center bad">✗</td></tr>
+    <tr><td class="center">2</td><td>handlers/* → <code>tmux_manager</code> (singleton)</td>
+        <td>send_keys, capture_pane, list_windows</td><td>functional</td><td>sibling</td><td>low</td>
+        <td class="center ok">✓</td></tr>
+    <tr><td class="center">3</td><td>handlers/* → <code>thread_router</code> (singleton)</td>
+        <td>(user,thread) ↔ window_id resolution</td><td>functional</td><td>sibling</td><td>medium</td>
+        <td class="center warn">~</td></tr>
+    <tr><td class="center">4</td><td>handlers/* → <code>window_store</code> / <code>window_query</code></td>
+        <td>read window state, mutate modes</td><td>model</td><td>sibling</td><td>medium</td>
+        <td class="center ok">✓ (query layer absorbs read coupling)</td></tr>
+    <tr><td class="center">5</td><td><code>bot.py</code> → 30+ handler modules</td>
+        <td>command/callback wiring</td><td>intrusive</td><td>sibling</td><td>high</td>
+        <td class="center bad">✗</td></tr>
+    <tr><td class="center">6</td><td><code>bot.py</code> post_init → 7 subsystems</td>
+        <td><code>register_*_callback</code>, <code>set_*_callback</code></td><td>intrusive</td><td>sibling</td><td>high</td>
+        <td class="center bad">✗</td></tr>
+    <tr><td class="center">7</td><td>handlers/* → <code>telegram.*</code> (PTB)</td>
+        <td>Bot, Update, CallbackQuery, Markup</td><td>model</td><td>3rd-party</td><td>low</td>
+        <td class="center ok">✓ (NOT VOLATILITY) — but painful for context size</td></tr>
+    <tr><td class="center">8</td><td><code>SessionManager._wire_singletons</code> → 4 stores</td>
+        <td>monkey-patches <code>_schedule_save</code></td><td>intrusive</td><td>sibling</td><td>medium</td>
+        <td class="center bad">✗</td></tr>
+    <tr><td class="center">9</td><td>handlers/shell_* → <code>providers.shell_infra</code></td>
+        <td>match_prompt, KNOWN_SHELLS</td><td>functional</td><td>sibling</td><td>low</td>
+        <td class="center ok">✓ (documented accepted leak)</td></tr>
+    <tr><td class="center">10</td><td><code>window_tick.py</code> → ~12 collaborators</td>
+        <td>terminal poll, lifecycle, transcript</td><td>functional</td><td>sibling</td><td>high</td>
+        <td class="center bad">✗</td></tr>
+    <tr><td class="center">11</td><td>AgentProvider protocol → 5 implementations</td>
+        <td>capabilities, parse, launch</td><td>contract</td><td>sibling</td><td>high</td>
+        <td class="center ok">✓</td></tr>
+    <tr><td class="center">12</td><td>miniapp.api → providers + window_query</td>
+        <td>read-only state, transcripts</td><td>contract</td><td>sub-pkg</td><td>high</td>
+        <td class="center ok">✓</td></tr>
+    <tr><td class="center">13</td><td>handlers/message_queue → tool_batch + bubble</td>
+        <td>dispatch by task type</td><td>model</td><td>sibling</td><td>medium</td>
+        <td class="center ok">✓</td></tr>
+    <tr><td class="center">14</td><td>many handlers/* → in-function <code>from .X</code></td>
+        <td>hidden cycles, deferred loads</td><td>intrusive</td><td>sibling</td><td>medium</td>
+        <td class="center bad">✗</td></tr>
+    <tr><td class="center">15</td><td>handlers/* → <code>config</code> (singleton)</td>
+        <td>env-var settings</td><td>model</td><td>sibling</td><td>low</td>
+        <td class="center ok">✓</td></tr>
+    <tr><td class="center">16</td><td><code>hook.py</code> → <code>~/.claude/settings.json</code></td>
+        <td>install/uninstall hook config</td><td>contract</td><td>external</td><td>low</td>
+        <td class="center ok">✓</td></tr>
+  </tbody>
+</table>
+
+<h2>Critical Findings (unbalanced + volatile)</h2>
+
+<h3>F1 — Flat <code>handlers/</code> namespace eats AI-agent context budgets</h3>
+<p><b>Symptom.</b> A change to "shell command flow" requires loading
+<code>shell_commands.py</code>, <code>shell_capture.py</code>,
+<code>shell_context.py</code>, <code>shell_prompt_orchestrator.py</code>,
+<code>voice_callbacks.py</code> (shell branch),
+<code>text_handler.py</code> (shell branch), plus
+<code>providers/shell_infra.py</code> and
+<code>llm/httpx_completer.py</code>. None of these are namespaced together.
+Same pattern for "recovery" (8 files), "messaging" (5 files), "topic
+lifecycle" (4 files), "screenshot/live view" (3 files).</p>
+<p><b>Diagnosis.</b> Strength is medium-functional inside each feature,
+distance is low (same <code>handlers/</code> directory), but cohesion is
+<i>hidden</i> behind filename prefixes. Cohesion that is invisible to the
+file system means an AI agent (or a new contributor) cannot ask "give me
+everything about recovery" — they ask the global handlers/ list.</p>
+<p><b>Fix.</b> Group by feature into subpackages. Concrete proposal:</p>
+<pre><code>handlers/
+├── topics/        topic_orchestration, topic_lifecycle, topic_emoji,
+│                  directory_browser, directory_callbacks, window_callbacks
+├── messaging/     msg_broker, msg_delivery, msg_telegram, msg_spawn
+├── shell/         shell_commands, shell_capture, shell_context,
+│                  shell_prompt_orchestrator
+├── recovery/      recovery_callbacks, restore_command, resume_command,
+│                  transcript_discovery
+├── status/        status_bubble, status_bar_actions, topic_emoji
+├── interactive/   interactive_ui, interactive_callbacks, history,
+│                  history_callbacks
+├── send/          send_command, send_callbacks, send_security
+├── toolbar/       toolbar_keyboard, toolbar_callbacks
+├── live/          live_view, screenshot_callbacks, pane_callbacks
+├── voice/         voice_handler, voice_callbacks
+├── messaging_pipeline/  message_queue, message_routing, message_sender,
+│                        message_task, tool_batch
+└── polling/       polling_coordinator, polling_strategies, periodic_tasks,
+                   window_tick</code></pre>
+<p>Effort: ~1 day, mostly mechanical (move + fix imports). No behavior
+change. Each subpackage gets a short <code>__init__.py</code> re-exporting
+its public surface so <code>bot.py</code> keeps shallow imports.</p>
+
+<h3>F2 — Implicit-singleton DI is hiding a runtime contract</h3>
+<p><b>Symptom.</b> <code>SessionManager.__post_init__</code> calls
+<code>_wire_singletons()</code> which <b>monkey-patches</b>
+<code>_schedule_save</code> on <code>window_store</code>,
+<code>thread_router</code>, <code>user_preferences</code>,
+<code>session_map_sync</code>. Until that runs, mutating any of those four
+blows up with <code>RuntimeError("unwired_save")</code>.</p>
+<p><b>Diagnosis.</b> This is dependency injection expressed as
+private-attr mutation across module boundaries. Integration strength here
+is <b>intrusive</b>: SessionManager assumes the internal layout of four
+other modules. Distance is sibling. Volatility is medium (any time you
+split a new store, you must remember to add a wire). Balance fails.</p>
+<p>The same pattern appears in <code>bot.py</code> post_init:</p>
+<pre><code>register_stop_callback(_on_stop)
+register_rc_active_provider(terminal_screen_buffer.is_rc_active)
+register_approval_callback(show_command_approval)</code></pre>
+<p>Defaults are silent (<code>_rc_active_default</code> returns
+<code>False</code>, <code>register_approval_callback</code>'s receiver
+gates a UI flow). Forgetting one produces a feature that just doesn't
+work — no error.</p>
+<p><b>Fix.</b> Two options:</p>
+<ol>
+  <li><b>Constructor injection</b> — pass dependencies in via
+      <code>__init__</code> rather than singleton imports + late wiring.
+      Make <code>WindowStateStore</code>, <code>ThreadRouter</code>, etc.
+      accept their <code>schedule_save</code> callback in
+      <code>__init__</code>. SessionManager constructs them rather than
+      reaching into pre-built globals.</li>
+  <li><b>Required-callback assertion</b> — at minimum, change
+      <code>unwired_save</code> to no longer be silent. Have
+      <code>register_approval_callback</code> etc. raise if a second
+      registration happens, and have call sites assert that registration
+      happened. The current model accepts "wire skipped" as a valid
+      state.</li>
+</ol>
+<p>Option 1 is the right long-term move; it also makes tests trivial
+(build a SessionManager in-test with stub stores).</p>
+
+<h3>F3 — <code>bot.py</code> is doing too much</h3>
+<p><b>Symptom.</b> 723 lines, imports from ~40 handler modules, 7 distinct
+post_init phases, 17 command-handler registrations, runtime callback
+wiring, hook-install warning, miniapp boot. Every new feature lands here.</p>
+<p><b>Diagnosis.</b> The "command_orchestration" sibling already exists —
+but <code>bot.py</code> itself remains the union of (a) PTB Application
+factory, (b) runtime wiring, and (c) lifecycle (post_init / post_stop /
+post_shutdown). High strength + sibling distance + high volatility =
+unbalanced.</p>
+<p><b>Fix.</b></p>
+<ol>
+  <li>Move command-handler registration to a <code>handlers/registry.py</code>
+      that owns the table <code>[(name, fn, filter)…]</code>.
+      <code>bot.py</code> calls <code>register_all(app)</code>.</li>
+  <li>Move post_init wiring to <code>app_lifecycle.py</code> (or
+      <code>bootstrap.py</code>) — one module that owns "build monitor,
+      wire callbacks, start polling, start miniapp." Failure to wire
+      raises.</li>
+  <li><code>bot.py</code> shrinks to ~150 lines: Application factory +
+      lifecycle delegate calls.</li>
+</ol>
+
+<h3>F4 — <code>window_tick.py</code> orchestrator god</h3>
+<p><b>Symptom.</b> 694 lines, 22 functions, depends on 12 collaborators
+(tmux_manager, screen_buffer, poll_state, lifecycle_strategy,
+pane_status_strategy, interactive_ui, cleanup, transcript_discovery,
+topic_emoji, recovery_callbacks, message_queue, message_sender,
+window_query, claude_task_state, session_monitor, thread_router).</p>
+<p>The good news: there's a <b>pure decision kernel</b> at
+<code>decide_tick(ctx) → decision</code>. That's the right pattern. The
+bad news: the surrounding <code>_apply_*_transition</code> and
+<code>_update_status</code> still reach into all the singletons.</p>
+<p><b>Fix.</b> Split <code>window_tick.py</code> into:</p>
+<ul>
+  <li><code>window_tick/decide.py</code> — <code>TickContext</code>,
+      <code>TickDecision</code>, <code>decide_tick</code> (already pure;
+      just isolate it).</li>
+  <li><code>window_tick/observe.py</code> — gather pane text, status, last
+      activity, pane lifecycle, etc. Returns <code>TickContext</code>. One
+      file, one job.</li>
+  <li><code>window_tick/apply.py</code> — apply <code>TickDecision</code>
+      (transitions, queue, emoji, recovery banner). Heavy DI.</li>
+  <li><code>window_tick/__init__.py</code> — <code>tick_window</code> thin
+      shim.</li>
+</ul>
+<p>Same pattern that worked for the polling strategies. Lets you
+unit-test the decision kernel without touching tmux at all.</p>
+
+<h3>F5 — PTB framework leak</h3>
+<p><b>Symptom.</b> 38 modules import <code>telegram.*</code>.
+Status-bubble formatting, message_queue, polling, recovery, tools, all
+parameterize on <code>Bot</code>/<code>Update</code>/<code>InlineKeyboardMarkup</code>.
+Domain logic for "what to send when a session goes idle" lives in the
+same call frame as <code>bot.send_message</code>.</p>
+<p><b>Volatility on this dimension is low</b> — PTB's API rarely breaks.
+Per the balance rule, that's tolerable. <b>But</b> the maintainer's stated
+goal is "narrow context per task." Domain logic that depends only on
+Telegram <i>concepts</i> (chat ID, thread ID, text, reply markup) but not
+on Telegram <i>types</i> would shrink the per-task context dramatically.</p>
+<p><b>Fix (incremental, optional).</b> Define a thin
+<code>TelegramClient</code> Protocol inside ccgram that exposes only the
+methods you actually use (<code>send_message</code>,
+<code>edit_message_text</code>, <code>edit_message_media</code>,
+<code>answer_callback_query</code>, <code>send_chat_action</code>,
+<code>create_forum_topic</code>, …). Pass it through the same DI you use
+for SessionManager. Handlers depend on <code>TelegramClient</code>, not
+<code>telegram.Bot</code>. Tests build a fake. Adapter sits in one place
+(<code>telegram_client.py</code>).</p>
+<p>Cost is real (~3 days of work, ~30 files touched). Payoff: any handler
+file becomes readable in isolation; AI-agent token cost on UX changes
+drops materially.</p>
+
+<h3>F6 — In-function imports are a cycle smell</h3>
+<p><b>Symptom.</b> ~30 sites do <code>from .X import Y</code> inside
+function bodies. Examples: <code>bot.py:438</code>,
+<code>session.py:101</code>, <code>recovery_callbacks.py:189</code>,
+<code>text_handler.py:34</code>. Reasons given in code: avoid circular
+imports, defer expensive setup, avoid Config dependency in CLI commands.</p>
+<p><b>Diagnosis.</b> Every in-function import is admission of a cycle the
+module graph can't carry at top level. They hide the real coupling from
+static analysis and make the import graph context-dependent.</p>
+<p><b>Fix.</b> Once F1 (subpackages) and F2 (constructor DI) land, most
+of these disappear naturally. Specifically:</p>
+<ul>
+  <li><code>from .config import config</code> inside functions → take
+      <code>config</code> as a parameter or store it on the object.</li>
+  <li><code>from .session import session_manager</code> inside callbacks →
+      already a candidate for the new DI: pass dependencies in.</li>
+  <li>The remaining few that import providers lazily — those are fine;
+      document the reason.</li>
+</ul>
+
+<h2>Other Observations (lower priority)</h2>
+<ul>
+  <li><b><code>tmux_manager.py</code> (1182 lines)</b> is large but it's
+      the single I/O boundary for tmux. That's the correct trade-off — let
+      it stay big rather than spread tmux calls. Consider splitting
+      <code>vim_state</code> cache and
+      <code>discover_external_sessions</code> into siblings if size keeps
+      growing.</li>
+  <li><b><code>polling_strategies.py</code> (1061 lines)</b> packs 5
+      strategy classes. The classes are independent — splitting one class
+      per file would help navigation without changing coupling.</li>
+  <li><b><code>recovery_callbacks.py</code> (880 lines)</b> is right at
+      the edge. Splitting the resume picker UI from the dead-window banner
+      would help.</li>
+  <li><b>Provider subsystem is exemplary.</b>
+      <code>AgentProvider</code> Protocol + <code>ProviderCapabilities</code>
+      + <code>registry</code>. One accepted leak (shell prompt helpers
+      imported by shell handlers) is documented and balance-rule justified.
+      Use this pattern as the template for any new feature area.</li>
+  <li><b><code>miniapp/</code> is the right shape.</b> Subpackage
+      boundary, narrow public API, only entry points reach into it.
+      Replicate that for messaging.</li>
+  <li><b>Documentation density is excellent.</b> Module docstrings are
+      consistent. <code>CLAUDE.md</code> + <code>docs/architecture.md</code>
+      + <code>docs/ai-agents/</code> give an AI agent enough to navigate.
+      Don't lose that.</li>
+  <li><b>Test pyramid is right</b> (16K unit, 3K integration, 1.4K e2e).
+      The bottleneck is that unit tests still have to reset module-level
+      singletons — DI fixes that.</li>
+</ul>
+
+<h2>Scoring (0–10, honest)</h2>
+<p class="muted">Higher is better. 10 = exemplary; 7–8 = good; 5–6 = mixed; 3–4 = weak.</p>
+<table>
+  <thead>
+    <tr><th class="center">#</th><th>Design POV</th>
+        <th class="center">Score</th><th>Comment</th></tr>
+  </thead>
+  <tbody>
+    <tr><td class="center">1</td><td>Module cohesion (single-responsibility)</td>
+        <td class="center scoreCell">6</td>
+        <td>Module docstrings claim it; flat <code>handlers/</code> dilutes feature cohesion</td></tr>
+    <tr><td class="center">2</td><td>Coupling — overall (Balanced Coupling)</td>
+        <td class="center scoreCell">6</td>
+        <td>Singleton + PTB coupling pervasive; query layers help</td></tr>
+    <tr><td class="center">3</td><td>Separation of concerns (UI vs domain)</td>
+        <td class="center scoreCell">5</td>
+        <td>Domain logic interleaved with PTB types throughout handlers</td></tr>
+    <tr><td class="center">4</td><td>Abstraction quality</td>
+        <td class="center scoreCell">7</td>
+        <td>Provider Protocol, capability flags, WindowView are excellent</td></tr>
+    <tr><td class="center">5</td><td>Dependency direction (acyclic)</td>
+        <td class="center scoreCell">6</td>
+        <td>In-function imports + callback wiring betray latent cycles</td></tr>
+    <tr><td class="center">6</td><td>Testability of pure logic</td>
+        <td class="center scoreCell">7</td>
+        <td>TickContext/TickDecision, CommandResult, RecoveryBanner are unit-testable</td></tr>
+    <tr><td class="center">7</td><td>Testability of integration logic</td>
+        <td class="center scoreCell">5</td>
+        <td>Handlers require PTB + singleton resets; slow &amp; noisy</td></tr>
+    <tr><td class="center">8</td><td>Boundary discipline (3rd-party isolation)</td>
+        <td class="center scoreCell">4</td>
+        <td>PTB types in 38 modules; libtmux types in 8</td></tr>
+    <tr><td class="center">9</td><td>Provider extension cost</td>
+        <td class="center scoreCell">9</td>
+        <td>One file, one register call; capability flags; no <code>if provider==</code> checks</td></tr>
+    <tr><td class="center">10</td><td>New Telegram command extension cost</td>
+        <td class="center scoreCell">6</td>
+        <td>bot.py + handler + callback constants + maybe registry — too many places</td></tr>
+    <tr><td class="center">11</td><td>Lifecycle clarity</td>
+        <td class="center scoreCell">6</td>
+        <td>TopicStateRegistry good; <code>bot.post_init</code> does too much</td></tr>
+    <tr><td class="center">12</td><td>Configuration coupling</td>
+        <td class="center scoreCell">5</td>
+        <td><code>config</code> singleton imported by 38 modules; no narrow Settings injection</td></tr>
+    <tr><td class="center">13</td><td>State management</td>
+        <td class="center scoreCell">7</td>
+        <td>window_query / session_query / WindowView decoupling is the right move</td></tr>
+    <tr><td class="center">14</td><td>Implicit-coupling risk (singletons)</td>
+        <td class="center scoreCell">4</td>
+        <td>Many globals, monkey-patched callbacks, silent default fallbacks</td></tr>
+    <tr><td class="center">15</td><td>Code duplication</td>
+        <td class="center scoreCell">8</td>
+        <td><code>_jsonl</code> base, <code>expandable_quote</code>, <code>message_task</code> factor common patterns</td></tr>
+    <tr><td class="center">16</td><td>Subsystem locality (AI-agent context)</td>
+        <td class="center scoreCell">5</td>
+        <td>Flat handlers/, PTB leak; recovery/shell/messaging spread across siblings</td></tr>
+    <tr><td class="center">17</td><td>Documentation density</td>
+        <td class="center scoreCell">9</td>
+        <td>Excellent — module docstrings, CLAUDE.md, ai-agents/</td></tr>
+    <tr><td class="center">18</td><td>Domain model purity</td>
+        <td class="center scoreCell">6</td>
+        <td>Window/Session/Topic concepts clear; PTB types blur the seams</td></tr>
+    <tr><td class="center">19</td><td>Cyclic risk</td>
+        <td class="center scoreCell">6</td>
+        <td>In-function imports + callback registration reveal real cycles</td></tr>
+    <tr><td class="center">20</td><td>Build / refactor velocity</td>
+        <td class="center scoreCell">7</td>
+        <td>Refactor history shows the team can move; current shape is workable</td></tr>
+    <tr><td colspan="2"><b>Weighted average (rough)</b></td>
+        <td class="center scoreCell"><b>6.3</b></td><td></td></tr>
+  </tbody>
+</table>
+<p>The 6.3 reads as: "good bones, real friction." Five issues (F1–F5)
+move the most tokens for the least effort. Fixing F1 alone is a 1-day,
+zero-risk change with immediate context-budget payoff.</p>
+
+<h2>Recommended Order of Work</h2>
+<p>Pick by leverage, not by score. All five fixes preserve behavior.</p>
+<ol>
+  <li><b>F1 — Group <code>handlers/</code> into feature subpackages.</b>
+      ~1 day, mechanical. Immediate AI-agent context savings (5–8× fewer
+      files in many tasks).</li>
+  <li><b>F4 — Split <code>window_tick.py</code> (decide / observe /
+      apply).</b> ~0.5 day. Lets you unit-test decisions without tmux.</li>
+  <li><b>F2 — Constructor DI for SessionManager / WindowStateStore /
+      ThreadRouter.</b> ~2 days. Eliminates <code>_wire_singletons</code>
+      and most <code>unwired_save</code> ceremony. Tests get faster and
+      quieter.</li>
+  <li><b>F3 — Extract <code>bootstrap.py</code> and
+      <code>handlers/registry.py</code> from <code>bot.py</code>.</b>
+      ~0.5 day after F2. Future feature additions stop touching
+      <code>bot.py</code>.</li>
+  <li><b>F5 — <code>TelegramClient</code> Protocol + adapter.</b> ~3 days.
+      Optional but the single biggest reduction in per-task context size if
+      AI-agent cost is the goal.</li>
+  <li><b>F6 — Audit in-function imports.</b> Continuous; mostly resolves
+      itself after F1+F2.</li>
+</ol>
+<p>What <i>not</i> to do:</p>
+<ul>
+  <li>Don't break up <code>tmux_manager.py</code> "because it's big." It's
+      the I/O boundary; that's a feature.</li>
+  <li>Don't redesign the provider subsystem. It's the strongest part.</li>
+  <li>Don't add a DI container. Plain constructor injection is enough for
+      a single-process bot.</li>
+</ul>
+
+<h2>Why these choices match the Balanced Coupling model</h2>
+<ul>
+  <li>F1 reduces <b>distance</b> within each feature (siblings → same
+      package), while strength stays the same. Cohesion improves; balance
+      with high domain volatility (Telegram UX) gets reasserted.</li>
+  <li>F2/F3 reduce <b>strength</b> by replacing intrusive monkey-patching
+      with explicit injected contracts. Distance unchanged; volatility
+      unchanged.</li>
+  <li>F4 splits one volatile module into one volatile orchestrator + one
+      pure low-volatility kernel. The pure kernel becomes
+      balanced-by-default.</li>
+  <li>F5 raises <b>distance</b> to a 3rd-party (PTB) but lowers
+      <b>strength</b> in every dependent module from "model coupling on
+      PTB types" to "contract coupling on a small adapter Protocol." Total
+      system strength drops.</li>
+</ul>
+<p>These five moves are aligned with what the maintainer asked for:
+smaller focused contexts, faster execution, lower AI-agent cost — without
+touching the parts that already work.</p>
+
+</body>
+</html>

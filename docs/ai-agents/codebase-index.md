@@ -34,7 +34,7 @@ Telegram handler surface:
 - `src/ccgram/handlers/history_callbacks.py`: history pagination callbacks (prev/next).
 - `src/ccgram/handlers/hook_events.py`: hook event dispatcher (Notification, Stop, Subagent*, Team*).
 - `src/ccgram/handlers/cleanup.py`: centralized topic state teardown on close/delete.
-- `src/ccgram/handlers/topic_emoji.py`: debounced topic name emoji updates (active/idle/done/dead).
+- `src/ccgram/handlers/topic_emoji.py`: debounced topic name emoji updates (active/idle/done/dead). Color scheme is configurable via `CCGRAM_STATUS_MODE` (`system`: green=working; `user`: green=ready).
 - `src/ccgram/handlers/file_handler.py`: photo/document upload → `.ccgram-uploads/` → agent notification.
 - `src/ccgram/handlers/resume_command.py`: `/resume` scan past sessions + inline picker.
 - `src/ccgram/handlers/upgrade.py`: `/upgrade` uv tool upgrade + `os.execv()` restart.
@@ -110,6 +110,16 @@ Change command discovery:
 
 - `src/ccgram/command_catalog.py` for filesystem scanning and caching.
 - `src/ccgram/cc_commands.py` for Telegram menu registration.
+
+Change tool-call visibility (hide/show `tool_use`/`tool_result`):
+
+- `src/ccgram/window_state_store.py`: `tool_call_visibility` field on `WindowState` (`default`/`shown`/`hidden`).
+- `src/ccgram/handlers/message_queue.py` (`_handle_content_task`): visibility gate sits before batch eligibility; hidden entries are dropped before `_tool_msg_ids` registration. Hook events bypass the gate via `StatusUpdateTask`.
+- `/toolcalls` command: cycles per-window mode via `WindowStateStore` cycle method.
+
+Change topic emoji color scheme:
+
+- `src/ccgram/handlers/topic_emoji.py`: maps internal status (`active`/`idle`/`done`/`dead`) to Telegram emoji color via `CCGRAM_STATUS_MODE`. Add new modes by extending the mode→colorname dispatch.
 
 Change screenshot rendering:
 
