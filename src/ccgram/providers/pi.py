@@ -32,7 +32,9 @@ from ccgram.providers.base import (
     DiscoveredCommand,
     ProviderCapabilities,
     SessionStartEvent,
+    StatusUpdate,
 )
+from ccgram.terminal_parser import extract_interactive_content
 from ccgram.providers.pi_discovery import _PI_TELEGRAM_BUILTINS, discover_pi_commands
 from ccgram.providers.pi_format import (
     Pending,
@@ -158,6 +160,21 @@ class PiProvider(JsonlProvider):
         if use_continue:
             return "--continue"
         return ""
+
+    # ── Terminal status ──────────────────────────────────────────────────
+
+    def parse_terminal_status(
+        self, pane_text: str, *, pane_title: str = ""  # noqa: ARG002
+    ) -> StatusUpdate | None:
+        interactive = extract_interactive_content(pane_text)
+        if interactive:
+            return StatusUpdate(
+                raw_text=interactive.content,
+                display_label=interactive.name,
+                is_interactive=True,
+                ui_type=interactive.name,
+            )
+        return None
 
     # ── Transcript parsing ───────────────────────────────────────────────
 

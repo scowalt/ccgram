@@ -327,6 +327,61 @@ class TestExtractInteractiveContent:
         assert result is not None
         assert result.name == "SelectionUI"
 
+    def test_pi_extension_selector(self):
+        pane = (
+            "─────────────────────────────────────────\n"
+            "\n"
+            " Title text here\n"
+            "\n"
+            " → Option A\n"
+            "   Option B\n"
+            "   Option C\n"
+            "\n"
+            " ↑↓ navigate  Enter select  Escape cancel\n"
+            "\n"
+            "─────────────────────────────────────────\n"
+        )
+        result = extract_interactive_content(pane)
+        assert result is not None
+        assert result.name == "SelectionUI"
+        assert "→ Option A" in result.content
+
+    def test_pi_confirm_dialog(self):
+        pane = (
+            "─────────────────────────────────────────\n"
+            "\n"
+            " Summarize branch?\n"
+            "\n"
+            " → Yes\n"
+            "   No\n"
+            "\n"
+            " ↑↓ navigate  Enter select  Escape/Ctrl+C cancel\n"
+            "\n"
+            "─────────────────────────────────────────\n"
+        )
+        result = extract_interactive_content(pane)
+        assert result is not None
+        assert result.name == "SelectionUI"
+        assert "Summarize branch?" in result.content
+
+    def test_pi_arrow_cursor_infer_ui_name(self):
+        pane = (
+            "───────────────────────────\n"
+            "\n"
+            " Pick a model\n"
+            "\n"
+            " → gpt-4o\n"
+            "   claude-sonnet\n"
+            "\n"
+            " Enter select  Escape cancel\n"
+            "\n"
+            "───────────────────────────\n"
+        )
+        result = extract_interactive_content(pane)
+        assert result is not None
+        assert result.name == "SelectionUI"
+        assert "→" in result.content
+
     def test_restore_checkpoint(self):
         pane = (
             "  Restore the code to a previous state?\n"
