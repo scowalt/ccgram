@@ -126,19 +126,22 @@ UI_PATTERNS: list[UIPattern] = [
     ),
     # ── Structural catch-all (MUST be last — catches anything above) ─
     # Ink's SelectInput renders ❯ (U+276F) as the selection cursor for
-    # the highlighted option.  Combined with a bottom action hint, this
-    # catches ANY selection UI.
+    # the highlighted option; Pi uses → (U+2192).  Combined with a bottom
+    # action hint, this catches ANY selection UI.
     # context_above=10 pulls in the question/description text above the
     # cursor.  min_gap=1 for compact prompts.
     UIPattern(
         name="SelectionUI",
-        top=(re.compile(r"^\s*[❯›]\s"),),
+        top=(re.compile(r"^\s*[❯›→]\s"),),
         bottom=(
-            re.compile(r"^\s*Esc to (cancel|exit)"),
+            re.compile(r"^\s*Esc(ape)? to (cancel|exit)"),
             re.compile(r"^\s*Enter to (select|confirm|continue)"),
             re.compile(r"^\s*ctrl-g to edit"),
             re.compile(r"(?i)^\s*Press enter to (confirm|select|continue|submit)"),
             re.compile(r"(?i)^\s*enter to (submit|confirm|select)"),
+            re.compile(r"(?i)^\s*↑↓\s+navigate"),
+            re.compile(r"(?i)^\s*Esc(ape)?(/Ctrl[+-]C)?\s+(cancel|close)"),
+            re.compile(r"(?i)^\s*Enter\s+(select|confirm|submit)"),
         ),
         min_gap=1,
         context_above=10,
@@ -223,14 +226,19 @@ def _try_extract(lines: list[str], pattern: UIPattern) -> InteractiveUIContent |
 
 # ── Bottom-up fallback ───────────────────────────────────────────────────
 
-# Action hints that reliably mark the bottom of any Claude Code interactive UI.
+# Action hints that reliably mark the bottom of any interactive CLI UI.
+# Covers Claude Code ("Esc to cancel"), Pi ("Enter select  Escape cancel"),
+# and other Ink-based CLIs.
 _ACTION_HINT_RE = re.compile(
     r"(?i)^\s*("
-    r"Esc to (cancel|exit)"
+    r"Esc(ape)? to (cancel|exit)"
     r"|Enter to (select|confirm|continue|submit)"
     r"|ctrl-g to edit"
     r"|Type to filter"
     r"|Press enter to (confirm|select|continue|submit)"
+    r"|↑↓\s+navigate"
+    r"|Esc(ape)?(/Ctrl[+-]C)?\s+(cancel|close)"
+    r"|Enter\s+(select|confirm|submit)"
     r")"
 )
 
@@ -249,7 +257,7 @@ _BOTTOM_UP_MIN_GAP = 2
 
 
 _CHECKBOX_CHARS_RE = re.compile(r"[☐✔☒]")
-_CURSOR_CHARS_RE = re.compile(r"[❯›]\s")
+_CURSOR_CHARS_RE = re.compile(r"[❯›→]\s")
 
 
 def _infer_ui_name(lines: list[str]) -> str:
