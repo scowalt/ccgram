@@ -679,3 +679,57 @@ class TestIntegrationWithCandidateTranscripts:
         os.utime(d / "b.jsonl", (now, now))
         result = _candidate_transcripts(cwd)
         assert [p.name for _, p in result] == ["b.jsonl", "a.jsonl"]
+
+
+class TestParseTerminalStatus:
+    def setup_method(self):
+        self.provider = PiProvider()
+
+    def test_detects_extension_selector(self):
+        pane = (
+            "─────────────────────────────────────────\n"
+            "\n"
+            " Summarize branch?\n"
+            "\n"
+            " → Yes\n"
+            "   No\n"
+            "\n"
+            " ↑↓ navigate  Enter select  Escape cancel\n"
+            "\n"
+            "─────────────────────────────────────────\n"
+        )
+        status = self.provider.parse_terminal_status(pane)
+        assert status is not None
+        assert status.is_interactive is True
+        assert status.ui_type == "SelectionUI"
+        assert "→ Yes" in status.raw_text
+
+    def test_returns_none_for_idle_prompt(self):
+        pane = (
+            "─────────────────────────────────────────\n"
+            "\n"
+            "─────────────────────────────────────────\n"
+            "~/Code/dotfiles (main)\n"
+            "↑175k ↓27k R8.2M $5.758 (sub) 52.8%/272k (auto)\n"
+        )
+        status = self.provider.parse_terminal_status(pane)
+        assert status is None
+
+    def test_detects_model_selector(self):
+        pane = (
+            "─────────────────────────────────────────\n"
+            "\n"
+            " Select a model\n"
+            "\n"
+            " → gpt-4o\n"
+            "   claude-sonnet\n"
+            "   gemini-pro\n"
+            "\n"
+            " ↑↓ navigate  Enter select  Escape/Ctrl+C cancel\n"
+            "\n"
+            "─────────────────────────────────────────\n"
+        )
+        status = self.provider.parse_terminal_status(pane)
+        assert status is not None
+        assert status.is_interactive is True
+        assert "→ gpt-4o" in status.raw_text
