@@ -536,11 +536,9 @@ class TestForwardMessage:
 
     @patch(f"{_TH}.send_to_window", new_callable=AsyncMock, return_value=(True, "ok"))
     @patch(f"{_TH}.window_query")
-    async def test_sends_typing_chat_action(
+    async def test_does_not_send_typing_before_forwarding(
         self, _mock_sm: MagicMock, _mock_send: AsyncMock
     ) -> None:
-        from telegram.constants import ChatAction
-
         bot = AsyncMock()
         message = AsyncMock()
         message.chat.send_action = AsyncMock()
@@ -548,7 +546,7 @@ class TestForwardMessage:
         with patch(f"{_TH}.get_interactive_window", return_value=None):
             await _forward_message("@0", 100, 42, "hello", bot, message)
 
-        message.chat.send_action.assert_awaited_once_with(ChatAction.TYPING)
+        message.chat.send_action.assert_not_awaited()
 
 
 class TestBashCaptureCleanup:

@@ -71,6 +71,14 @@ _BANG_HINT_TEXT = (
 _TYPING_REFRESH_INTERVAL = 4.0
 
 
+async def enqueue_status_update(*_args: object, **_kwargs: object) -> None:
+    """Deprecated no-op retained as a test/extension patch target.
+
+    Shell message handling no longer clears the status bubble before forwarding
+    because that Telegram API call can block the latency-critical tmux path.
+    """
+
+
 async def _send_typing(client: TelegramClient, chat_id: int, thread_id: int) -> None:
     """Fire one ``typing`` chat action; swallow non-fatal transport errors."""
     try:
@@ -79,7 +87,7 @@ async def _send_typing(client: TelegramClient, chat_id: int, thread_id: int) -> 
             message_thread_id=thread_id,
             action=ChatAction.TYPING,
         )
-    except (TelegramError, OSError):
+    except TelegramError, OSError:
         logger.debug("send_chat_action failed", exc_info=True)
 
 
@@ -388,7 +396,7 @@ async def show_command_approval(
                 message_thread_id=thread_id,
                 reply_markup=keyboard,
             )
-    except (TelegramError, OSError):
+    except TelegramError, OSError:
         # If send fails, release the slot so future attempts aren't blocked
         _shell_pending.pop(key, None)
         raise

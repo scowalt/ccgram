@@ -312,6 +312,7 @@ class SessionMonitor:
             changed = True
 
         if changed:
+            # Lazy: utils imports app-wide helpers; only needed for rare reconciliation.
             from .utils import atomic_write_json
 
             atomic_write_json(map_file, raw)
@@ -395,6 +396,45 @@ class SessionMonitor:
 
         return result.current_map
 
+    async def _emit_unbound_window_events(
+        self, current_map: dict[str, dict[str, str]], session_map_sync: Any
+    ) -> None:
+        """Emit NewWindowEvent once for live windows not represented in session_map."""
+        all_windows = await tmux_manager.list_windows()
+        external_windows = await tmux_manager.discover_external_sessions()
+        all_windows = all_windows + external_windows
+        live_window_ids = {w.window_id for w in all_windows}
+        session_map_sync.prune_session_map(live_window_ids)
+        self._emitted_new_window_ids &= live_window_ids
+        known_window_ids = set(current_map.keys())
+
+        for window in all_windows:
+            if window.window_id in known_window_ids:
+                continue
+            if window.window_id in self._emitted_new_window_ids:
+                continue
+            # Lazy: same cycle as the earlier thread_router import.
+            from .thread_router import thread_router
+
+            already_bound = any(
+                wid == window.window_id
+                for _, _, wid in thread_router.iter_thread_bindings()
+            )
+            if already_bound or not self._new_window_callback:
+                continue
+
+            self._emitted_new_window_ids.add(window.window_id)
+            event = NewWindowEvent(
+                window_id=window.window_id,
+                session_id="",
+                window_name=window.window_name,
+                cwd=window.cwd,
+            )
+            try:
+                await self._new_window_callback(event)
+            except _CallbackError:
+                logger.exception("New window callback error for %s", window.window_id)
+
     async def _monitor_loop(self) -> None:
         """Background poll loop."""
         logger.info("Session monitor started, polling every %ss", self.poll_interval)
@@ -417,40 +457,7 @@ class SessionMonitor:
 
                 current_map = await self._detect_and_cleanup_changes()
 
-                all_windows = await tmux_manager.list_windows()
-                external_windows = await tmux_manager.discover_external_sessions()
-                all_windows = all_windows + external_windows
-                live_window_ids = {w.window_id for w in all_windows}
-                session_map_sync.prune_session_map(live_window_ids)
-                self._emitted_new_window_ids &= live_window_ids
-                known_window_ids = set(current_map.keys())
-                for window in all_windows:
-                    if window.window_id in known_window_ids:
-                        continue
-                    if window.window_id in self._emitted_new_window_ids:
-                        continue
-                    # Lazy: same cycle as the earlier thread_router import.
-                    from .thread_router import thread_router
-
-                    already_bound = any(
-                        wid == window.window_id
-                        for _, _, wid in thread_router.iter_thread_bindings()
-                    )
-                    if not already_bound and self._new_window_callback:
-                        self._emitted_new_window_ids.add(window.window_id)
-                        event = NewWindowEvent(
-                            window_id=window.window_id,
-                            session_id="",
-                            window_name=window.window_name,
-                            cwd=window.cwd,
-                        )
-                        try:
-                            await self._new_window_callback(event)
-                        except _CallbackError:
-                            logger.exception(
-                                "New window callback error for %s",
-                                window.window_id,
-                            )
+                await self._emit_unbound_window_events(current_map, session_map_sync)
 
                 new_messages = await self.check_for_updates(current_map)
 

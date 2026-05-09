@@ -580,7 +580,7 @@ class TestDeadTopicRecreation:
         mock_bot = AsyncMock()
 
         with patch(
-            "ccgram.handlers.topic_orchestration.handle_new_window",
+            "ccgram.handlers.topics.topic_orchestration.handle_new_window",
             new_callable=AsyncMock,
         ) as mock_handle:
             count = await _recreate_dead_topics(mock_bot, issues)
@@ -588,9 +588,7 @@ class TestDeadTopicRecreation:
         assert count == 0
         mock_tr.unbind_thread.assert_called_once_with(100, 42)
         mock_handle.assert_called_once()
-        mock_tr.bind_thread.assert_called_once_with(
-            100, 42, "@2", window_name="qmd-go"
-        )
+        mock_tr.bind_thread.assert_called_once_with(100, 42, "@2", window_name="qmd-go")
         mock_tr.set_group_chat_id.assert_called_once_with(100, 42, -100123)
 
     async def test_recreate_skips_non_dead_topic_issues(self, _patch_deps) -> None:

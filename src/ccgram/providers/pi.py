@@ -164,7 +164,10 @@ class PiProvider(JsonlProvider):
     # ── Terminal status ──────────────────────────────────────────────────
 
     def parse_terminal_status(
-        self, pane_text: str, *, pane_title: str = ""  # noqa: ARG002
+        self,
+        pane_text: str,
+        *,
+        pane_title: str = "",  # noqa: ARG002
     ) -> StatusUpdate | None:
         interactive = extract_interactive_content(pane_text)
         if interactive:

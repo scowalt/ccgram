@@ -231,19 +231,34 @@ class TranscriptReader:
             )
 
         self._state.update_session(tracked)
+        self._log_session_scan(
+            started_at, session_id, window_id, provider, new_entries, agent_messages
+        )
+
+    def _log_session_scan(
+        self,
+        started_at: float,
+        session_id: str,
+        window_id: str,
+        provider: Any,
+        new_entries: list[dict],
+        agent_messages: list[Any],
+    ) -> None:
+        """Emit diagnostic timing for one transcript scan when enabled."""
         elapsed_secs = time.monotonic() - started_at
-        if config.diagnostic_logs and (
-            elapsed_secs >= _SESSION_SCAN_WARN_SECS or len(new_entries) > 0
-        ):
-            logger.warning(
-                "session_scan",
-                session_id=session_id,
-                window_id=window_id,
-                provider=provider.capabilities.name,
-                entry_count=len(new_entries),
-                emitted_messages=len(agent_messages),
-                elapsed_ms=int(elapsed_secs * 1000),
-            )
+        if not config.diagnostic_logs:
+            return
+        if elapsed_secs < _SESSION_SCAN_WARN_SECS and not new_entries:
+            return
+        logger.warning(
+            "session_scan",
+            session_id=session_id,
+            window_id=window_id,
+            provider=provider.capabilities.name,
+            entry_count=len(new_entries),
+            emitted_messages=len(agent_messages),
+            elapsed_ms=int(elapsed_secs * 1000),
+        )
 
     async def _read_new_lines(
         self, session: TrackedSession, file_path: Path, window_id: str = ""

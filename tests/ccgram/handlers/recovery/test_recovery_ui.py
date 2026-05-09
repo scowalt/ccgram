@@ -1,3 +1,4 @@
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
@@ -467,6 +468,7 @@ class TestBotTextHandlerScopedMenu:
         ctx = _make_context()
 
         await text_handler(update, ctx)
+        await asyncio.sleep(0)
 
         mock_sync_menu.assert_called_once_with(update.message, 100, provider)
         mock_handle_text.assert_called_once_with(update, ctx)
@@ -492,6 +494,7 @@ class TestBotTextHandlerScopedMenu:
         ctx = _make_context()
 
         await text_handler(update, ctx)
+        await asyncio.sleep(0)
 
         mock_sync_menu.assert_not_called()
         mock_handle_text.assert_called_once_with(update, ctx)
@@ -524,6 +527,7 @@ class TestBotTextHandlerScopedMenu:
             ctx = _make_context()
 
             await text_handler(update, ctx)
+            await asyncio.sleep(0)
 
             mock_tr.resolve_window_for_thread.assert_called_once_with(100, 42)
             mock_sync_menu.assert_called_once_with(update.message, 100, provider)
@@ -569,7 +573,11 @@ class TestRecoveryFreshCallback:
             "/tmp/project", agent_args="", launch_command="claude"
         )
         mock_tm.kill_window.assert_called_once_with("@0")
-        mock_sm.set_window_cwd.assert_called_once_with("@5", "/tmp/project")
+        from ccgram.handlers.recovery import recovery_banner as rb
+
+        getattr(rb.session_manager, "set_window_cwd").assert_called_once_with(
+            "@5", "/tmp/project"
+        )
         mock_tr.bind_thread.assert_called_once_with(
             100, 42, "@5", window_name="project"
         )

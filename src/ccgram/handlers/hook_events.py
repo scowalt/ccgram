@@ -150,7 +150,7 @@ async def _get_llm_summary(transcript_path: str) -> str | None:
         from ..llm.summarizer import summarize_completion
 
         return await summarize_completion(transcript_path)
-    except (RuntimeError, OSError, ValueError):
+    except RuntimeError, OSError, ValueError:
         logger.debug("LLM summary failed", exc_info=True)
         return None
 
@@ -161,7 +161,10 @@ async def _is_agent_still_active(window_id: str) -> bool:
     Used by Stop handler to avoid false "Ready" on intermediate turns
     (e.g. agent finishing a tool_use turn but about to continue).
     """
+    # Lazy: providers/tmux imports reach monitor and handler wiring during startup.
     from ..providers import get_provider_for_window
+
+    # Lazy: tmux_manager imports providers and session monitor collaborators.
     from ..tmux_manager import tmux_manager
 
     pane_text = await tmux_manager.capture_pane(window_id)

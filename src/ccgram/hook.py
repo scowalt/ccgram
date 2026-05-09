@@ -1066,7 +1066,7 @@ def _clear_session_map_entry(session_window_key: str, session_id: str) -> None:
     reject a new session after /clear because the old transcript was recently
     written to.
     """
-    # Lazy: same hook fast-path rationale as ``_write_event``.
+    # Lazy: hook runs as a standalone entrypoint; defer app utility imports.
     from .utils import atomic_write_json, ccgram_dir
 
     map_file = ccgram_dir() / "session_map.json"
@@ -1093,7 +1093,7 @@ def _clear_session_map_entry(session_window_key: str, session_id: str) -> None:
                     )
             finally:
                 fcntl.flock(lock_f, fcntl.LOCK_UN)
-    except (json.JSONDecodeError, OSError):
+    except json.JSONDecodeError, OSError:
         logger.exception("Failed to clear session_map entry")
 
 
