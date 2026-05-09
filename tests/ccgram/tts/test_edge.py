@@ -42,7 +42,8 @@ async def test_synthesize_wraps_edge_no_audio_as_tts_error(monkeypatch):
 
 
 async def test_synthesize_wraps_edge_exceptions_as_tts_error(monkeypatch):
-    from edge_tts.exceptions import WebSocketError
+    class WebSocketError(Exception):
+        pass
 
     class FailingCommunicate:
         def __init__(self, *a, **kw):

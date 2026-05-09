@@ -308,6 +308,7 @@ class SessionMonitor:
             changed = True
 
         if changed:
+            # Lazy: utils imports app-wide helpers; only needed for rare reconciliation.
             from .utils import atomic_write_json
 
             atomic_write_json(config.session_map_file, raw)

@@ -19,8 +19,8 @@ _edge_tts_available = False
 Communicate: Any = None
 
 try:
-    from edge_tts import Communicate
-    from edge_tts.exceptions import (
+    from edge_tts import Communicate  # type: ignore[reportMissingImports]
+    from edge_tts.exceptions import (  # type: ignore[reportMissingImports]
         NoAudioReceived,
         UnexpectedResponse,
         UnknownResponse,

@@ -127,19 +127,7 @@ class Config:
         # Ack reaction: react to forwarded messages with an emoji (empty = disabled)
         self.ack_reaction: str = os.getenv("CCGRAM_ACK_REACTION", "")
 
-        # Forwarding controls for transcript-derived assistant events.
-        self.forward_tool_flow: bool = os.getenv(
-            "CCGRAM_FORWARD_TOOL_FLOW", "1"
-        ).lower() in ("1", "true", "yes")
-        self.forward_thinking: bool = os.getenv(
-            "CCGRAM_FORWARD_THINKING", "1"
-        ).lower() in ("1", "true", "yes")
-        self.forward_user_echo: bool = os.getenv(
-            "CCGRAM_FORWARD_USER_ECHO", "1"
-        ).lower() in ("1", "true", "yes")
-        self.diagnostic_logs: bool = os.getenv(
-            "CCGRAM_DIAGNOSTIC_LOGS", ""
-        ).lower() in ("1", "true", "yes")
+        self._init_forwarding_controls()
 
         # Whisper transcription
         self.whisper_provider: str = os.getenv("CCGRAM_WHISPER_PROVIDER", "")
@@ -195,6 +183,33 @@ class Config:
             len(self.allowed_users),
             self.tmux_session_name,
         )
+
+    def _init_forwarding_controls(self) -> None:
+        """Initialize transcript-derived assistant event forwarding controls."""
+        self.forward_tool_flow: bool = os.getenv(
+            "CCGRAM_FORWARD_TOOL_FLOW", "1"
+        ).lower() in ("1", "true", "yes")
+        self.forward_thinking: bool = os.getenv(
+            "CCGRAM_FORWARD_THINKING", "1"
+        ).lower() in ("1", "true", "yes")
+        self.forward_user_echo: bool = os.getenv(
+            "CCGRAM_FORWARD_USER_ECHO", "1"
+        ).lower() in ("1", "true", "yes")
+        self.diagnostic_logs: bool = os.getenv(
+            "CCGRAM_DIAGNOSTIC_LOGS", ""
+        ).lower() in ("1", "true", "yes")
+
+    def _init_messaging(self) -> None:
+        self.msg_auto_spawn: bool = os.getenv("CCGRAM_MSG_AUTO_SPAWN", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        self.msg_max_windows: int = _parse_int_env("CCGRAM_MSG_MAX_WINDOWS", 10)
+        self.msg_wait_timeout: int = _parse_int_env("CCGRAM_MSG_WAIT_TIMEOUT", 60)
+        self.msg_spawn_timeout: int = _parse_int_env("CCGRAM_MSG_SPAWN_TIMEOUT", 300)
+        self.msg_spawn_rate: int = _parse_int_env("CCGRAM_MSG_SPAWN_RATE", 3)
+        self.msg_rate_limit: int = _parse_int_env("CCGRAM_MSG_RATE_LIMIT", 10)
 
     def _init_live_view(self) -> None:
         self.live_view_interval: int = max(
