@@ -9,7 +9,11 @@ from telegram.error import NetworkError, TimedOut
 from telegram.request import HTTPXRequest
 
 from ccgram.bot import create_bot
-from ccgram.telegram_request import ResilientPollingHTTPXRequest
+from ccgram.telegram_request import (
+    ResilientPollingHTTPXRequest,
+    clear_polling_transport_failure,
+    polling_transport_failed_recently,
+)
 
 
 class TestResilientPollingHTTPXRequest:
@@ -56,6 +60,55 @@ def _reset_log_calls(mock_logger, level: str) -> list:
         for c in getattr(mock_logger, level).call_args_list
         if c.args and "Reset Telegram polling" in c.args[0]
     ]
+
+
+class TestPollingTransportFailureTracking:
+    async def test_tracking_request_marks_recent_polling_failure(self) -> None:
+        clear_polling_transport_failure()
+        request = ResilientPollingHTTPXRequest(track_polling_failures=True)
+
+        with (
+            patch.object(
+                HTTPXRequest,
+                "do_request",
+                AsyncMock(side_effect=TimedOut("pool timeout")),
+            ),
+            pytest.raises(TimedOut),
+        ):
+            await request.do_request("https://example.com", "POST")
+
+        assert polling_transport_failed_recently(within_seconds=999)
+        clear_polling_transport_failure()
+
+    async def test_untracked_request_does_not_mark_polling_failure(self) -> None:
+        clear_polling_transport_failure()
+        request = ResilientPollingHTTPXRequest()
+
+        with (
+            patch.object(
+                HTTPXRequest,
+                "do_request",
+                AsyncMock(side_effect=TimedOut("pool timeout")),
+            ),
+            pytest.raises(TimedOut),
+        ):
+            await request.do_request("https://example.com", "POST")
+
+        assert not polling_transport_failed_recently(within_seconds=999)
+
+    async def test_tracking_request_success_clears_polling_failure(self) -> None:
+        clear_polling_transport_failure()
+        request = ResilientPollingHTTPXRequest(track_polling_failures=True)
+        sentinel = object()
+        mock = AsyncMock(side_effect=[TimedOut("pool timeout"), sentinel])
+
+        with patch.object(HTTPXRequest, "do_request", mock):
+            with pytest.raises(TimedOut):
+                await request.do_request("https://example.com", "POST")
+            assert polling_transport_failed_recently(within_seconds=999)
+            await request.do_request("https://example.com", "POST")
+
+        assert not polling_transport_failed_recently(within_seconds=999)
 
 
 class TestResetWarningRateLimit:
@@ -122,6 +175,8 @@ class TestCreateBotPollingRequest:
         assert isinstance(app.bot._request[1], ResilientPollingHTTPXRequest)
         assert app.bot._request[0]._client._transport._pool._max_connections == 1
         assert app.bot._request[1]._client._transport._pool._max_connections == 256
+        assert app.bot._request[0]._track_polling_failures is True
+        assert app.bot._request[1]._track_polling_failures is False
 
 
 class TestProjectDependencies:
