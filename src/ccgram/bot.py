@@ -38,7 +38,10 @@ from .handlers.text.text_handler import handle_text_message, text_handler
 from .handlers.topics import new_command
 from .handlers.topics.directory_browser import clear_browse_state
 from .session import session_manager
-from .telegram_request import ResilientPollingHTTPXRequest
+from .telegram_request import (
+    ResilientPollingHTTPXRequest,
+    polling_transport_failed_recently,
+)
 from .thread_router import thread_router
 
 # Re-export the moved handler callables and supporting singletons so
@@ -135,6 +138,13 @@ async def post_shutdown(_application: Application) -> None:
 async def _error_handler(_update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle bot-level errors from updater and handlers."""
     if isinstance(context.error, Conflict):
+        if polling_transport_failed_recently():
+            logger.warning(
+                "Telegram polling conflict after a recent transport failure; "
+                "treating as transient self-conflict and letting PTB retry: %s",
+                context.error,
+            )
+            return
         logger.critical(
             "Another bot instance is polling with the same token. "
             "Shutting down to avoid conflicts."
@@ -164,7 +174,12 @@ def create_bot() -> Application:
         .token(config.telegram_bot_token)
         .rate_limiter(AIORateLimiter(max_retries=5))
         .request(ResilientPollingHTTPXRequest())
-        .get_updates_request(ResilientPollingHTTPXRequest(connection_pool_size=1))
+        .get_updates_request(
+            ResilientPollingHTTPXRequest(
+                connection_pool_size=1,
+                track_polling_failures=True,
+            )
+        )
         .post_init(post_init)
         .post_stop(post_stop)
         .post_shutdown(post_shutdown)

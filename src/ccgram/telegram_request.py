@@ -13,6 +13,28 @@ logger = structlog.get_logger()
 # Minimum interval between reset warnings during a sustained outage.
 # Without this, every failed poll (~5s apart) emits a warning, flooding logs.
 _RESET_WARN_INTERVAL_S: float = 30.0
+_POLLING_TRANSPORT_FAILURE_GRACE_S: float = 30.0
+_last_polling_transport_failure_ts: float | None = None
+
+
+def polling_transport_failed_recently(
+    *, within_seconds: float = _POLLING_TRANSPORT_FAILURE_GRACE_S
+) -> bool:
+    """Return whether the getUpdates transport failed within the grace window."""
+    if _last_polling_transport_failure_ts is None:
+        return False
+    return time.monotonic() - _last_polling_transport_failure_ts <= within_seconds
+
+
+def clear_polling_transport_failure() -> None:
+    """Clear the recent getUpdates transport failure marker after a success."""
+    global _last_polling_transport_failure_ts
+    _last_polling_transport_failure_ts = None
+
+
+def _mark_polling_transport_failure() -> None:
+    global _last_polling_transport_failure_ts
+    _last_polling_transport_failure_ts = time.monotonic()
 
 
 class ResilientPollingHTTPXRequest(HTTPXRequest):
@@ -29,10 +51,16 @@ class ResilientPollingHTTPXRequest(HTTPXRequest):
     sustained outages.
     """
 
-    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(
+        self,
+        *args,
+        track_polling_failures: bool = False,
+        **kwargs,
+    ) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
         # 0.0 means "no warn yet" — first reset will warn.
         self._last_reset_warn_ts: float = 0.0
+        self._track_polling_failures = track_polling_failures
 
     async def _reset_client(self, *, reason: str) -> None:
         old_client = self._client
@@ -60,6 +88,8 @@ class ResilientPollingHTTPXRequest(HTTPXRequest):
             result = await super().do_request(*args, **kwargs)
         except (TimedOut, NetworkError) as exc:
             await self._reset_client(reason=exc.__class__.__name__)
+            if self._track_polling_failures:
+                _mark_polling_transport_failure()
             log = (
                 logger.warning
                 if self._should_warn_for_reset(time.monotonic())
@@ -74,4 +104,6 @@ class ResilientPollingHTTPXRequest(HTTPXRequest):
         else:
             # Successful request — next reset gets to warn again.
             self._last_reset_warn_ts = 0.0
+            if self._track_polling_failures:
+                clear_polling_transport_failure()
             return result
