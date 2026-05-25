@@ -1,10 +1,8 @@
 """Topic emoji status updates via editForumTopic.
 
-Updates topic names with status emoji prefixes to reflect session state:
-  - Active (working): topic name prefixed with working emoji
-  - Idle (waiting): topic name prefixed with idle emoji
-  - Done (Claude exited): topic name prefixed with done emoji
-  - Dead (window gone): topic name prefixed with dead emoji
+Updates topic names with status transitions while keeping titles clean:
+  - Active/idle/done/dead: local fork renders no lifecycle prefix
+  - RC and YOLO badges are also suppressed
 
 Tracks per-topic state to avoid redundant API calls. Debounces transitions
 to prevent rapid active/idle toggling from flooding the chat with rename
@@ -67,6 +65,17 @@ _STATE_EMOJI_USER: dict[str, str] = {
 def _state_emoji_map() -> dict[str, str]:
     """Return the active state→emoji table for the configured status mode."""
     return _STATE_EMOJI_USER if config.status_mode == "user" else _STATE_EMOJI_SYSTEM
+
+
+_VALID_TOPIC_STATES = frozenset({"active", "idle", "done", "dead"})
+
+
+def _display_state_for_update(state: str) -> str:
+    """Return the topic badge state to render for a logical lifecycle state."""
+    if state in _VALID_TOPIC_STATES:
+        # Local fork preference: don't add lifecycle badges to topic names.
+        return ""
+    return state
 
 
 # Debounce: state must be stable for this many seconds before updating topic name.
@@ -154,16 +163,8 @@ def _compose_topic_name(
     rc_active: bool = False,
 ) -> str:
     """Build the full Telegram topic title from state badges and clean name."""
-    parts: list[str] = []
-    emoji = _state_emoji_map().get(state, "")
-    if emoji:
-        parts.append(emoji)
-    if rc_active:
-        parts.append(EMOJI_RC)
-    if approval_mode == "yolo":
-        parts.append(EMOJI_YOLO)
-    parts.append(clean_name)
-    return " ".join(parts)
+    del state, approval_mode, rc_active
+    return clean_name
 
 
 async def _edit_topic_name(
@@ -299,12 +300,16 @@ async def update_topic_emoji(
     key = (chat_id, thread_id)
     clean_name, name_changed = _resolve_topic_name(key, display_name)
 
+    if state not in _VALID_TOPIC_STATES:
+        return
+
     approval_mode = _resolve_approval_mode(chat_id, thread_id)
     rc_active = _resolve_rc_mode(chat_id, thread_id)
-    state_token = (state, approval_mode, rc_active)
+    display_state = _display_state_for_update(state)
+    state_token = (display_state, approval_mode, rc_active)
 
-    emoji = _state_emoji_map().get(state, "")
-    if not emoji:
+    emoji = _state_emoji_map().get(display_state, "")
+    if display_state and not emoji:
         return
 
     now = time.monotonic()
@@ -319,7 +324,7 @@ async def update_topic_emoji(
 
     new_name = _compose_topic_name(
         clean_name,
-        state=state,
+        state=display_state,
         approval_mode=approval_mode,
         rc_active=rc_active,
     )
