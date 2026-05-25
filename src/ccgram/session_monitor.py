@@ -439,6 +439,8 @@ class SessionMonitor:
         raw, adopted_discovery = self._adopt_newer_discovered_transcripts(raw)
         if adopted_discovery:
             try:
+                # Lazy: session_map_sync is wired by SessionManager, while
+                # session_monitor can be imported before startup completes.
                 from .session_map import session_map_sync
 
                 await session_map_sync.load_session_map(raw)

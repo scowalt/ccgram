@@ -105,11 +105,11 @@ async def _debounced_update(
         await update_topic_emoji(bot, chat_id, thread_id, state, display_name)
 
 
-_STATE_EMOJI = [
-    ("active", EMOJI_ACTIVE),
-    ("idle", EMOJI_IDLE),
-    ("done", EMOJI_DONE),
-    ("dead", EMOJI_DEAD),
+_STATE_TOPIC_NAMES = [
+    ("active", "myproject"),
+    ("idle", "myproject"),
+    ("done", "myproject"),
+    ("dead", "myproject"),
 ]
 
 
@@ -120,14 +120,16 @@ class TestUpdateTopicEmoji:
             await update_topic_emoji(bot, -100, 42, "active", "myproject")
         bot.edit_forum_topic.assert_not_called()
 
-    @pytest.mark.parametrize("state,emoji", _STATE_EMOJI)
-    async def test_sets_emoji_after_debounce(self, state: str, emoji: str) -> None:
+    @pytest.mark.parametrize("state,topic_name", _STATE_TOPIC_NAMES)
+    async def test_sets_topic_name_after_debounce(
+        self, state: str, topic_name: str
+    ) -> None:
         bot = AsyncMock()
         await _debounced_update(bot, -100, 42, state, "myproject")
         bot.edit_forum_topic.assert_called_once_with(
             chat_id=-100,
             message_thread_id=42,
-            name=f"{emoji} myproject",
+            name=topic_name,
         )
 
     async def test_skips_same_state(self) -> None:
@@ -137,12 +139,12 @@ class TestUpdateTopicEmoji:
         await update_topic_emoji(bot, -100, 42, "active", "myproject")
         bot.edit_forum_topic.assert_not_called()
 
-    async def test_updates_on_state_change(self) -> None:
+    async def test_active_to_idle_has_no_visible_state_change(self) -> None:
         bot = AsyncMock()
         await _debounced_update(bot, -100, 42, "active", "myproject")
         bot.edit_forum_topic.reset_mock()
         await _debounced_update(bot, -100, 42, "idle", "myproject")
-        bot.edit_forum_topic.assert_called_once()
+        bot.edit_forum_topic.assert_not_called()
 
     async def test_updates_name_immediately_when_state_is_unchanged(self) -> None:
         bot = AsyncMock()
@@ -155,7 +157,7 @@ class TestUpdateTopicEmoji:
         bot.edit_forum_topic.assert_called_once_with(
             chat_id=-100,
             message_thread_id=42,
-            name=f"{EMOJI_IDLE} bun",
+            name="bun",
         )
 
     async def test_strips_existing_prefix(self) -> None:
@@ -164,7 +166,7 @@ class TestUpdateTopicEmoji:
         bot.edit_forum_topic.assert_called_once_with(
             chat_id=-100,
             message_thread_id=42,
-            name=f"{EMOJI_IDLE} myproject",
+            name="myproject",
         )
 
     async def test_rapid_toggling_suppressed(self) -> None:
@@ -193,7 +195,7 @@ class TestUpdateTopicEmoji:
         bot.edit_forum_topic.assert_called_once_with(
             chat_id=-100,
             message_thread_id=42,
-            name=f"{EMOJI_ACTIVE} myproject",
+            name="myproject",
         )
 
     async def test_permission_error_disables_chat(self) -> None:
@@ -245,7 +247,7 @@ class TestUpdateTopicEmoji:
         bot.edit_forum_topic.assert_called_once_with(
             chat_id=-100,
             message_thread_id=42,
-            name=f"{EMOJI_ACTIVE} myproject",
+            name="myproject",
         )
 
     async def test_idle_does_not_fire_at_active_debounce_time(self) -> None:
@@ -270,10 +272,10 @@ class TestUpdateTopicEmoji:
         bot.edit_forum_topic.assert_called_once_with(
             chat_id=-100,
             message_thread_id=42,
-            name=f"{EMOJI_IDLE} myproject",
+            name="myproject",
         )
 
-    async def test_brief_pause_during_work_stays_green(self) -> None:
+    async def test_brief_pause_during_work_stays_plain(self) -> None:
         bot = AsyncMock()
         with patch(_PATCH_MONOTONIC) as mock_monotonic:
             mock_monotonic.return_value = 0.0
@@ -300,14 +302,14 @@ class TestUpdateTopicEmoji:
         bot.edit_forum_topic.assert_called_once_with(
             chat_id=-100,
             message_thread_id=42,
-            name=f"{EMOJI_ACTIVE} {EMOJI_YOLO} myproject",
+            name="myproject",
         )
 
 
 class TestFormatTopicNameForMode:
     def test_formats_yolo_name(self) -> None:
         assert (
-            format_topic_name_for_mode("myproject", "yolo") == f"{EMOJI_YOLO} myproject"
+            format_topic_name_for_mode("myproject", "yolo") == "myproject"
         )
 
     def test_formats_normal_name(self) -> None:
@@ -321,7 +323,7 @@ class TestTopicNamePreservation:
         bot.edit_forum_topic.assert_called_once_with(
             chat_id=-100,
             message_thread_id=42,
-            name=f"{EMOJI_ACTIVE} myproject",
+            name="myproject",
         )
 
     async def test_updates_stored_name_when_display_name_changes(self) -> None:
@@ -332,7 +334,7 @@ class TestTopicNamePreservation:
         bot.edit_forum_topic.assert_called_once_with(
             chat_id=-100,
             message_thread_id=42,
-            name=f"{EMOJI_IDLE} renamed",
+            name="renamed",
         )
 
     async def test_emoji_prefix_does_not_trigger_name_change(self) -> None:
@@ -340,11 +342,7 @@ class TestTopicNamePreservation:
         await _debounced_update(bot, -100, 42, "active", "myproject")
         bot.edit_forum_topic.reset_mock()
         await _debounced_update(bot, -100, 42, "idle", f"{EMOJI_ACTIVE} myproject")
-        bot.edit_forum_topic.assert_called_once_with(
-            chat_id=-100,
-            message_thread_id=42,
-            name=f"{EMOJI_IDLE} myproject",
-        )
+        bot.edit_forum_topic.assert_not_called()
 
     async def test_clear_resets_stored_name(self) -> None:
         bot = AsyncMock()
@@ -355,7 +353,7 @@ class TestTopicNamePreservation:
         bot.edit_forum_topic.assert_called_once_with(
             chat_id=-100,
             message_thread_id=42,
-            name=f"{EMOJI_ACTIVE} renamed",
+            name="renamed",
         )
 
 
@@ -390,7 +388,7 @@ class TestSyncTopicName:
         bot.edit_forum_topic.assert_called_once_with(
             chat_id=-100,
             message_thread_id=42,
-            name=f"{EMOJI_IDLE} ccgram-codex",
+            name="ccgram-codex",
         )
 
     async def test_clear_resets_pending_transition(self) -> None:
@@ -620,9 +618,7 @@ class TestRemoteControlBadge:
             == "myproject"
         )
 
-    async def test_rc_active_adds_badge(self) -> None:
-        from ccgram.handlers.status.topic_emoji import EMOJI_RC
-
+    async def test_rc_active_adds_no_badge(self) -> None:
         bot = AsyncMock()
         with (
             patch(
@@ -637,12 +633,10 @@ class TestRemoteControlBadge:
         bot.edit_forum_topic.assert_called_once_with(
             chat_id=-100,
             message_thread_id=42,
-            name=f"{EMOJI_ACTIVE} {EMOJI_RC} myproject",
+            name="myproject",
         )
 
-    async def test_rc_and_yolo_badges(self) -> None:
-        from ccgram.handlers.status.topic_emoji import EMOJI_RC
-
+    async def test_rc_and_yolo_add_no_badges(self) -> None:
         bot = AsyncMock()
         with (
             patch(
@@ -657,7 +651,7 @@ class TestRemoteControlBadge:
         bot.edit_forum_topic.assert_called_once_with(
             chat_id=-100,
             message_thread_id=42,
-            name=f"{EMOJI_ACTIVE} {EMOJI_RC} {EMOJI_YOLO} myproject",
+            name="myproject",
         )
 
 
@@ -687,22 +681,22 @@ class TestStatusMode:
         assert table["done"] == EMOJI_DONE
         assert table["dead"] == EMOJI_DEAD
 
-    async def test_user_mode_emits_yellow_for_active(self, _user_mode) -> None:
+    async def test_user_mode_emits_plain_name_for_active(self, _user_mode) -> None:
         bot = AsyncMock()
         await _debounced_update(bot, -100, 42, "active", "myproject")
         bot.edit_forum_topic.assert_called_once_with(
             chat_id=-100,
             message_thread_id=42,
-            name=f"{EMOJI_YELLOW_CIRCLE} myproject",
+            name="myproject",
         )
 
-    async def test_user_mode_emits_green_for_idle(self, _user_mode) -> None:
+    async def test_user_mode_emits_plain_name_for_idle(self, _user_mode) -> None:
         bot = AsyncMock()
         await _debounced_update(bot, -100, 42, "idle", "myproject")
         bot.edit_forum_topic.assert_called_once_with(
             chat_id=-100,
             message_thread_id=42,
-            name=f"{EMOJI_GREEN_CIRCLE} myproject",
+            name="myproject",
         )
 
     def test_strip_handles_both_modes(self) -> None:
