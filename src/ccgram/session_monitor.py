@@ -35,7 +35,7 @@ from .session_lifecycle import session_lifecycle
 from .tmux_manager import tmux_manager
 from .monitor_events import NewMessage, NewWindowEvent, SessionInfo
 from .transcript_reader import TranscriptReader
-from .utils import task_done_callback
+from .utils import atomic_write_json, task_done_callback
 
 import json
 
@@ -145,6 +145,98 @@ class SessionMonitor:
         session_id = session_lifecycle.resolve_session_id(window_id)
         if session_id:
             self._idle_tracker.record_activity(session_id)
+
+    @staticmethod
+    def _transcript_mtime(transcript_path: str) -> float | None:
+        if not transcript_path:
+            return None
+        try:
+            return Path(transcript_path).stat().st_mtime
+        except OSError:
+            return None
+
+    def _adopt_newer_discovered_transcripts(
+        self, raw_session_map: dict[str, Any] | None
+    ) -> tuple[dict[str, Any] | None, bool]:
+        """Replace stale hook-backed transcript entries with newer discovered files.
+
+        Hook-backed providers normally keep ``session_map.json`` current. When a
+        hook runner is missing or crashes, a tmux pane can continue in a new
+        provider session while ccgram reads an old, still-existing transcript.
+        If the recorded transcript is no longer active and the provider can
+        discover a newer transcript for the same cwd, adopt it as the current
+        session so message polling resumes.
+        """
+        if not raw_session_map:
+            return raw_session_map, False
+
+        prefix = f"{config.tmux_session_name}:"
+        current_map = parse_session_map(raw_session_map, prefix)
+        now = time.time()
+        changed = False
+
+        for window_id, details in current_map.items():
+            if not window_id.startswith("@"):
+                continue
+
+            current_path = details.get("transcript_path", "")
+            current_mtime = self._transcript_mtime(current_path)
+            if (
+                current_mtime is not None
+                and now - current_mtime < _TRANSCRIPT_ACTIVE_SECS
+            ):
+                continue
+
+            provider = get_provider_for_window(
+                window_id, provider_name=details.get("provider_name", "")
+            )
+            if not provider.capabilities.supports_hook:
+                continue
+
+            discovered = provider.discover_transcript(
+                details.get("cwd", ""), f"{config.tmux_session_name}:{window_id}"
+            )
+            if discovered is None:
+                continue
+            if (
+                discovered.session_id == details.get("session_id")
+                and discovered.transcript_path == current_path
+            ):
+                continue
+
+            discovered_mtime = self._transcript_mtime(discovered.transcript_path)
+            if current_mtime is not None and (
+                discovered_mtime is None or discovered_mtime <= current_mtime
+            ):
+                continue
+
+            raw_key = f"{config.tmux_session_name}:{window_id}"
+            existing = raw_session_map.get(raw_key, {})
+            if not isinstance(existing, dict):
+                existing = {}
+            raw_session_map[raw_key] = {
+                "session_id": discovered.session_id,
+                "cwd": discovered.cwd,
+                "window_name": existing.get(
+                    "window_name", details.get("window_name", "")
+                ),
+                "transcript_path": discovered.transcript_path,
+                "provider_name": existing.get(
+                    "provider_name",
+                    details.get("provider_name", provider.capabilities.name),
+                ),
+            }
+            logger.info(
+                "Adopted newer discovered transcript for %s: %s -> %s",
+                window_id,
+                details.get("session_id", "")[:8],
+                discovered.session_id[:8],
+            )
+            changed = True
+
+        if changed:
+            atomic_write_json(config.session_map_file, raw_session_map)
+        return raw_session_map, changed
 
     async def check_for_updates(self, current_map: dict) -> list[NewMessage]:
         """Check all sessions for new assistant messages.
@@ -344,6 +436,15 @@ class SessionMonitor:
         self, raw: dict | None = None
     ) -> dict[str, dict[str, str]]:
         """Reconcile session_map; clean up replaced/removed sessions; fire new-window events."""
+        raw, adopted_discovery = self._adopt_newer_discovered_transcripts(raw)
+        if adopted_discovery:
+            try:
+                from .session_map import session_map_sync
+
+                await session_map_sync.load_session_map(raw)
+            except RuntimeError as exc:
+                if "SessionManager" not in str(exc):
+                    raise
         current_map = await self._load_current_session_map(raw)
         result = session_lifecycle.reconcile(current_map, self._idle_tracker)
 
@@ -358,14 +459,15 @@ class SessionMonitor:
             self._transcript_reader.mark_catch_up(details["session_id"])
 
         adoption_windows = dict(result.new_windows)
-        # Lazy: thread_router is wired into session_manager which imports
-        # session_monitor; hoisting forms a startup cycle.
-        # Lazy: proxies wired by SessionManager constructor
-        from .thread_router import thread_router
+        if result.changed_windows and self._new_window_callback:
+            # Lazy: thread_router is wired into session_manager which imports
+            # session_monitor; hoisting forms a startup cycle.
+            # Lazy: proxies wired by SessionManager constructor
+            from .thread_router import thread_router
 
-        for window_id, details in result.changed_windows.items():
-            if not thread_router.has_window(window_id):
-                adoption_windows[window_id] = details
+            for window_id, details in result.changed_windows.items():
+                if not thread_router.has_window(window_id):
+                    adoption_windows[window_id] = details
 
         if adoption_windows:
             # Lazy: session.py imports session_monitor at top; hoisting

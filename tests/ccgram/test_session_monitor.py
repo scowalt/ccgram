@@ -2,11 +2,14 @@
 
 import json
 import os
+import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from ccgram.monitor_state import TrackedSession
+from ccgram.providers.base import SessionStartEvent
 from ccgram.providers.claude import ClaudeProvider
 from ccgram.providers.codex import CodexProvider
 from ccgram.session_monitor import NewWindowEvent, SessionMonitor
@@ -230,6 +233,61 @@ class TestPerWindowProviderResolution:
         }
         await monitor.check_for_updates(current_map)
         assert "@7" in captured_window_ids
+
+
+class TestStaleTranscriptAdoption:
+    async def test_detect_changes_adopts_newer_discovered_transcript(
+        self, monitor: SessionMonitor, tmp_path
+    ) -> None:
+        from ccgram.config import config
+
+        old_file = tmp_path / "old.jsonl"
+        new_file = tmp_path / "new.jsonl"
+        old_file.write_text('{"type":"session"}\n')
+        new_file.write_text('{"type":"session"}\n')
+        stale_time = time.time() - 300
+        os.utime(old_file, (stale_time, stale_time))
+
+        discovered = SessionStartEvent(
+            session_id="new-session",
+            cwd="/proj",
+            transcript_path=str(new_file),
+            window_key="ccgram:@2",
+        )
+        provider = SimpleNamespace(
+            capabilities=SimpleNamespace(supports_hook=True, name="pi"),
+            discover_transcript=lambda _cwd, _window_key: discovered,
+        )
+        raw = {
+            "ccgram:@2": {
+                "session_id": "old-session",
+                "cwd": "/proj",
+                "window_name": "proj",
+                "transcript_path": str(old_file),
+                "provider_name": "pi",
+            }
+        }
+        monitor._last_session_map = {"@2": raw["ccgram:@2"]}
+        monitor.state.update_session(
+            TrackedSession(session_id="old-session", file_path=str(old_file))
+        )
+
+        sync = SimpleNamespace(load_session_map=AsyncMock())
+        with (
+            patch(
+                "ccgram.session_monitor.get_provider_for_window", return_value=provider
+            ),
+            patch("ccgram.session_map.session_map_sync", sync),
+        ):
+            current_map = await monitor._detect_and_cleanup_changes(raw)
+
+        sync.load_session_map.assert_awaited_once_with(raw)
+        assert current_map["@2"]["session_id"] == "new-session"
+        assert current_map["@2"]["transcript_path"] == str(new_file)
+        assert monitor.state.get_session("old-session") is None
+        assert "new-session" in monitor._transcript_reader._catch_up_sessions
+        saved = json.loads(config.session_map_file.read_text())
+        assert saved["ccgram:@2"]["session_id"] == "new-session"
 
 
 class TestReadNewLines:
