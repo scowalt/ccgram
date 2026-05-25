@@ -33,9 +33,7 @@ from .handlers.messaging_pipeline.message_queue import shutdown_workers
 from .handlers.messaging_pipeline.message_routing import handle_new_message
 from .handlers.polling.periodic_tasks import run_broker_cycle
 from .handlers.polling.polling_coordinator import status_poll_loop
-from .handlers.polling.polling_state import terminal_screen_buffer
 from .handlers.shell import register_approval_callback, show_command_approval
-from .handlers.status import register_rc_active_provider
 from .handlers.topics.topic_orchestration import (
     adopt_unbound_windows as _adopt_unbound_windows,
 )
@@ -105,10 +103,10 @@ def verify_hooks_installed() -> None:
     provider_name = provider.capabilities.name
     if provider_name != "claude":
         if provider.capabilities.hook_install_managed_by_ccgram:
-            # INFO (not WARNING): Codex/Gemini fall back to transcript-scan
-            # discovery when hooks are absent, so missing hooks are an
-            # opt-in latency improvement, not a degraded state.
-            logger.info(
+            # DEBUG (not INFO/WARNING): Codex/Gemini fall back to transcript-scan
+            # discovery when hooks are absent, so this is an opt-in latency tip,
+            # not a degraded state — it should not greet every startup at INFO.
+            logger.debug(
                 "%s hooks can improve status tracking. Run: ccgram hook --provider %s --install",
                 provider_name,
                 provider_name,
@@ -161,7 +159,6 @@ def wire_runtime_callbacks() -> None:
         await run_broker_cycle(client_, idle_windows=frozenset({window_key}))
 
     register_stop_callback(_on_stop)
-    register_rc_active_provider(terminal_screen_buffer.is_rc_active)
     register_approval_callback(show_command_approval)
     _callbacks_wired = True
 
@@ -285,10 +282,8 @@ def reset_for_testing() -> None:
     # test harness; production callers never reach reset_for_testing().
     from .handlers import hook_events
     from .handlers.shell import shell_capture
-    from .handlers.status import status_bubble
 
     hook_events._reset_stop_callback_for_testing()
-    status_bubble._reset_rc_active_provider_for_testing()
     shell_capture._reset_approval_callback_for_testing()
 
     _callbacks_wired = False

@@ -5,13 +5,14 @@ I/O, Claude task-list formatting, and status-to-content conversion.  The queue
 worker in ``message_queue`` delegates ``StatusUpdateTask`` / ``StatusClearTask``
 here; ``convert_status_to_content`` is defined here and imported by
 ``message_queue._process_content_task``.
+
+Status-bar Row 1: [⎋ Esc] [📸 Screenshot] [📄 Last] [📥 Get File].
 """
 
 from __future__ import annotations
 
 import contextlib
 import time
-from collections.abc import Callable
 
 import structlog
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -20,23 +21,20 @@ from telegram.error import TelegramError
 from ...claude_task_state import get_claude_task_snapshot, get_claude_wait_header
 from ...config import config
 from ...expandable_quote import format_expandable_quote
-from ...telegram_client import TelegramClient, unwrap_bot
-from ...telegram_draft import DraftStream
+from ...telegram_client import TelegramClient
 from ...thread_router import thread_router
 from ...topic_state_registry import topic_state
-from ...window_query import get_notification_mode
-from ...window_state_store import PaneInfo, window_store
+from ...window_state_ports.pane_state import PaneProjection, list_pane_projections
 
 from ..callback_data import (
     CB_STATUS_ESC,
-    CB_STATUS_NOTIFY,
+    CB_STATUS_GET_FILE,
+    CB_STATUS_LAST_REPLY,
     CB_STATUS_RECALL,
-    CB_STATUS_REMOTE,
     CB_STATUS_SCREENSHOT,
     IDLE_STATUS_TEXT,
-    NOTIFY_MODE_ICONS,
 )
-from ..messaging_pipeline.message_sender import edit_with_fallback, rate_limit_send
+from ..messaging_pipeline.message_sender import edit_with_fallback, safe_send
 from ..messaging_pipeline.message_task import (
     StatusClearTask,
     StatusUpdateTask,
@@ -47,52 +45,11 @@ logger = structlog.get_logger()
 
 
 # ---------------------------------------------------------------------------
-# RC-active provider (dependency injection — severs polling_state import)
-# ---------------------------------------------------------------------------
-
-
-def _rc_active_unwired(_window_id: str) -> bool:
-    raise RuntimeError(
-        "register_rc_active_provider not wired — call register_rc_active_provider() at startup"
-    )
-
-
-_rc_active_fn: Callable[[str], bool] = _rc_active_unwired
-_rc_active_fn_registered: bool = False
-
-
-def register_rc_active_provider(fn: Callable[[str], bool]) -> None:
-    """Wire the polling-layer RC-active lookup (called once from client.py setup).
-
-    Avoids a direct status_bubble → polling_state import by accepting
-    a callable rather than importing terminal_screen_buffer directly.
-
-    Raises RuntimeError if called more than once — wiring should happen exactly
-    once at startup; double registration is a programming error.
-    """
-    global _rc_active_fn, _rc_active_fn_registered
-    if _rc_active_fn_registered:
-        raise RuntimeError("register_rc_active_provider already registered")
-    _rc_active_fn = fn
-    _rc_active_fn_registered = True
-
-
-def _reset_rc_active_provider_for_testing() -> None:
-    """Restore the unwired default — only for tests."""
-    global _rc_active_fn, _rc_active_fn_registered
-    _rc_active_fn = _rc_active_unwired
-    _rc_active_fn_registered = False
-
-
-# ---------------------------------------------------------------------------
 # State
 # ---------------------------------------------------------------------------
 
 # Status message tracking: (user_id, thread_key) -> (message_id, window_id, last_text, chat_id)
 _status_msg_info: dict[tuple[int, int], tuple[int, str, str, int]] = {}
-
-# Active DraftStream per status bubble: (user_id, thread_key) -> DraftStream
-_status_drafts: dict[tuple[int, int], DraftStream] = {}
 
 # Last time a topic delivered visible content into Telegram. Used to avoid
 # immediately recreating a status bubble that was just replaced by content.
@@ -109,14 +66,13 @@ def build_status_keyboard(
     window_id: str,
     history: list[str] | None = None,
     *,
-    rc_active: bool = False,
     user_id: int | None = None,
 ) -> InlineKeyboardMarkup:
     """Build inline keyboard for status messages.
 
     Layout:
       Row 1 (optional): up to 2 history-recall buttons
-      Row 2: [Esc] [Screenshot] [Bell] [RC]
+      Row 2: [⎋ Esc] [📸 Screenshot] [📄 Last] [📥 Get File]
       Row 3 (optional): [🪟 Dashboard] when Mini App is enabled and user_id is set
     """
     # Lazy: command_history → messaging_pipeline → status → status_bubble
@@ -141,9 +97,6 @@ def build_status_keyboard(
             )
         rows.append(hist_row)
 
-    mode = get_notification_mode(window_id)
-    bell = NOTIFY_MODE_ICONS.get(mode, "\U0001f514")
-    rc_label = "📡✓" if rc_active else "📡"
     rows.append(
         [
             InlineKeyboardButton(
@@ -155,12 +108,12 @@ def build_status_keyboard(
                 callback_data=f"{CB_STATUS_SCREENSHOT}{window_id}"[:64],
             ),
             InlineKeyboardButton(
-                bell,
-                callback_data=f"{CB_STATUS_NOTIFY}{window_id}"[:64],
+                "\U0001f4c4 Last",
+                callback_data=f"{CB_STATUS_LAST_REPLY}{window_id}"[:64],
             ),
             InlineKeyboardButton(
-                rc_label,
-                callback_data=f"{CB_STATUS_REMOTE}{window_id}"[:64],
+                "\U0001f4e5 Get File",
+                callback_data=f"{CB_STATUS_GET_FILE}{window_id}"[:64],
             ),
         ]
     )
@@ -247,7 +200,7 @@ _SECONDS_PER_MINUTE = 60
 _MINUTES_PER_HOUR = 60
 
 
-def _format_pane_idle_age(pane: PaneInfo, now_wall: float) -> str:
+def _format_pane_idle_age(pane: PaneProjection, now_wall: float) -> str:
     """Format a pane's idle duration relative to ``now_wall``."""
     if not pane.last_active_ts:
         return "idle"
@@ -261,7 +214,7 @@ def _format_pane_idle_age(pane: PaneInfo, now_wall: float) -> str:
     return f"idle {hours}h"
 
 
-def _format_pane_item(pane: PaneInfo, now_wall: float) -> str:
+def _format_pane_item(pane: PaneProjection, now_wall: float) -> str:
     """Render a single pane as ``"<label> <state>"``."""
     label = pane.name.strip() if pane.name and pane.name.strip() else pane.pane_id
     if pane.state == "active":
@@ -285,10 +238,10 @@ def format_pane_block(window_id: str) -> str | None:
     Dead panes are excluded from the rendered list — pane lifecycle
     notifications are owned by ``PaneStatusStrategy`` and Theme 5 Task 2.5.
     """
-    state = window_store.window_states.get(window_id)
-    if state is None or len(state.panes) <= 1:
+    projections = list_pane_projections(window_id)
+    if len(projections) <= 1:
         return None
-    visible = [p for p in state.panes.values() if p.state != "dead"]
+    visible = [p for p in projections if p.state != "dead"]
     if len(visible) <= 1:
         return None
     # Sort numerically so %2 comes before %10 — lexicographic puts %10 first.
@@ -376,9 +329,8 @@ async def send_status_text(
     """Send a new status message with action buttons and track it.
 
     If a status message already exists for this (user, thread), edit it
-    in-place via the bubble's ``DraftStream`` (streaming when the Bot API
-    supports it, ``editMessageText`` otherwise).  Same-window same-text
-    calls are a no-op.
+    in-place via ``edit_with_fallback`` (entity-formatted, plain-text fallback
+    on TelegramError).  Same-window same-text calls are a no-op.
     """
     skey = (user_id, thread_id_or_0)
     thread_id: int | None = thread_id_or_0 if thread_id_or_0 != 0 else None
@@ -388,7 +340,6 @@ async def send_status_text(
     keyboard = build_status_keyboard(
         window_id,
         history=history,
-        rc_active=_rc_active_fn(window_id),
         user_id=user_id,
     )
 
@@ -398,77 +349,31 @@ async def send_status_text(
         if stored_wid == window_id and text == last_text:
             return
         if stored_wid == window_id:
-            success = await _replace_or_edit_bubble(
-                client, skey, stored_chat_id, msg_id, text, keyboard
+            success = await edit_with_fallback(
+                client, stored_chat_id, msg_id, text, reply_markup=keyboard
             )
             if success:
                 _status_msg_info[skey] = (msg_id, window_id, text, stored_chat_id)
                 return
-            # Both stream replace and legacy edit failed. The original message
-            # may still exist server-side — best-effort delete to avoid an
-            # orphan bubble before creating its replacement.
+            # Edit failed — original message may still exist server-side.
+            # Best-effort delete to avoid an orphan before creating a replacement.
             with contextlib.suppress(TelegramError):
                 await client.delete_message(chat_id=stored_chat_id, message_id=msg_id)
             _status_msg_info.pop(skey, None)
-            _status_drafts.pop(skey, None)
         else:
             await clear_status_message(client, user_id, thread_id_or_0)
     elif _should_skip_new_status(user_id, thread_id_or_0, text):
         return
 
-    msg_id = await _start_bubble(client, skey, chat_id, thread_id, text, keyboard)
-    if msg_id is not None:
-        _status_msg_info[skey] = (msg_id, window_id, text, chat_id)
-
-
-async def _start_bubble(
-    client: TelegramClient,
-    skey: tuple[int, int],
-    chat_id: int,
-    thread_id: int | None,
-    text: str,
-    keyboard: InlineKeyboardMarkup,
-) -> int | None:
-    """Open a fresh DraftStream for a status bubble; return message_id."""
-    await rate_limit_send(chat_id)
-    stream = DraftStream(
-        unwrap_bot(client),
+    msg = await safe_send(
+        client,
         chat_id,
+        text,
         message_thread_id=thread_id,
         reply_markup=keyboard,
     )
-    msg_id = await stream.start(text)
-    if msg_id is None:
-        return None
-    _status_drafts[skey] = stream
-    return msg_id
-
-
-async def _replace_or_edit_bubble(
-    client: TelegramClient,
-    skey: tuple[int, int],
-    chat_id: int,
-    msg_id: int,
-    text: str,
-    keyboard: InlineKeyboardMarkup,
-) -> bool:
-    """Update an existing bubble. Use the active DraftStream if present;
-    otherwise fall back to ``edit_with_fallback`` (legacy entity path).
-    """
-    stream = _status_drafts.get(skey)
-    if stream is not None and not stream.closed:
-        try:
-            await stream.replace(text, reply_markup=keyboard)
-        except TelegramError as exc:
-            logger.debug("DraftStream.replace failed for %s: %s", skey, exc)
-            _status_drafts.pop(skey, None)
-            return await edit_with_fallback(
-                client, chat_id, msg_id, text, reply_markup=keyboard
-            )
-        return True
-    return await edit_with_fallback(
-        client, chat_id, msg_id, text, reply_markup=keyboard
-    )
+    if msg is not None:
+        _status_msg_info[skey] = (msg.message_id, window_id, text, chat_id)
 
 
 async def clear_status_message(
@@ -479,12 +384,6 @@ async def clear_status_message(
     """Delete the status message for a user."""
     skey = (user_id, thread_id_or_0)
     info = _status_msg_info.pop(skey, None)
-    stream = _status_drafts.pop(skey, None)
-    if stream is not None and not stream.closed:
-        # abort() deletes the underlying message and closes the stream.
-        with contextlib.suppress(TelegramError):
-            await stream.abort()
-        return
     if info:
         msg_id, _, _, chat_id = info
         try:
@@ -506,26 +405,14 @@ async def convert_status_to_content(
     """
     skey = (user_id, thread_id_or_0)
     info = _status_msg_info.pop(skey, None)
-    stream = _status_drafts.pop(skey, None)
     if not info:
         return None
 
     msg_id, stored_wid, _, chat_id = info
     if stored_wid != window_id:
-        if stream is not None and not stream.closed:
-            with contextlib.suppress(TelegramError):
-                await stream.abort()
-            return None
         with contextlib.suppress(TelegramError):
             await client.delete_message(chat_id=chat_id, message_id=msg_id)
         return None
-
-    if stream is not None and not stream.closed:
-        try:
-            await stream.finalize(content_text, reply_markup=None)
-            return msg_id
-        except TelegramError as exc:
-            logger.debug("DraftStream.finalize failed for %s: %s", skey, exc)
 
     success = await edit_with_fallback(
         client,
@@ -592,4 +479,3 @@ def clear_status_msg_info(user_id: int, thread_id: int | None = None) -> None:
     """
     skey = (user_id, thread_key(thread_id))
     _status_msg_info.pop(skey, None)
-    _status_drafts.pop(skey, None)

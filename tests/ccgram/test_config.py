@@ -123,10 +123,10 @@ class TestShowHiddenDirs:
 
 @pytest.mark.usefixtures("_base_env")
 class TestHideToolCalls:
-    def test_hide_tool_calls_default_true(self, monkeypatch):
+    def test_hide_tool_calls_default_false(self, monkeypatch):
         monkeypatch.delenv("CCGRAM_HIDE_TOOL_CALLS", raising=False)
         cfg = Config()
-        assert cfg.hide_tool_calls is True
+        assert cfg.hide_tool_calls is False
 
     @pytest.mark.parametrize("value", ["1", "true", "yes", "True", "YES", "Yes"])
     def test_hide_tool_calls_enabled(self, monkeypatch, value):

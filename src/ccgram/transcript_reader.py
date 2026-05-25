@@ -43,19 +43,18 @@ _SESSION_SCAN_WARN_SECS = 0.25
 
 def _resolve_provider_for_file(window_id: str, file_path: Path) -> Any:
     """Prefer transcript-path provider hints when a hookful state goes stale."""
-    state_store = None
+    provider_name: str | None = None
     try:
-        # Lazy: window_state_store may not yet be wired during early
-        # transcript-discovery paths; the ImportError fallback gates on
-        # that case explicitly.
-        from .window_state_store import window_store
+        # Lazy: window_state_ports.identity_state imports the kernel which
+        # may not yet be wired during early transcript-discovery paths.
+        # RuntimeError comes from the unwired _WindowStoreProxy;
+        # ImportError guards against an unfinished port package on disk.
+        from .window_state_ports import identity_state
 
-        state_store = window_store.window_states.get(window_id)
-    except ImportError:
+        provider_name = identity_state.get_provider_name(window_id)
+    except ImportError, RuntimeError:
         pass
-    provider = get_provider_for_window(
-        window_id, provider_name=state_store.provider_name if state_store else None
-    )
+    provider = get_provider_for_window(window_id, provider_name=provider_name)
     inferred = detect_provider_from_transcript_path(str(file_path))
     current = provider.capabilities.name
     if (
@@ -64,11 +63,21 @@ def _resolve_provider_for_file(window_id: str, file_path: Path) -> Any:
         and provider.capabilities.supports_hook
         and registry.is_valid(inferred)
     ):
-        logger.warning(
+        # Throttled debug, not warning: this read-path observation repeats every
+        # poll until session_map corrects the in-memory state. The read itself
+        # self-heals (we return the inferred provider below), and when the hook
+        # is functional session_map._sync_window_from_session_map emits the
+        # authoritative WARNING on the state mutation. Caveat: if the hook is
+        # broken so session_map never updates, that correction (and its WARNING)
+        # never fires and this stays debug-only — accepted, since the read still
+        # works and a per-poll WARNING here would just flood.
+        log_throttled(
+            logger,
+            f"provider-mismatch:{window_id}",
             "Provider mismatch for window %s: state=%s transcript=%s; using %s",
             window_id,
             current,
-            file_path,
+            str(file_path),
             inferred,
         )
         return registry.get(inferred)
@@ -409,7 +418,9 @@ class TranscriptReader:
                             )
 
                 except (json.JSONDecodeError, OSError) as e:
-                    logger.debug("Error reading index %s: %s", index_file, e)
+                    # Degraded discovery: index unreadable, falling back to a
+                    # glob scan below. Worth surfacing — not a per-poll hot path.
+                    logger.warning("Error reading index %s: %s", index_file, e)
 
             try:
                 for jsonl_file in project_dir.glob("*.jsonl"):
@@ -438,6 +449,6 @@ class TranscriptReader:
                         )
                     )
             except OSError as e:
-                logger.debug("Error scanning jsonl files in %s: %s", project_dir, e)
+                logger.warning("Error scanning jsonl files in %s: %s", project_dir, e)
 
         return sessions

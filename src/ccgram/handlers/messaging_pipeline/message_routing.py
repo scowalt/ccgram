@@ -1,17 +1,16 @@
 """Inbound message routing — handles new assistant messages from SessionMonitor.
 
-Routes messages from the session monitor to Telegram topics: notification
-filtering, thinking-block gating, interactive-tool detection, offset tracking,
-and content queue management.
+Routes messages from the session monitor to Telegram topics: thinking-block
+gating, interactive-tool detection, offset tracking, and content queue
+management.
 """
 
 import asyncio
-import re
 from pathlib import Path
 
 import structlog
 
-from ... import session_query, window_query
+from ... import session_query
 from ...config import config
 from ...session_monitor import NewMessage
 from ...telegram_client import TelegramClient
@@ -29,9 +28,6 @@ from .message_queue import enqueue_content_message, get_message_queue
 
 logger = structlog.get_logger()
 
-_ERROR_KEYWORDS_RE = re.compile(
-    r"\b(?:error|exception|failed|traceback|stderr|assertion)\b", re.IGNORECASE
-)
 _MIN_THINKING_LENGTH = 20
 
 
@@ -45,7 +41,7 @@ async def handle_new_message(msg: NewMessage, client: TelegramClient) -> None:  
         return
 
     status = "complete" if msg.is_complete else "streaming"
-    logger.info(
+    logger.debug(
         "handle_new_message [%s]: session=%s, text_len=%d",
         status,
         msg.session_id,
@@ -55,7 +51,7 @@ async def handle_new_message(msg: NewMessage, client: TelegramClient) -> None:  
     active_users = session_query.find_users_for_session(msg.session_id)
 
     if not active_users:
-        logger.info("No active users for session %s", msg.session_id)
+        logger.debug("No active users for session %s", msg.session_id)
         return
 
     for user_id, window_id, thread_id in active_users:
@@ -63,22 +59,12 @@ async def handle_new_message(msg: NewMessage, client: TelegramClient) -> None:  
         structlog.contextvars.bind_contextvars(
             window_id=window_id, session_id=msg.session_id
         )
-        notif_mode = window_query.get_notification_mode(window_id)
         is_tool_flow = msg.tool_name in INTERACTIVE_TOOL_NAMES or msg.content_type in (
             "tool_use",
             "tool_result",
         )
         if is_tool_flow and not config.forward_tool_flow:
             continue
-        if not is_tool_flow:
-            if notif_mode == "muted":
-                continue
-            if (
-                notif_mode == "errors_only"
-                and msg.phase != "final_answer"
-                and not _ERROR_KEYWORDS_RE.search(msg.text or "")
-            ):
-                continue
 
         if msg.content_type == "thinking":
             if not config.forward_thinking:

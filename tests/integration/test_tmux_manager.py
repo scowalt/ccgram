@@ -250,16 +250,38 @@ async def test_capture_pane_with_ansi(tmux, tmp_path) -> None:
     )
     assert ok
 
-    await tmux.send_keys(window_id, r'printf "\033[31mred\033[0m normal"')
-    await asyncio.sleep(0.5)
+    # raw=True: plain shell window — use the direct send path, not the
+    # Claude-TUI path (vim-mode probe + 500ms Enter delay). The trailing
+    # `touch` of a sentinel file proves the shell actually executed the line,
+    # independent of pane capture: the command is always *echoed* on screen
+    # (so "red"/"normal"/the ESC sequence appear whether or not it ran), making
+    # the captured text alone an unreliable execution signal.
+    done = tmp_path / ".ansi_executed"
+    await tmux.send_keys(
+        window_id,
+        f'printf "\\033[31mred\\033[0m normal"; touch "{done}"',
+        raw=True,
+    )
+
+    ansi = ""
+    for _ in range(10):
+        await asyncio.sleep(0.3)
+        ansi = await tmux.capture_pane(window_id, with_ansi=True) or ""
+        if done.exists():
+            break
+
+    # Some sandboxed CI environments run the pane under a shell that never
+    # executes piped keystrokes — skip there. But if the shell DID execute
+    # (sentinel present) yet ANSI capture lost the escape, that is a real
+    # capture regression and must fail, not skip.
+    if not done.exists():
+        pytest.skip("tmux pane shell did not execute the command in this environment")
 
     plain = await tmux.capture_pane(window_id, with_ansi=False)
-    ansi = await tmux.capture_pane(window_id, with_ansi=True)
     assert plain is not None
-    assert ansi is not None
     assert "red" in plain
     assert "normal" in plain
-    assert "\x1b[" in ansi
+    assert "\x1b[31m" in ansi
     assert "red" in ansi
 
 

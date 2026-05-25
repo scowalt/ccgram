@@ -332,21 +332,26 @@ class TmuxManager:
         return await self._capture_pane_plain(window_id)
 
     async def capture_pane_scrollback(
-        self, window_id: str, history: int = 200, with_ansi: bool = False
+        self, window_id: str, history: int = 200
     ) -> str | None:
-        """Capture pane text including scrollback history.
+        """Capture pane text including scrollback history (plain text, no ANSI).
 
         Uses ``tmux capture-pane -p -J -S -{history}``. The ``-J`` flag joins
         wrapped lines so prompt markers are never split across lines on narrow
-        terminals. When *with_ansi* is True, adds ``-e`` to include ANSI color
-        escape sequences in the output. Returns stripped text or None on failure.
+        terminals. Returns stripped text or None on failure.
         """
         proc: asyncio.subprocess.Process | None = None
         try:
-            cmd = ["tmux", "capture-pane", "-p", "-J"]
-            if with_ansi:
-                cmd.append("-e")
-            cmd.extend(["-S", f"-{history}", "-t", window_id])
+            cmd = [
+                "tmux",
+                "capture-pane",
+                "-p",
+                "-J",
+                "-S",
+                f"-{history}",
+                "-t",
+                window_id,
+            ]
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
@@ -391,7 +396,10 @@ class TmuxManager:
             async with asyncio.timeout(5.0):
                 stdout, stderr = await proc.communicate()
             if proc.returncode != 0:
-                logger.warning(
+                # Window/pane gone mid-capture — a race in the live-view poll,
+                # not an operator-actionable error. TimeoutError below stays
+                # WARNING (tmux genuinely wedged).
+                logger.debug(
                     "Failed to get pane dimensions %s: %s",
                     window_id,
                     stderr.decode("utf-8", errors="replace"),
@@ -439,7 +447,8 @@ class TmuxManager:
             async with asyncio.timeout(5.0):
                 stdout, stderr = await proc.communicate()
             if proc.returncode != 0:
-                logger.warning(
+                # Window/pane gone mid-capture — live-view race, not actionable.
+                logger.debug(
                     "Failed to capture pane %s: %s",
                     window_id,
                     stderr.decode("utf-8", errors="replace"),
@@ -548,7 +557,9 @@ class TmuxManager:
                     # Window closed mid-capture — race, not an error.
                     logger.debug("Pane capture skipped (window gone): %s", window_id)
                 else:
-                    logger.warning("Failed to capture pane %s: %s", window_id, e)
+                    # Other libtmux errors here are transient races on the
+                    # status-poll path (~1s); server reset below recovers.
+                    logger.debug("Failed to capture pane %s: %s", window_id, e)
                 self._reset_server()
                 return None
 
@@ -567,16 +578,16 @@ class TmuxManager:
             )
         session = self.get_session()
         if not session:
-            logger.warning("No tmux session found")
+            logger.debug("No tmux session found")
             return False
         try:
             window = session.windows.get(window_id=window_id, default=None)
             if not window:
-                logger.warning("Window %s not found", window_id)
+                logger.debug("Window %s not found", window_id)
                 return False
             pane = window.active_pane
             if not pane:
-                logger.warning("No active pane in window %s", window_id)
+                logger.debug("No active pane in window %s", window_id)
                 return False
             pane.send_keys(chars, enter=enter, literal=literal)
             return True
@@ -737,7 +748,7 @@ class TmuxManager:
         Foreign windows (emdash) are never killed — they are owned externally.
         """
         if is_foreign_window(window_id):
-            logger.info("Skipping kill for external window %s", window_id)
+            logger.debug("Skipping kill for external window %s", window_id)
             return False
 
         def _sync_kill() -> bool:
@@ -946,7 +957,9 @@ class TmuxManager:
                     )
                 return result
             except _TmuxError as exc:
-                logger.warning("Failed to list panes for %s: %s", window_id, exc)
+                # Miniapp polls panes at ~0.2s; a gone window races here. Debug,
+                # not warning — server reset below recovers.
+                logger.debug("Failed to list panes for %s: %s", window_id, exc)
                 self._reset_server()
                 return []
 
@@ -972,7 +985,7 @@ class TmuxManager:
                 # Validate pane belongs to the specified window before capture
                 panes = await self.list_panes(window_id)
                 if not any(p.pane_id == pane_id for p in panes):
-                    logger.warning("Pane %s not found in window %s", pane_id, window_id)
+                    logger.debug("Pane %s not found in window %s", pane_id, window_id)
                     return None
             return await self._capture_pane_ansi(pane_id)
 
@@ -989,7 +1002,9 @@ class TmuxManager:
                 text = text.rstrip()
                 return text if text else None
             except _TmuxError as exc:
-                logger.warning("Failed to capture pane %s: %s", pane_id, exc)
+                # Miniapp polls captures at ~0.2s; a gone pane races here. Debug,
+                # not warning — server reset below recovers.
+                logger.debug("Failed to capture pane %s: %s", pane_id, exc)
                 self._reset_server()
                 return None
 
@@ -1020,7 +1035,7 @@ class TmuxManager:
             try:
                 pane = self._find_pane(pane_id, session, window_id=window_id)
                 if not pane:
-                    logger.warning("Pane %s not found", pane_id)
+                    logger.debug("Pane %s not found", pane_id)
                     return False
                 pane.send_keys(text, enter=enter, literal=literal)
                 return True

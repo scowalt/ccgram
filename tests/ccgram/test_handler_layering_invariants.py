@@ -36,12 +36,16 @@ _HANDLERS_ROOT = _REPO_ROOT / "src" / "ccgram" / "handlers"
 # (``do_api_request`` for ``DraftStream``).
 _PTB_BOT_ALLOWLIST = frozenset(
     {
+        # /agent wraps get_bot() in PTBTelegramClient to pass through to
+        # ensure_setup (so the shell-setup offer keyboard can render).
+        "agent_command.py",
         "cleanup.py",
         "command_history.py",
         "commands/__init__.py",
         "commands/forward.py",
         "commands/menu_sync.py",
         "file_handler.py",
+        "last_reply.py",  # wraps get_bot() in PTBTelegramClient for send_last_reply
         "live/pane_callbacks.py",
         "live/screenshot_callbacks.py",
         "messaging/msg_spawn.py",
@@ -65,6 +69,10 @@ _SINGLETON_ATTRS = frozenset(
 )
 _SINGLETON_ALLOWLIST = frozenset(
     {
+        # /agent command resolves window_id via thread_router (same routing
+        # pattern as sync_command/sessions_dashboard) and clears session_map
+        # for hookful provider switches (no equivalent in query layer).
+        "agent_command.py",
         "callback_helpers.py",
         "callback_registry.py",
         "cleanup.py",
@@ -74,6 +82,7 @@ _SINGLETON_ALLOWLIST = frozenset(
         "file_handler.py",
         "hook_events.py",
         "interactive/interactive_ui.py",
+        "last_reply.py",  # reads thread_router for window/chat resolution in last_command
         "live/pane_callbacks.py",
         "live/screenshot_callbacks.py",
         "messaging/msg_telegram.py",

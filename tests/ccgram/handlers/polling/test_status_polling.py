@@ -259,7 +259,6 @@ def _make_ctx(
     startup_time: float | None = None,
     is_dead_window: bool = False,
     supports_hook: bool = True,
-    notification_mode: str = "normal",
 ) -> TickContext:
     return TickContext(
         window_id=window_id,
@@ -270,7 +269,6 @@ def _make_ctx(
         startup_time=startup_time,
         is_dead_window=is_dead_window,
         supports_hook=supports_hook,
-        notification_mode=notification_mode,
     )
 
 
@@ -556,7 +554,6 @@ def _mock_update_status_patches(*, pyte_result, provider):
     mocks["tm"].get_pane_title = AsyncMock(return_value="")
     mocks["tr"].resolve_chat_id.return_value = -100
     mocks["tr"].get_display_name.return_value = "project"
-    mocks["sm"].get_notification_mode.return_value = "normal"
 
     return stack, mocks
 
@@ -649,24 +646,10 @@ class TestTransitionToIdle:
             patch("ccgram.handlers.polling.window_tick.apply.time") as mock_time,
         ):
             mock_time.monotonic.return_value = 100.0
-            await _transition_to_idle(bot, 1, "@0", 42, -100, "project", "normal")
+            await _transition_to_idle(bot, 1, "@0", 42, -100, "project")
         mock_enqueue.assert_called_once()
         assert mock_enqueue.call_args[0][3] == IDLE_STATUS_TEXT
         assert mock_enqueue.call_args[1]["thread_id"] == 42
-
-    @pytest.mark.parametrize("mode", ["muted", "errors_only"])
-    async def test_suppressed_mode_clears_status_no_timer(self, mode: str) -> None:
-        from ccgram.handlers.polling.window_tick import _transition_to_idle
-
-        bot = AsyncMock(spec=Bot)
-        with (
-            patch("ccgram.handlers.polling.window_tick.apply.update_topic_emoji"),
-            patch(
-                "ccgram.handlers.polling.window_tick.apply.enqueue_status_update"
-            ) as mock_enqueue,
-        ):
-            await _transition_to_idle(bot, 1, "@0", 42, -100, "project", mode)
-        mock_enqueue.assert_called_once_with(ANY, 1, "@0", None, thread_id=42)
 
 
 class TestShellPromptClearsStatus:
@@ -801,9 +784,7 @@ class TestProviderSwitchPromptSetup:
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_manager"
             ) as mock_sm,  # noqa: F841
-            patch(
-                "ccgram.handlers.recovery.transcript_discovery.window_store"
-            ) as mock_ws,  # noqa: F841
+            patch("ccgram.window_state_ports.identity_state.window_store") as mock_ws,  # noqa: F841
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.tmux_manager"
             ) as mock_tmux,
@@ -849,9 +830,7 @@ class TestProviderSwitchPromptSetup:
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_manager"
             ) as mock_sm,  # noqa: F841
-            patch(
-                "ccgram.handlers.recovery.transcript_discovery.window_store"
-            ) as mock_ws,  # noqa: F841
+            patch("ccgram.window_state_ports.identity_state.window_store") as mock_ws,  # noqa: F841
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.tmux_manager"
             ) as mock_tmux,
@@ -896,9 +875,7 @@ class TestProviderSwitchPromptSetup:
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_manager"
             ) as mock_sm,  # noqa: F841
-            patch(
-                "ccgram.handlers.recovery.transcript_discovery.window_store"
-            ) as mock_ws,  # noqa: F841
+            patch("ccgram.window_state_ports.identity_state.window_store") as mock_ws,  # noqa: F841
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.tmux_manager"
             ) as mock_tmux,
@@ -945,9 +922,7 @@ class TestProviderSwitchPromptSetup:
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_manager"
             ) as mock_sm,  # noqa: F841
-            patch(
-                "ccgram.handlers.recovery.transcript_discovery.window_store"
-            ) as mock_ws,  # noqa: F841
+            patch("ccgram.window_state_ports.identity_state.window_store") as mock_ws,  # noqa: F841
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.tmux_manager"
             ) as mock_tmux,
@@ -1031,9 +1006,7 @@ class TestProviderSwitchChain:
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_manager"
             ) as mock_sm,  # noqa: F841
-            patch(
-                "ccgram.handlers.recovery.transcript_discovery.window_store"
-            ) as mock_ws,  # noqa: F841
+            patch("ccgram.window_state_ports.identity_state.window_store") as mock_ws,  # noqa: F841
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.tmux_manager"
             ) as mock_tmux,
@@ -1060,6 +1033,13 @@ class TestProviderSwitchChain:
             ) as mock_clear_orch,
         ):
             mock_ws.window_states = {"@7": state}
+
+            def _clear_transcript(window_id: str) -> None:
+                s = mock_ws.window_states.get(window_id)
+                if s is not None:
+                    s.transcript_path = ""
+
+            mock_ws.clear_transcript_path.side_effect = _clear_transcript
             mock_sm.set_window_provider.side_effect = _set_provider
             mock_config.tmux_session_name = "ccgram"
 
@@ -1135,9 +1115,7 @@ class TestMaybeDiscoverTranscript:
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_manager"
             ) as mock_sm,  # noqa: F841
-            patch(
-                "ccgram.handlers.recovery.transcript_discovery.window_store"
-            ) as mock_ws,  # noqa: F841
+            patch("ccgram.window_state_ports.identity_state.window_store") as mock_ws,  # noqa: F841
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.get_provider_for_window",
                 return_value=mock_provider,
@@ -1176,9 +1154,7 @@ class TestMaybeDiscoverTranscript:
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_manager"
             ) as mock_sm,  # noqa: F841
-            patch(
-                "ccgram.handlers.recovery.transcript_discovery.window_store"
-            ) as mock_ws,  # noqa: F841
+            patch("ccgram.window_state_ports.identity_state.window_store") as mock_ws,  # noqa: F841
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.tmux_manager"
             ) as mock_tmux,
@@ -1212,9 +1188,7 @@ class TestMaybeDiscoverTranscript:
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_manager"
             ) as mock_sm,  # noqa: F841
-            patch(
-                "ccgram.handlers.recovery.transcript_discovery.window_store"
-            ) as mock_ws,  # noqa: F841
+            patch("ccgram.window_state_ports.identity_state.window_store") as mock_ws,  # noqa: F841
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_map_sync"
             ) as mock_sms,
@@ -1251,9 +1225,7 @@ class TestMaybeDiscoverTranscript:
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_manager"
             ) as mock_sm,  # noqa: F841
-            patch(
-                "ccgram.handlers.recovery.transcript_discovery.window_store"
-            ) as mock_ws,  # noqa: F841
+            patch("ccgram.window_state_ports.identity_state.window_store") as mock_ws,  # noqa: F841
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.get_provider_for_window",
                 return_value=mock_provider,
@@ -1274,9 +1246,7 @@ class TestMaybeDiscoverTranscript:
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_manager"
             ) as mock_sm,  # noqa: F841
-            patch(
-                "ccgram.handlers.recovery.transcript_discovery.window_store"
-            ) as mock_ws,  # noqa: F841
+            patch("ccgram.window_state_ports.identity_state.window_store") as mock_ws,  # noqa: F841
         ):
             mock_ws.window_states = {}
             await discover_and_register_transcript("@7")
@@ -1303,9 +1273,7 @@ class TestMaybeDiscoverTranscript:
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_manager"
             ) as mock_sm,  # noqa: F841
-            patch(
-                "ccgram.handlers.recovery.transcript_discovery.window_store"
-            ) as mock_ws,  # noqa: F841
+            patch("ccgram.window_state_ports.identity_state.window_store") as mock_ws,  # noqa: F841
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_map_sync"
             ) as mock_sms,
@@ -1368,9 +1336,7 @@ class TestMaybeDiscoverTranscript:
         )
 
         with (
-            patch(
-                "ccgram.handlers.recovery.transcript_discovery.window_store"
-            ) as mock_ws,
+            patch("ccgram.window_state_ports.identity_state.window_store") as mock_ws,
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.get_provider_for_window",
                 return_value=mock_provider,
@@ -1428,9 +1394,7 @@ class TestMaybeDiscoverTranscript:
         )
 
         with (
-            patch(
-                "ccgram.handlers.recovery.transcript_discovery.window_store"
-            ) as mock_ws,
+            patch("ccgram.window_state_ports.identity_state.window_store") as mock_ws,
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.get_provider_for_window",
                 return_value=mock_provider,
@@ -1498,9 +1462,7 @@ class TestMaybeDiscoverTranscript:
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_manager"
             ) as mock_sm,  # noqa: F841
-            patch(
-                "ccgram.handlers.recovery.transcript_discovery.window_store"
-            ) as mock_ws,  # noqa: F841
+            patch("ccgram.window_state_ports.identity_state.window_store") as mock_ws,  # noqa: F841
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_map_sync"
             ) as mock_sms,
@@ -1557,9 +1519,7 @@ class TestMaybeDiscoverTranscript:
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_manager"
             ) as mock_sm,  # noqa: F841
-            patch(
-                "ccgram.handlers.recovery.transcript_discovery.window_store"
-            ) as mock_ws,  # noqa: F841
+            patch("ccgram.window_state_ports.identity_state.window_store") as mock_ws,  # noqa: F841
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_map_sync"
             ) as mock_sms,
@@ -1610,9 +1570,7 @@ class TestMaybeDiscoverTranscript:
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_manager"
             ) as mock_sm,  # noqa: F841
-            patch(
-                "ccgram.handlers.recovery.transcript_discovery.window_store"
-            ) as mock_ws,  # noqa: F841
+            patch("ccgram.window_state_ports.identity_state.window_store") as mock_ws,  # noqa: F841
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.get_provider_for_window",
                 return_value=mock_provider,
@@ -1658,9 +1616,7 @@ class TestMaybeDiscoverTranscript:
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_manager"
             ) as mock_sm,  # noqa: F841
-            patch(
-                "ccgram.handlers.recovery.transcript_discovery.window_store"
-            ) as mock_ws,  # noqa: F841
+            patch("ccgram.window_state_ports.identity_state.window_store") as mock_ws,  # noqa: F841
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_map_sync"
             ) as mock_sms,
@@ -1738,9 +1694,7 @@ class TestMaybeDiscoverTranscript:
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_manager"
             ) as mock_sm,  # noqa: F841
-            patch(
-                "ccgram.handlers.recovery.transcript_discovery.window_store"
-            ) as mock_ws,  # noqa: F841
+            patch("ccgram.window_state_ports.identity_state.window_store") as mock_ws,  # noqa: F841
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_map_sync"
             ) as mock_sms,
@@ -1819,9 +1773,7 @@ class TestMaybeDiscoverTranscript:
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_manager"
             ) as mock_sm,  # noqa: F841
-            patch(
-                "ccgram.handlers.recovery.transcript_discovery.window_store"
-            ) as mock_ws,  # noqa: F841
+            patch("ccgram.window_state_ports.identity_state.window_store") as mock_ws,  # noqa: F841
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_map_sync"
             ) as mock_sms,
@@ -1866,9 +1818,7 @@ class TestMaybeDiscoverTranscript:
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_manager"
             ) as mock_sm,  # noqa: F841
-            patch(
-                "ccgram.handlers.recovery.transcript_discovery.window_store"
-            ) as mock_ws,  # noqa: F841
+            patch("ccgram.window_state_ports.identity_state.window_store") as mock_ws,  # noqa: F841
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.tmux_manager"
             ) as mock_tmux,
@@ -1895,9 +1845,7 @@ class TestMaybeDiscoverTranscript:
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_manager"
             ) as mock_sm,  # noqa: F841
-            patch(
-                "ccgram.handlers.recovery.transcript_discovery.window_store"
-            ) as mock_ws,  # noqa: F841
+            patch("ccgram.window_state_ports.identity_state.window_store") as mock_ws,  # noqa: F841
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.get_provider_for_window",
                 return_value=mock_provider,
@@ -1941,9 +1889,7 @@ class TestMaybeDiscoverTranscript:
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_manager"
             ) as mock_sm,  # noqa: F841
-            patch(
-                "ccgram.handlers.recovery.transcript_discovery.window_store"
-            ) as mock_ws,  # noqa: F841
+            patch("ccgram.window_state_ports.identity_state.window_store") as mock_ws,  # noqa: F841
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.get_provider_for_window",
                 return_value=mock_provider,
@@ -2016,9 +1962,7 @@ class TestMaybeDiscoverTranscript:
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_manager"
             ) as mock_sm,  # noqa: F841
-            patch(
-                "ccgram.handlers.recovery.transcript_discovery.window_store"
-            ) as mock_ws,  # noqa: F841
+            patch("ccgram.window_state_ports.identity_state.window_store") as mock_ws,  # noqa: F841
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_map_sync"
             ) as mock_sms,
@@ -2112,9 +2056,7 @@ class TestMaybeDiscoverTranscript:
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_manager"
             ) as mock_sm,  # noqa: F841
-            patch(
-                "ccgram.handlers.recovery.transcript_discovery.window_store"
-            ) as mock_ws,  # noqa: F841
+            patch("ccgram.window_state_ports.identity_state.window_store") as mock_ws,  # noqa: F841
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.session_map_sync"
             ) as mock_sms,
@@ -2175,15 +2117,19 @@ class TestMaybeWarnExternalGemini:
     ):
         prov = MagicMock()
         prov.capabilities.name = provider
-        store = MagicMock()
-        store.was_gemini_external_warned.return_value = already_warned
         win_view = MagicMock(external=external) if view == "__default__" else view
-        return prov, store, win_view
+        return prov, already_warned, win_view
 
-    async def _run(self, prov, store, win_view):
+    async def _run(self, prov, already_warned, win_view):
         bot = AsyncMock(spec=Bot)
         with (
-            patch("ccgram.handlers.polling.window_tick.apply.window_store", store),
+            patch(
+                "ccgram.handlers.polling.window_tick.apply.was_gemini_external_warned",
+                return_value=already_warned,
+            ) as mock_was,
+            patch(
+                "ccgram.handlers.polling.window_tick.apply.mark_gemini_external_warned"
+            ) as mock_mark,
             patch("ccgram.handlers.polling.window_tick.apply.window_query") as mock_wq,
             patch("ccgram.handlers.polling.window_tick.apply.thread_router") as mock_tr,
             patch(
@@ -2198,44 +2144,44 @@ class TestMaybeWarnExternalGemini:
             mock_wq.view_window.return_value = win_view
             mock_tr.resolve_chat_id.return_value = -100
             await _maybe_warn_external_gemini(bot, 1, "@9", 42)
-        return mock_send
+        return mock_send, mock_was, mock_mark
 
     async def test_warns_once_for_external_gemini(self) -> None:
-        prov, store, view = self._patches(
+        prov, warned, view = self._patches(
             provider="gemini", external=True, already_warned=False
         )
-        mock_send = await self._run(prov, store, view)
+        mock_send, _, mock_mark = await self._run(prov, warned, view)
         mock_send.assert_called_once()
-        store.mark_gemini_external_warned.assert_called_once_with("@9")
+        mock_mark.assert_called_once_with("@9")
 
     async def test_silent_when_already_warned(self) -> None:
-        prov, store, view = self._patches(
+        prov, warned, view = self._patches(
             provider="gemini", external=True, already_warned=True
         )
-        mock_send = await self._run(prov, store, view)
+        mock_send, _, mock_mark = await self._run(prov, warned, view)
         mock_send.assert_not_called()
-        store.mark_gemini_external_warned.assert_not_called()
+        mock_mark.assert_not_called()
 
     async def test_silent_for_managed_gemini(self) -> None:
-        prov, store, view = self._patches(
+        prov, warned, view = self._patches(
             provider="gemini", external=False, already_warned=False
         )
-        mock_send = await self._run(prov, store, view)
+        mock_send, _, _ = await self._run(prov, warned, view)
         mock_send.assert_not_called()
 
     async def test_silent_for_external_non_gemini(self) -> None:
-        prov, store, view = self._patches(
+        prov, warned, view = self._patches(
             provider="claude", external=True, already_warned=False
         )
-        mock_send = await self._run(prov, store, view)
+        mock_send, _, mock_mark = await self._run(prov, warned, view)
         mock_send.assert_not_called()
-        store.mark_gemini_external_warned.assert_not_called()
+        mock_mark.assert_not_called()
 
     async def test_silent_when_no_window_view(self) -> None:
-        prov, store, _ = self._patches(
+        prov, warned, _ = self._patches(
             provider="gemini", external=True, already_warned=False, view=None
         )
-        mock_send = await self._run(prov, store, None)
+        mock_send, _, _ = await self._run(prov, warned, None)
         mock_send.assert_not_called()
 
 
@@ -2565,7 +2511,7 @@ class TestUpdateStatusMessageEdgeCases:
         bot = AsyncMock(spec=Bot)
         with (
             patch("ccgram.handlers.polling.window_tick.apply.tmux_manager") as mock_tm,
-            patch("ccgram.handlers.polling.window_tick.apply.window_query") as mock_sm,
+            patch("ccgram.handlers.polling.window_tick.apply.window_query"),
             patch("ccgram.handlers.polling.window_tick.apply.thread_router") as mock_tr,
             patch("ccgram.handlers.polling.window_tick.apply.update_topic_emoji"),
             patch("ccgram.handlers.polling.window_tick.apply.enqueue_status_update"),
@@ -2594,7 +2540,6 @@ class TestUpdateStatusMessageEdgeCases:
             mock_tm.capture_pane = AsyncMock(return_value="\x1b[1mansi\x1b[0m")
             mock_tr.resolve_chat_id.return_value = -100
             mock_tr.get_display_name.return_value = "project"
-            mock_sm.get_notification_mode.return_value = "normal"
             await update_status_message(bot, 1, "@0", thread_id=42)
         mock_vim.assert_called_once_with("@0")
 
@@ -2615,7 +2560,7 @@ class TestUpdateStatusMessageEdgeCases:
         bot = AsyncMock(spec=Bot)
         with (
             patch("ccgram.handlers.polling.window_tick.apply.tmux_manager") as mock_tm,
-            patch("ccgram.handlers.polling.window_tick.apply.window_query") as mock_sm,
+            patch("ccgram.handlers.polling.window_tick.apply.window_query"),
             patch("ccgram.handlers.polling.window_tick.apply.thread_router") as mock_tr,
             patch("ccgram.handlers.polling.window_tick.apply.update_topic_emoji"),
             patch(
@@ -2642,7 +2587,7 @@ class TestUpdateStatusMessageEdgeCases:
             mock_tm.capture_pane = AsyncMock(return_value="some output")
             mock_tr.resolve_chat_id.return_value = -100
             mock_tr.get_display_name.return_value = "project"
-            mock_sm.get_notification_mode.return_value = "normal"
+
             await update_status_message(bot, 1, "@0", thread_id=42)
         status_text = mock_enqueue.call_args[0][3]
         assert "write-tests" in status_text
@@ -2671,7 +2616,7 @@ class TestUpdateStatusMessageEdgeCases:
         bot = AsyncMock(spec=Bot)
         with (
             patch("ccgram.handlers.polling.window_tick.apply.tmux_manager") as mock_tm,
-            patch("ccgram.handlers.polling.window_tick.apply.window_query") as mock_sm,
+            patch("ccgram.handlers.polling.window_tick.apply.window_query"),
             patch("ccgram.handlers.polling.window_tick.apply.thread_router") as mock_tr,
             patch("ccgram.handlers.polling.window_tick.apply.update_topic_emoji"),
             patch(
@@ -2698,7 +2643,7 @@ class TestUpdateStatusMessageEdgeCases:
             mock_tm.capture_pane = AsyncMock(return_value="some output")
             mock_tr.resolve_chat_id.return_value = -100
             mock_tr.get_display_name.return_value = "project"
-            mock_sm.get_notification_mode.return_value = "normal"
+
             await update_status_message(bot, 1, "@0", thread_id=42)
         status_text = mock_enqueue.call_args[0][3]
         assert status_text.startswith("Running py-idioms review…")
@@ -2720,7 +2665,7 @@ class TestUpdateStatusMessageEdgeCases:
         bot = AsyncMock(spec=Bot)
         with (
             patch("ccgram.handlers.polling.window_tick.apply.tmux_manager") as mock_tm,
-            patch("ccgram.handlers.polling.window_tick.apply.window_query") as mock_sm,
+            patch("ccgram.handlers.polling.window_tick.apply.window_query"),
             patch("ccgram.handlers.polling.window_tick.apply.thread_router") as mock_tr,
             patch("ccgram.handlers.polling.window_tick.apply.update_topic_emoji"),
             patch("ccgram.handlers.polling.window_tick.apply.enqueue_status_update"),
@@ -2748,7 +2693,7 @@ class TestUpdateStatusMessageEdgeCases:
             mock_tm.capture_pane = AsyncMock(return_value="some output")
             mock_tr.resolve_chat_id.return_value = -100
             mock_tr.get_display_name.return_value = "project"
-            mock_sm.get_notification_mode.return_value = "normal"
+
             await update_status_message(bot, 1, "@0", thread_id=42)
         _assert_clear_called_once_with_client(mock_clear, 1, bot, 42)
 

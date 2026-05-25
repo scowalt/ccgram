@@ -77,11 +77,83 @@ def _reraise_shutdown_signal() -> None:
         os.kill(os.getpid(), _shutdown_signal)
 
 
+_GRAY_ON = "\x1b[90m"
+_GRAY_OFF = "\x1b[39m"
+_DEBUG_RESERVED_KEYS = frozenset(
+    {"event", "level", "timestamp", "logger", "logger_name"}
+)
+
+
+def _dim_debug_event(
+    _logger: object, _method: str, event_dict: structlog.typing.EventDict
+) -> structlog.typing.EventDict:
+    """Fold a debug line's event + kv pairs into one gray-ANSI run.
+
+    ConsoleRenderer colors kv keys/values via its column styles (cyan/magenta),
+    which it applies globally — there's no per-level kv coloring API. To make
+    *the whole* debug line recede uniformly, we pre-render the kv pairs into
+    the event string and drop them from the dict so ConsoleRenderer renders
+    only the level chip + our pre-styled event.
+    """
+    if event_dict.get("level") != "debug":
+        return event_dict
+    event = event_dict.pop("event", "")
+    parts = [str(event)] if event else []
+    for key in list(event_dict):
+        if key in _DEBUG_RESERVED_KEYS:
+            continue
+        parts.append(f"{key}={event_dict.pop(key)}")
+    event_dict["event"] = f"{_GRAY_ON}{' '.join(parts)}{_GRAY_OFF}"
+    return event_dict
+
+
+def _use_colors(stream: object) -> bool:
+    """Colorize only on a TTY, honoring the NO_COLOR / FORCE_COLOR conventions.
+
+    Keeps raw ANSI escapes out of redirected/piped log files while still
+    coloring the interactive tmux pane the daemon runs in.
+    """
+    # Presence-based, per the NO_COLOR / FORCE_COLOR conventions: set with any
+    # value (including empty) counts. NO_COLOR wins over FORCE_COLOR.
+    if "NO_COLOR" in os.environ:
+        return False
+    if "FORCE_COLOR" in os.environ:
+        return True
+    isatty = getattr(stream, "isatty", None)
+    return bool(isatty and isatty())
+
+
+def _log_level_styles() -> dict[str, str]:
+    """Per-level colors so anomalies stand out and routine debug recedes.
+
+    Values are raw ANSI escapes, matching structlog's own defaults. The key
+    change from the defaults: debug is grey (was green, indistinct from info),
+    and warning/error/critical are bold so they punctuate the stream.
+    """
+    styles = structlog.dev.ConsoleRenderer.get_default_level_styles().copy()
+    styles.update(
+        {
+            "debug": _GRAY_ON,  # grey — recedes on a dark terminal
+            "info": "\x1b[32m",  # green — normal flow (structlog default)
+            "warning": "\x1b[1;33m",  # bold yellow
+            "warn": "\x1b[1;33m",
+            "error": "\x1b[1;31m",  # bold red
+            "exception": "\x1b[1;31m",  # bold red
+            "critical": "\x1b[1;91m",  # bold bright red
+        }
+    )
+    return styles
+
+
 def setup_logging(log_level: str) -> None:
     """Configure structured, colored logging for interactive CLI use."""
     numeric_level = getattr(logging, log_level, None)
     if not isinstance(numeric_level, int):
         numeric_level = logging.INFO
+
+    level_styles = _log_level_styles()
+    stdout_colors = _use_colors(sys.stdout)
+    stderr_colors = _use_colors(sys.stderr)
 
     structlog.configure(
         processors=[
@@ -91,9 +163,13 @@ def setup_logging(log_level: str) -> None:
             structlog.processors.TimeStamper(fmt="%H:%M:%S"),
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
+            _dim_debug_event,
             structlog.dev.ConsoleRenderer(
-                colors=True,
+                colors=stdout_colors,
                 pad_event=40,
+                # level_styles colors the level even when colors=False, so gate
+                # it on the same flag to keep ANSI out of redirected output.
+                level_styles=level_styles if stdout_colors else None,
             ),
         ],
         wrapper_class=structlog.stdlib.BoundLogger,
@@ -108,7 +184,10 @@ def setup_logging(log_level: str) -> None:
     handler = logging.StreamHandler()
     handler.setFormatter(
         structlog.stdlib.ProcessorFormatter(
-            processor=structlog.dev.ConsoleRenderer(colors=True),
+            processor=structlog.dev.ConsoleRenderer(
+                colors=stderr_colors,
+                level_styles=level_styles if stderr_colors else None,
+            ),
             foreign_pre_chain=[
                 structlog.stdlib.add_log_level,
                 structlog.stdlib.add_logger_name,
@@ -182,7 +261,7 @@ def run_bot() -> None:
     # Lazy: main runs `ccgram` startup; defer imports until the relevant subcommand executes
     from .tmux_manager import tmux_manager
 
-    logger.info("Allowed users: %s", config.allowed_users)
+    logger.info("Allowed users: %d configured", len(config.allowed_users))
     logger.info("Claude projects path: %s", config.claude_projects_path)
 
     # In auto-detect mode, session must already exist
@@ -191,11 +270,10 @@ def run_bot() -> None:
         if not session:
             logger.error("Tmux session '%s' not found", config.tmux_session_name)
             sys.exit(1)
-        logger.info("Auto-detected tmux session '%s'", session.session_name)
+        logger.info("Using auto-detected tmux session '%s'", session.session_name)
     else:
         session = tmux_manager.get_or_create_session()
-
-    logger.info("Tmux session '%s' ready", session.session_name)
+        logger.info("Tmux session '%s' ready", session.session_name)
 
     # Lazy: main runs `ccgram` startup; defer imports until the relevant subcommand executes
     from . import __version__

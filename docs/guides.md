@@ -106,53 +106,52 @@ The tests create an isolated `ccgram-e2e` tmux session that does not interfere w
 
 All settings accept both CLI flags and environment variables. CLI flags take precedence. `TELEGRAM_BOT_TOKEN` is env-only for security (flags are visible in `ps`).
 
-| Variable / Flag                                      | Default                        | Description                                                                            |
-| ---------------------------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------- |
-| `TELEGRAM_BOT_TOKEN`                                 | _(required)_                   | Bot token from @BotFather (env only)                                                   |
-| `ALLOWED_USERS` / `--allowed-users`                  | _(required)_                   | Comma-separated Telegram user IDs                                                      |
-| `CCGRAM_DIR` / `--config-dir`                        | `~/.ccgram`                    | Config and state directory                                                             |
-| `CLAUDE_CONFIG_DIR` / `--claude-config-dir`          | `~/.claude`                    | Override Claude config directory (for wrappers like ce, cc-mirror)                     |
-| `TMUX_SESSION_NAME` / `--tmux-session`               | `ccgram`                       | tmux session name                                                                      |
-| `CCGRAM_PROVIDER` / `--provider`                     | `claude`                       | Default agent provider (`claude`, `codex`, `gemini`, `pi`, `shell`)                    |
-| `CCGRAM_<NAME>_COMMAND`                              | _(from provider)_              | Per-provider launch command (env only, see below)                                      |
-| `CCGRAM_PROMPT_MODE` / `--prompt-mode`               | `wrap`                         | Shell prompt marker mode (`wrap` or `replace`)                                         |
-| `CCGRAM_SHOW_HIDDEN_DIRS` / `--show-hidden-dirs`     | `false`                        | Show dot-directories in directory browser                                              |
-| `CCGRAM_GROUP_ID` / `--group-id`                     | _(all groups)_                 | Restrict to one Telegram group                                                         |
-| `CCGRAM_INSTANCE_NAME` / `--instance-name`           | hostname                       | Display label for this instance                                                        |
-| `CCGRAM_LOG_LEVEL` / `--log-level`                   | `INFO`                         | Logging level (DEBUG, INFO, WARNING, ERROR)                                            |
-| `MONITOR_POLL_INTERVAL` / `--monitor-interval`       | `2.0`                          | Seconds between transcript polls                                                       |
-| `AUTOCLOSE_DONE_MINUTES` / `--autoclose-done`        | `30`                           | Auto-close done topics after N minutes (0=off)                                         |
-| `AUTOCLOSE_DEAD_MINUTES` / `--autoclose-dead`        | `10`                           | Auto-close dead sessions after N minutes (0=off)                                       |
-| `CCGRAM_WHISPER_PROVIDER` / `--whisper-provider`     | _(empty)_                      | Whisper provider: `openai`, `groq`, or empty to disable                                |
-| `CCGRAM_WHISPER_API_KEY`                             | _(empty)_                      | API key (env only); falls back to OPENAI_API_KEY/GROQ_API_KEY                          |
-| `CCGRAM_WHISPER_BASE_URL` / `--whisper-base-url`     | _(provider default)_           | Custom OpenAI-compatible endpoint URL                                                  |
-| `CCGRAM_WHISPER_MODEL` / `--whisper-model`           | _(provider default)_           | Model override (e.g., `whisper-large-v3-turbo`)                                        |
-| `CCGRAM_WHISPER_LANGUAGE` / `--whisper-language`     | _(auto-detect)_                | Force language code (e.g., `en`, `zh`)                                                 |
-| `CCGRAM_LLM_PROVIDER`                                | _(empty = disabled)_           | LLM provider for shell command generation                                              |
-| `CCGRAM_LLM_API_KEY`                                 | _(empty)_                      | API key for LLM provider (env only)                                                    |
-| `CCGRAM_LLM_BASE_URL`                                | _(from provider)_              | Custom LLM API endpoint                                                                |
-| `CCGRAM_LLM_MODEL`                                   | _(from provider)_              | LLM model override                                                                     |
-| `CCGRAM_LLM_TEMPERATURE`                             | `0.1`                          | LLM sampling temperature (0 = deterministic)                                           |
-| `CCGRAM_LIVE_VIEW_INTERVAL` / `--live-view-interval` | `5`                            | Live view refresh interval in seconds (min 1)                                          |
-| `CCGRAM_LIVE_VIEW_TIMEOUT` / `--live-view-timeout`   | `300`                          | Live view auto-stop timeout in seconds (min 1)                                         |
-| `CCGRAM_STATUS_MODE` / `--status-mode`               | `system`                       | Topic emoji color scheme: `system` (green=working) or `user` (green=ready)             |
-| `CCGRAM_HIDE_TOOL_CALLS` / `--hide-tool-calls`       | `true`                         | Globally hide `tool_use`/`tool_result` messages (per-window override via `/toolcalls`) |
-| `CCGRAM_SCREENSHOT_HISTORY`                          | `500`                          | Scrollback lines captured by `/screenshot` and the 📷 button (min 50)                  |
-| `CCGRAM_PROMPT_MODE` / `--prompt-mode`               | `wrap`                         | Shell prompt marker: `wrap` (append `⌘N⌘`) or `replace` (legacy `{prefix}:N❯`)         |
-| `CCGRAM_PROMPT_MARKER`                               | `ccgram`                       | Marker prefix used only by `replace` mode                                              |
-| `CCGRAM_PANE_LIFECYCLE_NOTIFY`                       | `false`                        | Default for per-window pane create/close notifications (toggle via `/panes`)           |
-| `CCGRAM_SHOW_HIDDEN_DIRS` / `--show-hidden-dirs`     | `false`                        | Show dot-directories in the directory browser                                          |
-| `CCGRAM_SEND_SEARCH_DEPTH`                           | `5`                            | Max directory depth for `/send` file search                                            |
-| `CCGRAM_SEND_MAX_RESULTS`                            | `50`                           | Max file results returned by `/send` search                                            |
-| `CCGRAM_TOOLBAR_CONFIG`                              | `~/.ccgram/toolbar.toml`       | Path to custom toolbar TOML; falls back to built-in defaults if missing                |
-| `CCGRAM_STATUS_POLL_INTERVAL`                        | `1.0`                          | Status polling interval in seconds (min 0.5)                                           |
-| `CCGRAM_MINIAPP_BASE_URL`                            | _(disabled)_                   | Externally reachable HTTPS URL for the Mini App dashboard                              |
-| `CCGRAM_MINIAPP_HOST`                                | `127.0.0.1`                    | Local bind host for the Mini App aiohttp server                                        |
-| `CCGRAM_MINIAPP_PORT`                                | `8765`                         | Local bind port for the Mini App aiohttp server                                        |
-| `CCGRAM_TTS_PROVIDER`                                | _(disabled)_                   | TTS backend for voice replies: `edge` (free) or `openai`                               |
-| `CCGRAM_TTS_VOICE`                                   | `en-US-EmmaMultilingualNeural` | Voice name                                                                             |
-| `CCGRAM_TTS_MODEL`                                   | `gpt-4o-mini-tts`              | OpenAI TTS model (only used when `CCGRAM_TTS_PROVIDER=openai`)                         |
-| `CCGRAM_TTS_API_KEY`                                 | _(empty)_                      | API key for OpenAI TTS; falls back to `OPENAI_API_KEY`                                 |
+| Variable / Flag                                      | Default                        | Description                                                                                          |
+| ---------------------------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `TELEGRAM_BOT_TOKEN`                                 | _(required)_                   | Bot token from @BotFather (env only)                                                                 |
+| `ALLOWED_USERS` / `--allowed-users`                  | _(required)_                   | Comma-separated Telegram user IDs                                                                    |
+| `CCGRAM_DIR` / `--config-dir`                        | `~/.ccgram`                    | Config and state directory                                                                           |
+| `CLAUDE_CONFIG_DIR` / `--claude-config-dir`          | `~/.claude`                    | Override Claude config directory (for wrappers like ce, cc-mirror)                                   |
+| `TMUX_SESSION_NAME` / `--tmux-session`               | `ccgram`                       | tmux session name                                                                                    |
+| `CCGRAM_PROVIDER` / `--provider`                     | `claude`                       | Default agent provider (`claude`, `codex`, `gemini`, `pi`, `shell`)                                  |
+| `CCGRAM_<NAME>_COMMAND`                              | _(from provider)_              | Per-provider launch command (env only, see below)                                                    |
+| `CCGRAM_PROMPT_MODE` / `--prompt-mode`               | `wrap`                         | Shell prompt marker mode (`wrap` or `replace`)                                                       |
+| `CCGRAM_SHOW_HIDDEN_DIRS` / `--show-hidden-dirs`     | `false`                        | Show dot-directories in directory browser                                                            |
+| `CCGRAM_GROUP_ID` / `--group-id`                     | _(all groups)_                 | Restrict to one Telegram group                                                                       |
+| `CCGRAM_INSTANCE_NAME` / `--instance-name`           | hostname                       | Display label for this instance                                                                      |
+| `CCGRAM_LOG_LEVEL` / `--log-level`                   | `INFO`                         | Logging level (DEBUG, INFO, WARNING, ERROR)                                                          |
+| `MONITOR_POLL_INTERVAL` / `--monitor-interval`       | `2.0`                          | Seconds between transcript polls                                                                     |
+| `AUTOCLOSE_DONE_MINUTES` / `--autoclose-done`        | `30`                           | Auto-close done topics after N minutes (0=off)                                                       |
+| `AUTOCLOSE_DEAD_MINUTES` / `--autoclose-dead`        | `10`                           | Auto-close dead sessions after N minutes (0=off)                                                     |
+| `CCGRAM_WHISPER_PROVIDER` / `--whisper-provider`     | _(empty)_                      | Whisper provider: `openai`, `groq`, or empty to disable                                              |
+| `CCGRAM_WHISPER_API_KEY`                             | _(empty)_                      | API key (env only); falls back to OPENAI_API_KEY/GROQ_API_KEY                                        |
+| `CCGRAM_WHISPER_BASE_URL` / `--whisper-base-url`     | _(provider default)_           | Custom OpenAI-compatible endpoint URL                                                                |
+| `CCGRAM_WHISPER_MODEL` / `--whisper-model`           | _(provider default)_           | Model override (e.g., `whisper-large-v3-turbo`)                                                      |
+| `CCGRAM_WHISPER_LANGUAGE` / `--whisper-language`     | _(auto-detect)_                | Force language code (e.g., `en`, `zh`)                                                               |
+| `CCGRAM_LLM_PROVIDER`                                | _(empty = disabled)_           | LLM provider for shell command generation                                                            |
+| `CCGRAM_LLM_API_KEY`                                 | _(empty)_                      | API key for LLM provider (env only)                                                                  |
+| `CCGRAM_LLM_BASE_URL`                                | _(from provider)_              | Custom LLM API endpoint                                                                              |
+| `CCGRAM_LLM_MODEL`                                   | _(from provider)_              | LLM model override                                                                                   |
+| `CCGRAM_LLM_TEMPERATURE`                             | `0.1`                          | LLM sampling temperature (0 = deterministic)                                                         |
+| `CCGRAM_LIVE_VIEW_INTERVAL` / `--live-view-interval` | `5`                            | Live view refresh interval in seconds (min 1)                                                        |
+| `CCGRAM_LIVE_VIEW_TIMEOUT` / `--live-view-timeout`   | `300`                          | Live view auto-stop timeout in seconds (min 1)                                                       |
+| `CCGRAM_STATUS_MODE` / `--status-mode`               | `system`                       | Topic emoji color scheme: `system` (green=working) or `user` (green=ready)                           |
+| `CCGRAM_HIDE_TOOL_CALLS` / `--hide-tool-calls`       | `false`                        | Set `true` to globally hide `tool_use`/`tool_result` messages (per-window override via `/toolcalls`) |
+| `CCGRAM_PROMPT_MODE` / `--prompt-mode`               | `wrap`                         | Shell prompt marker: `wrap` (append `⌘N⌘`) or `replace` (legacy `{prefix}:N❯`)                       |
+| `CCGRAM_PROMPT_MARKER`                               | `ccgram`                       | Marker prefix used only by `replace` mode                                                            |
+| `CCGRAM_PANE_LIFECYCLE_NOTIFY`                       | `false`                        | Default for per-window pane create/close notifications (toggle via `/panes`)                         |
+| `CCGRAM_SHOW_HIDDEN_DIRS` / `--show-hidden-dirs`     | `false`                        | Show dot-directories in the directory browser                                                        |
+| `CCGRAM_SEND_SEARCH_DEPTH`                           | `5`                            | Max directory depth for `/send` file search                                                          |
+| `CCGRAM_SEND_MAX_RESULTS`                            | `50`                           | Max file results returned by `/send` search                                                          |
+| `CCGRAM_TOOLBAR_CONFIG`                              | `~/.ccgram/toolbar.toml`       | Path to custom toolbar TOML; falls back to built-in defaults if missing                              |
+| `CCGRAM_STATUS_POLL_INTERVAL`                        | `1.0`                          | Status polling interval in seconds (min 0.5)                                                         |
+| `CCGRAM_MINIAPP_BASE_URL`                            | _(disabled)_                   | Externally reachable HTTPS URL for the Mini App dashboard                                            |
+| `CCGRAM_MINIAPP_HOST`                                | `127.0.0.1`                    | Local bind host for the Mini App aiohttp server                                                      |
+| `CCGRAM_MINIAPP_PORT`                                | `8765`                         | Local bind port for the Mini App aiohttp server                                                      |
+| `CCGRAM_TTS_PROVIDER`                                | _(disabled)_                   | TTS backend for voice replies: `edge` (free) or `openai`                                             |
+| `CCGRAM_TTS_VOICE`                                   | `en-US-EmmaMultilingualNeural` | Voice name                                                                                           |
+| `CCGRAM_TTS_MODEL`                                   | `gpt-4o-mini-tts`              | OpenAI TTS model (only used when `CCGRAM_TTS_PROVIDER=openai`)                                       |
+| `CCGRAM_TTS_API_KEY`                                 | _(empty)_                      | API key for OpenAI TTS; falls back to `OPENAI_API_KEY`                                               |
 
 ## Topic Emoji Color Scheme
 
@@ -319,6 +318,23 @@ When an agent session exits or crashes, the bot detects the dead window and offe
 
 The buttons shown adapt to each provider's capabilities. Claude, Codex, Gemini, and Pi support Fresh, Continue, and Resume. Shell supports Fresh only (shell sessions are ephemeral).
 
+## Manual Provider Override (`/agent`)
+
+`/agent` (alias `/provider`) fixes a mis-tagged window. Auto-detection (`detect_provider_from_command` + JS-runtime `ps -t` fallback) returns empty for custom wrappers like `ralphex`, so the window can keep its prior provider tag — SessionMonitor then polls a stale transcript, `/last` returns old text, and tool calls/replies stop showing up.
+
+Forms:
+
+```
+/agent              # show picker (current marked ✓, with (manual override) badge if set)
+/agent shell        # switch to shell
+/agent claude       # switch to Claude (also: codex, gemini, pi)
+/agent auto         # clear manual override and re-run auto-detection
+```
+
+On switch, the bot clears `WindowState.transcript_path`, drops the previous `session_map.json` entry (so SessionMonitor stops reading the wrong transcript), and for shell triggers prompt-marker setup via `shell_prompt_orchestrator.ensure_setup`. The next `SessionStart` hook from the new provider repopulates `session_map`.
+
+Manual overrides set `WindowState.provider_manual_override=True`. The periodic auto-detection in `_detect_and_apply_provider` skips overridden windows until `/agent auto` clears the flag.
+
 ## Live View
 
 Monitor agent terminal output in real-time via auto-refreshing screenshots in Telegram.
@@ -342,11 +358,18 @@ Both values are clamped to a minimum of 1 second.
 
 ## Screenshots
 
-`/screenshot` (or the 📷 status-bar button) captures the bound tmux pane as a PNG. By default it captures **scrollback**, not just the visible viewport — set `CCGRAM_SCREENSHOT_HISTORY` to tune line count (default 500, min 50). ANSI color is preserved.
+`/screenshot` (or the 📷 status-bar button) captures the current viewport of the bound tmux pane as a readable PNG with ANSI color.
 
-For shell topics, the last command and its output are sliced from between prompt markers when available, so you see exactly one command's output. Other providers get full scrollback.
+Live view (auto-refreshing) uses the same viewport capture at a smaller font size for lower file sizes.
 
-Live view (auto-refreshing) keeps the original viewport-only capture for low-latency refresh.
+## Last Reply (`/last`)
+
+`/last` (or the 📄 **Last** toolbar button) resends the most recent assistant reply to the current topic:
+
+- **AI providers** (Claude, Codex, Gemini, Pi) — extracts contiguous assistant text blocks after the last user message from the session transcript. Falls back to the most recent assistant text if no turn boundary is found.
+- **Shell** — captures scrollback and extracts the last command+output block between prompt markers.
+
+Responses longer than 4096 characters are sent as a `.txt` document attachment instead of a text message.
 
 ## File Delivery (`/send`)
 
@@ -373,7 +396,7 @@ Tunables: `CCGRAM_SEND_SEARCH_DEPTH` (default 5), `CCGRAM_SEND_MAX_RESULTS` (def
 
 ## Action Toolbar (`/toolbar`)
 
-`/toolbar` opens an inline keyboard of provider-specific tmux key actions. Default layout is a 3×3 grid (Pi adds a 5-cell nav row). The universal first row is `[📷 Screen, ⏹ Ctrl-C, 📺 Live]`.
+`/toolbar` opens an inline keyboard of provider-specific tmux key actions. Row 1 is universal: `[📷 Screen, ⏹ Ctrl-C, 📺 Live]`. Row 2 varies per provider: Claude (Mode, Think, Esc), Codex (Esc, Tab, Mode), Gemini (Mode, YOLO, Esc), Pi (Esc, Tab, π Model), Shell (Enter, EOF, Suspend). Claude/Codex/Gemini/Pi add a navigation row (Up, Enter, Down). The final row is `[📄 Last, Get File, Close]`; Shell folds Esc in: `[📄 Last, Get File, Esc, Close]`.
 
 Toggle actions (Mode = Shift+Tab, Think = Tab, YOLO = Ctrl+Y) capture the pane ~250 ms after the key press and report the resulting mode-line in the toast (e.g., `auto-accept edits on`).
 
@@ -401,7 +424,7 @@ Action types:
 
 - `key` — send a tmux key sequence (`"Tab"`, `"C-c"`, `'\x1b[Z'`). Set `literal=true` for raw byte sequences (TOML literal strings — single-quoted).
 - `text` — send literal text + Enter (e.g. `"/clear"`, prompt templates).
-- `builtin` — reserved (`screen`, `ctrlc`, `live`, `send`, `close`). Users cannot define new ones.
+- `builtin` — reserved (`screen`, `ctrlc`, `live`, `getfile`, `last`, `close`). Users cannot define new ones.
 
 Action names must be ≤24 chars (callback_data budget). Providers absent from the TOML keep their built-in defaults. Malformed entries are logged and skipped — the loader never raises.
 

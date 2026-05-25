@@ -34,7 +34,7 @@ from typing import Any, cast
 import aiofiles
 
 from .config import config
-from .utils import atomic_write_json
+from .utils import atomic_write_json, log_throttle_reset, log_throttled
 from .window_resolver import EMDASH_SESSION_PREFIX, is_foreign_window, is_window_id
 
 logger = structlog.get_logger()
@@ -56,6 +56,24 @@ def _primary_session_grace_sec() -> float:
             _DEFAULT_PRIMARY_SESSION_GRACE_SEC,
         )
         return _DEFAULT_PRIMARY_SESSION_GRACE_SEC
+
+
+async def read_session_map_raw() -> dict[str, Any] | None:
+    """Read and parse session_map.json once.
+
+    Returns the parsed dict, ``{}`` if the file does not exist, or ``None``
+    if read/parse failed.  Caller passes the result to both
+    ``SessionMapSync.load_session_map`` and ``parse_session_map`` to avoid
+    re-reading the file twice per poll cycle.
+    """
+    if not config.session_map_file.exists():
+        return {}
+    try:
+        async with aiofiles.open(config.session_map_file, "r") as f:
+            content = await f.read()
+        return cast(dict[str, Any], json.loads(content))
+    except json.JSONDecodeError, OSError:
+        return None
 
 
 def _transcript_mtime(transcript_path: str) -> float | None:
@@ -105,7 +123,9 @@ def _prefer_existing_primary(
     if not existing_is_fresh and not existing_is_newer:
         return None
 
-    logger.debug(
+    log_throttled(
+        logger,
+        f"preserve-primary:{window_id}",
         "Preserving primary session for window_id %s: existing %s, incoming %s treated as nested",
         window_id,
         state.session_id,
@@ -195,7 +215,7 @@ class SessionMapSync:
     # Public: async read/sync methods
     # ------------------------------------------------------------------
 
-    async def load_session_map(self) -> None:
+    async def load_session_map(self, raw: dict[str, Any] | None = None) -> None:
         """Read session_map.json and update window_states with new session associations.
 
         Keys in session_map are formatted as "tmux_session:window_id" (e.g. "ccgram:@12").
@@ -203,15 +223,15 @@ class SessionMapSync:
         with "emdash-") are both processed. Emdash windows are marked as external.
         Also cleans up window_states entries not in current session_map.
         Updates window_display_names from the "window_name" field in values.
+
+        If ``raw`` is provided (e.g., by ``read_session_map_raw``), use it
+        directly to avoid a redundant file read.  Otherwise read the file.
         """
-        if not config.session_map_file.exists():
+        if raw is None:
+            raw = await read_session_map_raw()
+        if not raw:
             return
-        try:
-            async with aiofiles.open(config.session_map_file, "r") as f:
-                content = await f.read()
-            session_map = json.loads(content)
-        except (json.JSONDecodeError, OSError):  # fmt: skip
-            return
+        session_map = raw
 
         prefix = f"{config.tmux_session_name}:"
         valid_wids, old_format_sids, old_format_keys, changed = (
@@ -403,6 +423,7 @@ class SessionMapSync:
                 "Pruning dead session_map entry: %s (window %s)", key, window_id
             )
             del raw[key]
+            log_throttle_reset(f"preserve-primary:{window_id}")
             if window_store.has_window(window_id):
                 window_store.remove_window(window_id)
                 changed_state = True
@@ -550,8 +571,11 @@ class SessionMapSync:
                     return
                 finally:
                     fcntl.flock(lock_f, fcntl.LOCK_UN)
-        except OSError:
-            logger.debug("Failed to lock session_map for clearing %s", window_id)
+        except OSError as exc:
+            # Lock failure means the entry clear was lost — surface it.
+            logger.warning(
+                "Failed to lock session_map for clearing %s: %s", window_id, exc
+            )
 
     # ------------------------------------------------------------------
     # Internal helpers

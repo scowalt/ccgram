@@ -24,7 +24,7 @@ ccgram --tmux-session <name>
 ccgram --autoclose-{done,dead} 0
 ```
 
-Bot commands in topics: `/send`, `/toolbar`, `/history`, `/sessions`, `/restore`, `/resume`, `/panes`, `/live`, `/sync`, `/upgrade`.
+Bot commands in topics: `/send`, `/toolbar`, `/history`, `/sessions`, `/restore`, `/resume`, `/panes`, `/live`, `/last`, `/sync`, `/agent` (alias `/provider`), `/upgrade`.
 
 ## Core Constraints
 
@@ -44,6 +44,26 @@ Bot commands in topics: `/send`, `/toolbar`, `/history`, `/sessions`, `/restore`
 - All `context.user_data` keys are in `handlers/user_state.py` — import constants, never raw strings.
 - Catch specific exceptions (`OSError`, `ValueError`); never bare `except Exception`.
 - Tests: `tests/ccgram/` (unit, mirrors source), `tests/integration/`, `tests/e2e/`. `asyncio_mode = "auto"` — no `@pytest.mark.asyncio`. No comments or docstrings in test files.
+
+## Logging
+
+`structlog` everywhere (`structlog.get_logger()`); the hook subprocess uses stdlib `logging` (separate config in `hook.py`, not colored — fine, it's short-lived). Daemon level policy:
+
+- **DEBUG**: decisions / "why" / per-iteration detail. Off in normal runs.
+- **INFO**: durable lifecycle or state-change events only — never per poll/tick/callback. A genuine once-per-event transition (session changed, window deleted) is INFO; steady-state observations are not.
+- **WARNING**: recoverable anomaly, kept rare. Transient races (window/pane gone mid-capture, token rejected on refresh, missing optional config) are DEBUG — flooding WARNING with races trains operators to ignore it and hides the real ones.
+- **ERROR** / `logger.exception`: a unit of work failed and needs action. Recoverable fallbacks (previous menu kept, glob-scan fallback) are WARNING, not ERROR.
+
+**Steady-state rule**: in poll/tick loops, log on _transition_, not every iteration. Reuse existing patterns — do not invent:
+
+- `log_throttled(logger, key, msg, *args)` (`utils.py`) — first occurrence + 300s cooldown per key, debug-level. Used in `session_map.py` (preserve-primary), `transcript_reader.py` (provider mismatch / partial jsonl), `miniapp/api/terminal.py` stream loop, `polling_coordinator.py`.
+- Mutation-gating — log only when state actually changes (`session_map.py` `_sync_window_from_session_map`, the provider-correction log ~line 625).
+- Warn-once-then-debug counter — `ResilientPollingHTTPXRequest._should_warn_for_reset` (`telegram_request.py`): warn once per interval, debug after, reset on success. Use for a WARNING-level condition that must stay visible without flooding.
+- Per-entry prune loops: DEBUG per item + one INFO summary after (`session.py`, `window_state_store.py`, `user_preferences.py`).
+
+**Color**: `setup_logging` (`main.py`) sets `level_styles` (debug grey, info green, warning bold yellow, error bold red, critical bold bright red) and gates **both** `colors=` and `level_styles` on `_use_colors()` (`isatty()`, honoring `NO_COLOR`/`FORCE_COLOR`). `level_styles` colors the level even when `colors=False`, so both must be gated or raw ANSI leaks into redirected/piped log files. Keep the `key=value` layout — only the level token is colored.
+
+**Never log secrets or PII**: no bot-token bytes (not even a prefix), no full allowed-user-id lists (log a count), no raw message text / chat content.
 
 ## Tmux Auto-Detection
 
@@ -102,7 +122,7 @@ Topic creation lets users pick provider (Claude default, Codex, Gemini, Pi, Shel
 
 ### Remote Control Feedback (Claude only)
 
-`/remote-control` is silent on outcome. Both trigger paths (status-bubble RC button, `/remote-control` or `/rc`) call `arm_rc_probe(window_id, client)` in `handlers/status/rc_probe.py`. Probe captures pane ~1.5s after, re-scans every 1.5s up to 10s, classifies via pure `classify_rc_output()` regex (success-with-URL, success-without-URL, unavailable, failed, timeout) with `terminal_screen_buffer.is_rc_active(window_id)` as tiebreaker, posts one status reply. De-duped per-window via in-memory `WindowState.rc_probe_state` (never serialized).
+`/remote-control` is silent on outcome. Forwarding `/remote-control` or `/rc` to the agent calls `arm_rc_probe(window_id, client)` in `handlers/status/rc_probe.py` (via `commands/forward.py`). Probe captures pane ~1.5s after, re-scans every 1.5s up to 10s, classifies via pure `classify_rc_output()` regex (success-with-URL, success-without-URL, unavailable, failed, timeout) with `terminal_screen_buffer.is_rc_active(window_id)` as tiebreaker, posts one status reply. De-duped per-window via in-memory `WindowState.rc_probe_state` (never serialized).
 
 ### Shell Provider
 
@@ -142,11 +162,10 @@ Completion summary: on Stop hook, waits up to 3s for LLM to produce one line, th
 
 - `CCGRAM_LIVE_VIEW_INTERVAL` (5s), `CCGRAM_LIVE_VIEW_TIMEOUT` (300s).
 - `MONITOR_POLL_INTERVAL` (1.0s), `CCGRAM_STATUS_POLL_INTERVAL` (1.0s).
-- `CCGRAM_SCREENSHOT_HISTORY` (500 lines).
 
 Live view + poll intervals clamped to 0.5s min (live view: 1s). Auto-refreshes via `editMessageMedia`, auto-stops after timeout.
 
-Screenshots (`/screenshot`, 📷 status-bar button) capture scrollback (default 500 lines) with ANSI. For shell topics: extract last command + output between prompt markers when available, else full scrollback. Live view keeps viewport capture unchanged.
+Screenshots (`/screenshot`, 📷 status-bar button) capture the current terminal viewport with ANSI colors. Live view also captures viewport only.
 
 ## /send Command
 
@@ -177,11 +196,11 @@ Tunables: `CCGRAM_SEND_SEARCH_DEPTH` (5), `CCGRAM_SEND_MAX_RESULTS` (50).
 
 Default rows per provider:
 
-- Claude: `[Screen, Ctrl-C, Live] [Mode, Think, Esc] [Send, Enter, Close]`
-- Codex: `[Screen, Ctrl-C, Live] [Esc, Enter, Tab] [Send, Mode, Close]`
-- Gemini: `[Screen, Ctrl-C, Live] [Mode, YOLO, Esc] [Send, Enter, Close]`
-- Pi: `[Screen, Ctrl-C, Live] [Esc, Tab, π Model] [Up, Enter, Down, Send, Close]`
-- Shell: `[Screen, Ctrl-C, Live] [Enter, ^D EOF, ^Z Susp] [Send, Esc, Close]`
+- Claude: `[Screen, Ctrl-C, Live] [Mode, Think, Esc] [Up, Enter, Down] [Last, Get File, Close]`
+- Codex: `[Screen, Ctrl-C, Live] [Esc, Tab, Mode] [Up, Enter, Down] [Last, Get File, Close]`
+- Gemini: `[Screen, Ctrl-C, Live] [Mode, YOLO, Esc] [Up, Enter, Down] [Last, Get File, Close]`
+- Pi: `[Screen, Ctrl-C, Live] [Esc, Tab, π Model] [Up, Enter, Down] [Last, Get File, Close]`
+- Shell: `[Screen, Ctrl-C, Live] [Enter, ^D EOF, ^Z Susp] [Last, Get File, Esc, Close]`
 
 Toggle actions with state readback (Mode = Shift+Tab, Think = Tab, YOLO = Ctrl+Y): capture pane ~250ms after press, scrape agent mode-line, surface in answer toast (e.g., `auto-accept edits on`). Falls back to static toast when no recognized mode-line.
 
@@ -189,7 +208,7 @@ Action types in TOML:
 
 - `key`: tmux key sequence (`"Tab"`, `"C-c"`, `'\x1b[Z'`). `literal=true` for raw bytes (single-quoted TOML literal strings).
 - `text`: literal text + Enter (`"/clear"`, prompt template).
-- `builtin`: reserved (`screen`, `ctrlc`, `live`, `send`, `close`). Users cannot define new ones.
+- `builtin`: reserved (`screen`, `ctrlc`, `live`, `getfile`, `last`, `close`). Users cannot define new ones.
 
 Action names ≤24 chars (callback_data budget). Providers absent from TOML keep defaults. Malformed entries logged and skipped; loader never raises. Provider resolved from `WindowState.provider_name`.
 
@@ -207,7 +226,7 @@ style = "emoji_text"
 buttons = [
   ["screen", "ctrlc", "live"],
   ["mode",   "think", "clear"],
-  ["send",   "enter", "close"],
+  ["last",   "getfile", "close"],
 ]
 ```
 
@@ -217,7 +236,7 @@ New-topic flow inserts an opt-in worktree step between directory-confirm and pro
 
 Picker: `Use current branch` or `New worktree`. New worktree suggests `ccg/<kebab(topic-title)>` or `ccg/agent-<n>` with branch+worktree collision avoidance, one-tap confirm or edit via text reply. Created at `<repo>.worktrees/<slug>` (slug = branch with `/`→`-`) via `git -C <repo> worktree add`. `WorktreeError` surfaces as one-line error with Cancel button. Dirty source repo allowed with warning.
 
-Chosen branch + worktree path persisted on `WindowState` (`worktree_path`, `worktree_branch`) atomically with rest of topic metadata — omitted from `to_dict` when unset, `.get()`-loaded for back-compat. No behavior reads them yet; forward investment for cleanup UX. `SessionManager.set_window_worktree` is on the query-layer write/admin allow-list.
+Chosen branch + worktree path persisted on `WindowState` (`worktree_path`, `worktree_branch`) atomically with rest of topic metadata — omitted from `to_dict` when unset, `.get()`-loaded for back-compat. Reads go through `window_state_ports.worktree_state` (`get_worktree`); writes through `WindowStateStore.set_worktree` / `clear_worktree`. `SessionManager.set_window_worktree` is on the query-layer write/admin allow-list.
 
 Edit-name is the only free-text input: `AWAITING_WORKTREE_BRANCH_NAME` in `user_data` routes the next text message to branch-name validation (`git check-ref-format --branch`) before `text_handler` forwards it. Cancel is the inline button (`/cancel` is a command and never reaches `text_handler`).
 
@@ -368,3 +387,48 @@ See @.claude/rules/topic-architecture.md for topic→window→session mapping.
 See @.claude/rules/message-handling.md for the message queue and rate limiting.
 
 `bot.py` is a 172-line factory + lifecycle delegate. Handler registration in `handlers/registry.py` (`register_all`). Post_init wiring in `bootstrap.py` (`bootstrap_application` + `shutdown_runtime`). Handlers depend on `TelegramClient` Protocol (`src/ccgram/telegram_client.py`); `PTBTelegramClient` adapts real PTB `Bot` in production, `FakeTelegramClient` in unit tests.
+
+<!-- gitnexus:start -->
+
+# GitNexus — Code Intelligence
+
+This project is indexed by GitNexus as **ccgram** (16681 symbols, 38134 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+
+> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
+
+## Always Do
+
+- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
+- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
+- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
+- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
+- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
+
+## Never Do
+
+- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
+- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
+- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
+- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
+
+## Resources
+
+| Resource                                | Use for                                  |
+| --------------------------------------- | ---------------------------------------- |
+| `gitnexus://repo/ccgram/context`        | Codebase overview, check index freshness |
+| `gitnexus://repo/ccgram/clusters`       | All functional areas                     |
+| `gitnexus://repo/ccgram/processes`      | All execution flows                      |
+| `gitnexus://repo/ccgram/process/{name}` | Step-by-step execution trace             |
+
+## CLI
+
+| Task                                         | Read this skill file                                        |
+| -------------------------------------------- | ----------------------------------------------------------- |
+| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md`       |
+| Blast radius / "What breaks if I change X?"  | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?"             | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md`       |
+| Rename / extract / split / refactor          | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md`     |
+| Tools, resources, schema reference           | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md`           |
+| Index, status, clean, wiki CLI commands      | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md`             |
+
+<!-- gitnexus:end -->

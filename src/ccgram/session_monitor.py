@@ -30,14 +30,13 @@ from .event_reader import read_new_events
 from .idle_tracker import IdleTracker
 from .monitor_state import MonitorState
 from .providers import get_provider_for_window, registry  # noqa: F401 (used by test patches)
-from .session_map import parse_session_map
+from .session_map import parse_session_map, read_session_map_raw
 from .session_lifecycle import session_lifecycle
 from .tmux_manager import tmux_manager
 from .monitor_events import NewMessage, NewWindowEvent, SessionInfo
 from .transcript_reader import TranscriptReader
 from .utils import task_done_callback
 
-import aiofiles
 import json
 
 # Re-export for backward-compatible imports from other modules
@@ -60,8 +59,6 @@ _MONITOR_LOOP_WARN_SECS = 1.0
 _TRANSCRIPT_ACTIVE_SECS = 30
 
 logger = structlog.get_logger()
-
-_SessionMapError = (json.JSONDecodeError, OSError)
 
 
 class SessionMonitor:
@@ -261,23 +258,17 @@ class SessionMonitor:
     async def _reconcile_session_map(
         self, session_starts: dict[str, dict[str, str]]
     ) -> None:
-        """Fix session_map entries when a stale SessionStart overwrote a live one."""
-        map_file = config.session_map_file
-        if not map_file.exists():
-            return
-
-        try:
-            async with aiofiles.open(map_file, "r") as f:
-                raw = json.loads(await f.read())
-        except _SessionMapError:
+        """Fix session_map entries when a stale SessionStart was rejected."""
+        raw = await read_session_map_raw()
+        if not raw:
             return
 
         changed = False
         for window_key, start_data in session_starts.items():
             existing = raw.get(window_key)
-            if not existing or existing.get("session_id") == start_data.get(
+            if not isinstance(existing, dict) or existing.get(
                 "session_id"
-            ):
+            ) == start_data.get("session_id"):
                 continue
 
             # Check if the existing transcript is still actively written to
@@ -315,20 +306,22 @@ class SessionMonitor:
             # Lazy: utils imports app-wide helpers; only needed for rare reconciliation.
             from .utils import atomic_write_json
 
-            atomic_write_json(map_file, raw)
+            atomic_write_json(config.session_map_file, raw)
 
-    async def _load_current_session_map(self) -> dict[str, dict[str, str]]:
-        """Load current session_map and return window_key -> details mapping."""
-        if config.session_map_file.exists():
-            try:
-                async with aiofiles.open(config.session_map_file, "r") as f:
-                    content = await f.read()
-                raw = json.loads(content)
-                prefix = f"{config.tmux_session_name}:"
-                return parse_session_map(raw, prefix)
-            except _SessionMapError:
-                pass
-        return {}
+    async def _load_current_session_map(
+        self, raw: dict[str, Any] | None = None
+    ) -> dict[str, dict[str, str]]:
+        """Load current session_map and return window_key -> details mapping.
+
+        If ``raw`` is provided (already read by the caller), parse it directly
+        to avoid a redundant file read.  Otherwise read session_map.json.
+        """
+        if raw is None:
+            raw = await read_session_map_raw()
+        if not raw:
+            return {}
+        prefix = f"{config.tmux_session_name}:"
+        return parse_session_map(raw, prefix)
 
     async def _cleanup_all_stale_sessions(self) -> None:
         """Clean up all tracked sessions not in current session_map (startup)."""
@@ -347,9 +340,11 @@ class SessionMonitor:
                 self._idle_tracker.clear_session(session_id)
             self.state.save_if_dirty()
 
-    async def _detect_and_cleanup_changes(self) -> dict[str, dict[str, str]]:
+    async def _detect_and_cleanup_changes(
+        self, raw: dict | None = None
+    ) -> dict[str, dict[str, str]]:
         """Reconcile session_map; clean up replaced/removed sessions; fire new-window events."""
-        current_map = await self._load_current_session_map()
+        current_map = await self._load_current_session_map(raw)
         result = session_lifecycle.reconcile(current_map, self._idle_tracker)
 
         for session_id in result.sessions_to_remove:
@@ -392,7 +387,10 @@ class SessionMonitor:
                     try:
                         await self._new_window_callback(event)
                     except _CallbackError:
-                        logger.exception("New window callback error for %s", window_id)
+                        logger.exception(
+                            "New window callback error (session_map path) for %s",
+                            window_id,
+                        )
 
         return result.current_map
 
@@ -453,9 +451,10 @@ class SessionMonitor:
             try:
                 loop_started_at = time.monotonic()
                 await self._read_hook_events()
-                await session_map_sync.load_session_map()
+                raw_session_map = await read_session_map_raw()
+                await session_map_sync.load_session_map(raw_session_map)
 
-                current_map = await self._detect_and_cleanup_changes()
+                current_map = await self._detect_and_cleanup_changes(raw_session_map)
 
                 await self._emit_unbound_window_events(current_map, session_map_sync)
 
@@ -522,7 +521,9 @@ class SessionMonitor:
             self._task.cancel()
             self._task = None
         self.state.save()
-        logger.info("Session monitor stopped and state saved")
+        # Distinct from the loop's "Session monitor stopped" (logged when the
+        # poll loop actually exits) — this marks the stop request + state save.
+        logger.info("Session monitor stop requested; state saved")
 
 
 _active_monitor: SessionMonitor | None = None

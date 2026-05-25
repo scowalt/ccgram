@@ -243,8 +243,8 @@ async def handle_shell_message(
 
     try:
         completer = get_completer()
-    except ValueError:
-        logger.warning("LLM misconfigured")
+    except ValueError as exc:
+        logger.warning("LLM misconfigured: %s", exc)
         await safe_send(
             client,
             chat_id,
@@ -280,8 +280,8 @@ async def handle_shell_message(
                 shell_tools=ctx["shell_tools"],
                 recent_output=recent_output,
             )
-    except RuntimeError:
-        logger.warning("LLM command generation failed")
+    except RuntimeError as exc:
+        logger.warning("LLM command generation failed: %s", exc)
         await safe_send(
             client,
             chat_id,

@@ -30,12 +30,11 @@ from telegram import (
     Update,
 )
 from telegram.error import TelegramError
-from ...last_unit import capture_for_screenshot
 from ...screenshot import text_to_image
 from ...telegram_client import PTBTelegramClient
 from ...thread_router import thread_router
 from ...tmux_manager import tmux_manager
-from ...window_query import get_window_provider
+
 from ..callback_data import (
     CB_KEYS_PREFIX,
     CB_LIVE_START,
@@ -309,7 +308,7 @@ async def _handle_refresh(query: CallbackQuery, user_id: int, data: str) -> None
             pane_id, with_ansi=True, window_id=window_id
         )
     else:
-        text = await capture_for_screenshot(window_id, get_window_provider(window_id))
+        text = await tmux_manager.capture_pane(window_id, with_ansi=True)
     if not text:
         await query.answer("Failed to capture pane", show_alert=True)
         return
@@ -341,7 +340,7 @@ async def _handle_status_screenshot(
     if not w:
         await query.answer("Window not found", show_alert=True)
         return
-    text = await capture_for_screenshot(window_id, get_window_provider(window_id))
+    text = await tmux_manager.capture_pane(window_id, with_ansi=True)
     if not text:
         await query.answer("Failed to capture", show_alert=True)
         return
@@ -420,7 +419,7 @@ async def screenshot_command(
         await safe_reply(update.message, "\u274c Window no longer exists.")
         return
 
-    pane_text = await capture_for_screenshot(window_id, get_window_provider(window_id))
+    pane_text = await tmux_manager.capture_pane(window_id, with_ansi=True)
     if not pane_text:
         await safe_reply(update.message, "\u274c Failed to capture terminal.")
         return
@@ -547,8 +546,11 @@ async def panes_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> 
     # Lazy: utils pulls in chat-id helpers that reach back into handlers
     from ...utils import handle_general_topic_message, is_general_topic
 
-    # Lazy: window_state_store proxy not yet wired at module load
-    from ...window_state_store import window_store
+    # Lazy: window_state_ports proxy not yet wired at module load
+    from ...window_state_ports.pane_state import (
+        get_pane_lifecycle_notify,
+        get_pane_projection,
+    )
 
     # Lazy: messaging_pipeline ↔ live cycle through status_bubble
     from ..messaging_pipeline.message_sender import safe_reply
@@ -607,7 +609,7 @@ async def panes_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> 
             suffix_parts.append("blocked")
         elif not pane.active:
             suffix_parts.append("running")
-        stored = window_store.get_pane(window_id, pane.pane_id)
+        stored = get_pane_projection(window_id, pane.pane_id)
         if stored and stored.name:
             suffix_parts.insert(0, stored.name)
         if stored and stored.subscribed:
@@ -622,9 +624,7 @@ async def panes_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> 
             )
         )
 
-    lifecycle_on = window_store.get_pane_lifecycle_notify(
-        window_id, config.pane_lifecycle_notify
-    )
+    lifecycle_on = get_pane_lifecycle_notify(window_id, config.pane_lifecycle_notify)
     rows.append([build_pane_lifecycle_button(window_id, enabled=lifecycle_on)])
     keyboard = InlineKeyboardMarkup(rows) if rows else None
     await safe_reply(update.message, "\n".join(lines), reply_markup=keyboard)

@@ -29,7 +29,14 @@ from ....providers import get_provider_for_window
 from ....telegram_client import PTBTelegramClient
 from ....thread_router import thread_router
 from ....tmux_manager import tmux_manager
-from ....window_state_store import window_store
+from ....window_state_ports.lifecycle_state import (
+    mark_gemini_external_warned,
+    was_gemini_external_warned,
+)
+from ....window_state_ports.pane_state import (
+    get_pane_lifecycle_notify,
+    get_pane_projection,
+)
 from ...callback_data import IDLE_STATUS_TEXT
 from ...cleanup import clear_topic_state
 from ...interactive import (
@@ -96,21 +103,15 @@ async def _transition_to_idle(
     thread_id: int,
     chat_id: int,
     display: str,
-    notif_mode: str,
 ) -> None:
     terminal_poll_state.cancel_startup_timer(window_id)
     client = PTBTelegramClient(bot)
     await update_topic_emoji(client, chat_id, thread_id, "idle", display)
     lifecycle_strategy.clear_autoclose_timer(user_id, thread_id)
     lifecycle_strategy.clear_typing_state(user_id, thread_id)
-    if notif_mode not in ("muted", "errors_only"):
-        await enqueue_status_update(
-            client, user_id, window_id, IDLE_STATUS_TEXT, thread_id=thread_id
-        )
-    else:
-        await enqueue_status_update(
-            client, user_id, window_id, None, thread_id=thread_id
-        )
+    await enqueue_status_update(
+        client, user_id, window_id, IDLE_STATUS_TEXT, thread_id=thread_id
+    )
 
 
 # ── Multi-pane scanning (agent teams) ─────────────────────────────────
@@ -142,7 +143,7 @@ async def _forward_pane_output(
     pane's friendly name when one is set.
     """
 
-    pane = window_store.get_pane(window_id, pane_id)
+    pane = get_pane_projection(window_id, pane_id)
     if pane is None or not pane.subscribed:
         return
     cleaned = pane_text.strip()
@@ -195,9 +196,7 @@ async def _notify_pane_lifecycle(
     transitions: list[PaneTransition],
 ) -> None:
     """Emit one-line "pane created"/"pane closed" notifications when enabled."""
-    enabled = window_store.get_pane_lifecycle_notify(
-        window_id, config.pane_lifecycle_notify
-    )
+    enabled = get_pane_lifecycle_notify(window_id, config.pane_lifecycle_notify)
     if not enabled:
         return
 
@@ -209,7 +208,7 @@ async def _notify_pane_lifecycle(
             label = f"{t.name} ({t.pane_id})" if t.name else t.pane_id
             text = f"➖ pane {label} closed"
         else:
-            pane = window_store.get_pane(window_id, t.pane_id)
+            pane = get_pane_projection(window_id, t.pane_id)
             label = f"{pane.name} ({t.pane_id})" if pane and pane.name else t.pane_id
             text = f"➕ pane {label} created"
         try:
@@ -301,14 +300,14 @@ async def _maybe_warn_external_gemini(
     recoverable hint. The flag is marked before sending so a delivery
     failure does not re-warn every poll cycle.
     """
-    if window_store.was_gemini_external_warned(window_id):
+    if was_gemini_external_warned(window_id):
         return
     view = window_query.view_window(window_id)
     if view is None or not view.external:
         return
     if _get_provider(window_id).capabilities.name != "gemini":
         return
-    window_store.mark_gemini_external_warned(window_id)
+    mark_gemini_external_warned(window_id)
     text = (
         "⚠️ This Gemini window was launched outside ccgram and "
         "lacks ccgram's hardened shell settings. Running a shell tool may "
@@ -409,26 +408,24 @@ async def _apply_active_transition(
     window_id: str,
     thread_id: int | None,
     decision: TickDecision,
-    notif_mode: str,
 ) -> None:
     if decision.send_status:
         claude_task_state.clear_wait_header(window_id)
         claude_task_state.set_last_status(window_id, decision.status_text or "")
         terminal_poll_state.mark_seen_status(window_id)
         await _send_typing_throttled(bot, user_id, thread_id)
-        if notif_mode not in ("muted", "errors_only"):
-            subagent_names = get_subagent_names(window_id)
-            display_status = decision.status_text or ""
-            if subagent_names:
-                label = build_subagent_label(subagent_names)
-                display_status = f"{display_status} ({label})"
-            await enqueue_status_update(
-                PTBTelegramClient(bot),
-                user_id,
-                window_id,
-                display_status,
-                thread_id=thread_id,
-            )
+        subagent_names = get_subagent_names(window_id)
+        display_status = decision.status_text or ""
+        if subagent_names:
+            label = build_subagent_label(subagent_names)
+            display_status = f"{display_status} ({label})"
+        await enqueue_status_update(
+            PTBTelegramClient(bot),
+            user_id,
+            window_id,
+            display_status,
+            thread_id=thread_id,
+        )
     else:
         claude_task_state.clear_wait_header(window_id)
         await _send_typing_throttled(bot, user_id, thread_id)
@@ -488,16 +485,13 @@ async def _apply_tick_decision(
     window_id: str,
     thread_id: int | None,
     decision: TickDecision,
-    notif_mode: str,
 ) -> None:
     """Apply the effects dictated by a ``TickDecision``. All I/O lives here."""
     if decision.show_recovery or decision.transition is None:
         return
 
     if decision.transition == "active":
-        await _apply_active_transition(
-            bot, user_id, window_id, thread_id, decision, notif_mode
-        )
+        await _apply_active_transition(bot, user_id, window_id, thread_id, decision)
     elif decision.transition == "idle" and thread_id is not None:
         await _transition_to_idle(
             bot,
@@ -506,7 +500,6 @@ async def _apply_tick_decision(
             thread_id,
             thread_router.resolve_chat_id(user_id, thread_id),
             thread_router.get_display_name(window_id),
-            notif_mode,
         )
     elif decision.transition == "done":
         await _apply_done_transition(bot, user_id, window_id, thread_id)
@@ -555,8 +548,7 @@ async def _update_status(
         await handle_interactive_ui(client, user_id, window_id, thread_id)
         return
 
-    notification_mode = window_query.get_notification_mode(window_id)
-    ctx = build_context(window_id, w, status, notification_mode=notification_mode)
+    ctx = build_context(window_id, w, status)
     decision = decide_tick(ctx)
     await _apply_tick_decision(
         bot,
@@ -564,7 +556,6 @@ async def _update_status(
         window_id,
         thread_id,
         decision,
-        notif_mode=ctx.notification_mode,
     )
 
 
