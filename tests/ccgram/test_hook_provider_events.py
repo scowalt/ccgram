@@ -89,6 +89,46 @@ def test_pi_session_start_ignores_stale_payload_transcript_path(
     assert entry["transcript_path"] == str(transcript)
 
 
+def test_pi_session_start_does_not_guess_other_same_cwd_transcript(
+    tmp_path: Path, monkeypatch
+) -> None:
+    cwd = str(tmp_path / "proj")
+    session_id = "019e214d-7011-754d-9efb-60106dfa967c"
+    other_session_id = "019e214d-7011-754d-9efb-60106dfa967d"
+    transcript_dir = (
+        tmp_path / ".pi" / "agent" / "sessions" / _encode_pi_cwd_dirname(cwd)
+    )
+    transcript_dir.mkdir(parents=True)
+    other_transcript = (
+        transcript_dir / f"2026-05-13T12-26-23-633Z_{other_session_id}.jsonl"
+    )
+    other_transcript.write_text(
+        json.dumps(
+            {"type": "session", "id": other_session_id, "cwd": cwd, "version": 3}
+        )
+        + "\n"
+    )
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("CCGRAM_DIR", str(tmp_path / "state"))
+
+    _run_hook(
+        monkeypatch,
+        {
+            "session_id": session_id,
+            "cwd": cwd,
+            "hook_event_name": "SessionStart",
+            "source": "startup",
+        },
+        "pi",
+    )
+
+    session_map = json.loads((tmp_path / "state" / "session_map.json").read_text())
+    entry = session_map["ccgram:@0"]
+    assert entry["session_id"] == session_id
+    assert entry["provider_name"] == "pi"
+    assert entry["transcript_path"] == ""
+
+
 def test_pi_stop_refreshes_stale_transcript_path_when_session_is_in_sync(
     tmp_path: Path, monkeypatch
 ) -> None:
