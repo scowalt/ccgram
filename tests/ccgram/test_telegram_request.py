@@ -12,7 +12,9 @@ from ccgram.bot import create_bot
 from ccgram.telegram_request import (
     ResilientPollingHTTPXRequest,
     clear_polling_transport_failure,
+    clear_telegram_transport_failure,
     polling_transport_failed_recently,
+    telegram_transport_failed_recently,
 )
 
 
@@ -65,6 +67,7 @@ def _reset_log_calls(mock_logger, level: str) -> list:
 class TestPollingTransportFailureTracking:
     async def test_tracking_request_marks_recent_polling_failure(self) -> None:
         clear_polling_transport_failure()
+        clear_telegram_transport_failure()
         request = ResilientPollingHTTPXRequest(track_polling_failures=True)
 
         with (
@@ -78,10 +81,15 @@ class TestPollingTransportFailureTracking:
             await request.do_request("https://example.com", "POST")
 
         assert polling_transport_failed_recently(within_seconds=999)
+        assert telegram_transport_failed_recently(within_seconds=999)
         clear_polling_transport_failure()
+        clear_telegram_transport_failure()
 
-    async def test_untracked_request_does_not_mark_polling_failure(self) -> None:
+    async def test_untracked_request_marks_transport_but_not_polling_failure(
+        self,
+    ) -> None:
         clear_polling_transport_failure()
+        clear_telegram_transport_failure()
         request = ResilientPollingHTTPXRequest()
 
         with (
@@ -95,9 +103,12 @@ class TestPollingTransportFailureTracking:
             await request.do_request("https://example.com", "POST")
 
         assert not polling_transport_failed_recently(within_seconds=999)
+        assert telegram_transport_failed_recently(within_seconds=999)
+        clear_telegram_transport_failure()
 
     async def test_tracking_request_success_clears_polling_failure(self) -> None:
         clear_polling_transport_failure()
+        clear_telegram_transport_failure()
         request = ResilientPollingHTTPXRequest(track_polling_failures=True)
         sentinel = object()
         mock = AsyncMock(side_effect=[TimedOut("pool timeout"), sentinel])
@@ -109,6 +120,8 @@ class TestPollingTransportFailureTracking:
             await request.do_request("https://example.com", "POST")
 
         assert not polling_transport_failed_recently(within_seconds=999)
+        assert telegram_transport_failed_recently(within_seconds=999)
+        clear_telegram_transport_failure()
 
 
 class TestResetWarningRateLimit:
