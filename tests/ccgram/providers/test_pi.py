@@ -561,6 +561,35 @@ class TestDiscoverTranscript:
         ev = provider.discover_transcript(cwd, "ccgram:@0", max_age=1200)
         assert ev is not None and ev.session_id == "s1"
 
+    def test_skips_claimed_sessions_for_same_cwd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("ccgram.providers.pi._pi_sessions_dir", lambda: tmp_path)
+        monkeypatch.setattr("pathlib.Path.resolve", lambda self, strict=False: self)
+        cwd = "/shared/project"
+        session_dir = tmp_path / encode_cwd_dirname(cwd)
+        session_dir.mkdir()
+        claimed = self._write_session(session_dir / "new.jsonl", "s2", cwd)
+        fallback = self._write_session(session_dir / "old.jsonl", "s1", cwd)
+        now = time.time()
+        import os
+
+        os.utime(fallback, (now - 10, now - 10))
+        os.utime(claimed, (now, now))
+
+        provider = PiProvider()
+        ev = provider.discover_transcript(
+            cwd,
+            "ccgram:@0",
+            max_age=0,
+            exclude_session_ids={"s2"},
+            exclude_transcript_paths={str(claimed)},
+        )
+
+        assert ev is not None
+        assert ev.session_id == "s1"
+        assert ev.transcript_path == str(fallback)
+
 
 class TestCapabilities:
     def test_shape(self) -> None:

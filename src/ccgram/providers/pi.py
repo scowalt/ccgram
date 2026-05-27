@@ -291,6 +291,8 @@ class PiProvider(JsonlProvider):
         age_limit = (
             _STALE_TRANSCRIPT_MAX_AGE_SECS if max_age is None else float(max_age)
         )
+        claimed_session_ids = exclude_session_ids or set()
+        claimed_transcript_paths = exclude_transcript_paths or set()
         now = time.time()
         try:
             resolved_target = str(Path(cwd).resolve())
@@ -309,8 +311,11 @@ class PiProvider(JsonlProvider):
                 continue
             if header_cwd != resolved_target:
                 continue
+            session_id = header["id"]
+            if session_id in claimed_session_ids or str(path) in claimed_transcript_paths:
+                continue
             return SessionStartEvent(
-                session_id=header["id"],
+                session_id=session_id,
                 cwd=header["cwd"],
                 transcript_path=str(path),
                 window_key=window_key,

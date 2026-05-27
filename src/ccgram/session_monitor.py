@@ -193,8 +193,25 @@ class SessionMonitor:
             if not provider.capabilities.supports_hook:
                 continue
 
+            claimed_session_ids = {
+                other.get("session_id", "")
+                for other_window_id, other in current_map.items()
+                if other_window_id != window_id
+                and other.get("provider_name", "") == provider.capabilities.name
+                and other.get("session_id", "")
+            }
+            claimed_transcript_paths = {
+                other.get("transcript_path", "")
+                for other_window_id, other in current_map.items()
+                if other_window_id != window_id
+                and other.get("provider_name", "") == provider.capabilities.name
+                and other.get("transcript_path", "")
+            }
             discovered = provider.discover_transcript(
-                details.get("cwd", ""), f"{config.tmux_session_name}:{window_id}"
+                details.get("cwd", ""),
+                f"{config.tmux_session_name}:{window_id}",
+                exclude_session_ids=claimed_session_ids,
+                exclude_transcript_paths=claimed_transcript_paths,
             )
             if discovered is None:
                 continue

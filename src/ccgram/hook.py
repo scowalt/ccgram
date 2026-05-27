@@ -950,9 +950,28 @@ def _encode_pi_cwd_dirname(cwd: str) -> str:
     return f"--{encoded}--"
 
 
+def _read_pi_session_id(path: Path) -> str:
+    """Read a Pi transcript header session id, returning empty on failure."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            first_line = handle.readline()
+    except OSError:
+        return ""
+    if not first_line:
+        return ""
+    try:
+        data = json.loads(first_line)
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(data, dict) or data.get("type") != "session":
+        return ""
+    header_session_id = data.get("id")
+    return header_session_id if isinstance(header_session_id, str) else ""
+
+
 def _resolve_pi_transcript_path(session_id: str, cwd: str) -> str:
     """Find a Pi transcript path when hook-runner omitted it."""
-    if not cwd:
+    if not cwd or not session_id:
         return ""
     session_dir = (
         Path.home() / ".pi" / "agent" / "sessions" / _encode_pi_cwd_dirname(cwd)
@@ -972,9 +991,12 @@ def _resolve_pi_transcript_path(session_id: str, cwd: str) -> str:
         return ""
     candidates.sort(reverse=True)
     for _mtime, path in candidates:
-        if session_id and session_id in path.name:
+        if session_id in path.name:
             return str(path)
-    return str(candidates[0][1]) if candidates else ""
+    for _mtime, path in candidates:
+        if _read_pi_session_id(path) == session_id:
+            return str(path)
+    return ""
 
 
 def _resolve_transcript_path(

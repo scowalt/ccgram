@@ -256,7 +256,7 @@ class TestStaleTranscriptAdoption:
         )
         provider = SimpleNamespace(
             capabilities=SimpleNamespace(supports_hook=True, name="pi"),
-            discover_transcript=lambda _cwd, _window_key: discovered,
+            discover_transcript=lambda _cwd, _window_key, **_kwargs: discovered,
         )
         raw = {
             "ccgram:@2": {
@@ -288,6 +288,50 @@ class TestStaleTranscriptAdoption:
         assert "new-session" in monitor._transcript_reader._catch_up_sessions
         saved = json.loads(config.session_map_file.read_text())
         assert saved["ccgram:@2"]["session_id"] == "new-session"
+
+    async def test_adoption_excludes_transcripts_claimed_by_peer_window(
+        self, monitor: SessionMonitor, tmp_path
+    ) -> None:
+        old_file = tmp_path / "old.jsonl"
+        claimed_file = tmp_path / "claimed.jsonl"
+        old_file.write_text('{"type":"session"}\n')
+        claimed_file.write_text('{"type":"session"}\n')
+        stale_time = time.time() - 300
+        os.utime(old_file, (stale_time, stale_time))
+
+        discover_calls: list[dict] = []
+
+        def discover(_cwd: str, _window_key: str, **kwargs) -> None:
+            discover_calls.append(kwargs)
+            return None
+
+        provider = SimpleNamespace(
+            capabilities=SimpleNamespace(supports_hook=True, name="pi"),
+            discover_transcript=discover,
+        )
+        raw = {
+            "ccgram:@2": {
+                "session_id": "old-session",
+                "cwd": "/proj",
+                "window_name": "proj-a",
+                "transcript_path": str(old_file),
+                "provider_name": "pi",
+            },
+            "ccgram:@3": {
+                "session_id": "claimed-session",
+                "cwd": "/proj",
+                "window_name": "proj-b",
+                "transcript_path": str(claimed_file),
+                "provider_name": "pi",
+            },
+        }
+
+        with patch("ccgram.session_monitor.get_provider_for_window", return_value=provider):
+            current_map = await monitor._detect_and_cleanup_changes(raw)
+
+        assert current_map["@2"]["session_id"] == "old-session"
+        assert discover_calls[0]["exclude_session_ids"] == {"claimed-session"}
+        assert discover_calls[0]["exclude_transcript_paths"] == {str(claimed_file)}
 
 
 class TestReadNewLines:
