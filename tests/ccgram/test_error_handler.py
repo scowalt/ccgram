@@ -70,19 +70,19 @@ class TestErrorHandlerStaleCallback:
 
         with (
             patch("ccgram.bot.logger"),
-            patch("ccgram.bot.polling_transport_failed_recently", return_value=False),
+            patch("ccgram.bot.telegram_transport_failed_recently", return_value=False),
             patch("ccgram.bot.os.kill") as mock_kill,
         ):
             await _error_handler(None, ctx)
 
         mock_kill.assert_called_once()
 
-    async def test_conflict_after_recent_polling_failure_is_transient(self) -> None:
+    async def test_conflict_after_recent_transport_failure_is_transient(self) -> None:
         ctx = _make_context(Conflict("409 Conflict"))
 
         with (
             patch("ccgram.bot.logger") as mock_logger,
-            patch("ccgram.bot.polling_transport_failed_recently", return_value=True),
+            patch("ccgram.bot.telegram_transport_failed_recently", return_value=True),
             patch("ccgram.bot.os.kill") as mock_kill,
         ):
             await _error_handler(None, ctx)

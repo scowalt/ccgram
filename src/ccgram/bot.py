@@ -40,7 +40,7 @@ from .handlers.topics.directory_browser import clear_browse_state
 from .session import session_manager
 from .telegram_request import (
     ResilientPollingHTTPXRequest,
-    polling_transport_failed_recently,
+    telegram_transport_failed_recently,
 )
 from .thread_router import thread_router
 
@@ -138,7 +138,7 @@ async def post_shutdown(_application: Application) -> None:
 async def _error_handler(_update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle bot-level errors from updater and handlers."""
     if isinstance(context.error, Conflict):
-        if polling_transport_failed_recently():
+        if telegram_transport_failed_recently():
             logger.warning(
                 "Telegram polling conflict after a recent transport failure; "
                 "treating as transient self-conflict and letting PTB retry: %s",
