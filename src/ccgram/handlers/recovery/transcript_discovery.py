@@ -222,7 +222,13 @@ async def _find_and_register_transcript(
     )
 
     for provider_name, provider in providers_to_try:
-        max_age = 0 if pane_alive else None
+        max_age = (
+            None
+            if provider.capabilities.supports_hook
+            else 0
+            if pane_alive
+            else None
+        )
         (
             claimed_session_ids,
             claimed_transcript_paths,

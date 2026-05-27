@@ -175,11 +175,25 @@ class SessionMonitor:
         now = time.time()
         changed = False
 
+        claimed_by_provider: dict[str, set[str]] = {}
+        claimed_paths_by_provider: dict[str, set[str]] = {}
+        for details in current_map.values():
+            provider_name = details.get("provider_name", "")
+            session_id = details.get("session_id", "")
+            transcript_path = details.get("transcript_path", "")
+            if provider_name and session_id:
+                claimed_by_provider.setdefault(provider_name, set()).add(session_id)
+            if provider_name and transcript_path:
+                claimed_paths_by_provider.setdefault(provider_name, set()).add(
+                    transcript_path
+                )
+
         for window_id, details in current_map.items():
             if not window_id.startswith("@"):
                 continue
 
             current_path = details.get("transcript_path", "")
+            current_session_id = details.get("session_id", "")
             current_mtime = self._transcript_mtime(current_path)
             if (
                 current_mtime is not None
@@ -193,20 +207,16 @@ class SessionMonitor:
             if not provider.capabilities.supports_hook:
                 continue
 
-            claimed_session_ids = {
-                other.get("session_id", "")
-                for other_window_id, other in current_map.items()
-                if other_window_id != window_id
-                and other.get("provider_name", "") == provider.capabilities.name
-                and other.get("session_id", "")
-            }
-            claimed_transcript_paths = {
-                other.get("transcript_path", "")
-                for other_window_id, other in current_map.items()
-                if other_window_id != window_id
-                and other.get("provider_name", "") == provider.capabilities.name
-                and other.get("transcript_path", "")
-            }
+            provider_claims = claimed_by_provider.setdefault(
+                provider.capabilities.name, set()
+            )
+            provider_path_claims = claimed_paths_by_provider.setdefault(
+                provider.capabilities.name, set()
+            )
+            claimed_session_ids = set(provider_claims)
+            claimed_session_ids.discard(current_session_id)
+            claimed_transcript_paths = set(provider_path_claims)
+            claimed_transcript_paths.discard(current_path)
             discovered = provider.discover_transcript(
                 details.get("cwd", ""),
                 f"{config.tmux_session_name}:{window_id}",
@@ -216,7 +226,17 @@ class SessionMonitor:
             if discovered is None:
                 continue
             if (
-                discovered.session_id == details.get("session_id")
+                discovered.session_id in claimed_session_ids
+                or discovered.transcript_path in claimed_transcript_paths
+            ):
+                logger.debug(
+                    "Skipping discovered transcript for %s: %s already claimed",
+                    window_id,
+                    discovered.session_id[:8],
+                )
+                continue
+            if (
+                discovered.session_id == current_session_id
                 and discovered.transcript_path == current_path
             ):
                 continue
@@ -243,10 +263,14 @@ class SessionMonitor:
                     details.get("provider_name", provider.capabilities.name),
                 ),
             }
+            provider_claims.discard(current_session_id)
+            provider_path_claims.discard(current_path)
+            provider_claims.add(discovered.session_id)
+            provider_path_claims.add(discovered.transcript_path)
             logger.info(
                 "Adopted newer discovered transcript for %s: %s -> %s",
                 window_id,
-                details.get("session_id", "")[:8],
+                current_session_id[:8],
                 discovered.session_id[:8],
             )
             changed = True

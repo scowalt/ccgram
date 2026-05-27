@@ -333,6 +333,60 @@ class TestStaleTranscriptAdoption:
         assert discover_calls[0]["exclude_session_ids"] == {"claimed-session"}
         assert discover_calls[0]["exclude_transcript_paths"] == {str(claimed_file)}
 
+    async def test_adoption_claims_new_transcript_within_same_loop(
+        self, monitor: SessionMonitor, tmp_path
+    ) -> None:
+        first_old = tmp_path / "first-old.jsonl"
+        second_old = tmp_path / "second-old.jsonl"
+        shared_new = tmp_path / "shared-new.jsonl"
+        for path in (first_old, second_old, shared_new):
+            path.write_text('{"type":"session"}\n')
+        stale_time = time.time() - 300
+        os.utime(first_old, (stale_time, stale_time))
+        os.utime(second_old, (stale_time, stale_time))
+
+        discovered = SessionStartEvent(
+            session_id="shared-new-session",
+            cwd="/proj",
+            transcript_path=str(shared_new),
+            window_key="ccgram:@2",
+        )
+        discover_calls: list[dict] = []
+
+        def discover(_cwd: str, _window_key: str, **kwargs):
+            discover_calls.append(kwargs)
+            if "shared-new-session" in kwargs["exclude_session_ids"]:
+                return None
+            return discovered
+
+        provider = SimpleNamespace(
+            capabilities=SimpleNamespace(supports_hook=True, name="pi"),
+            discover_transcript=discover,
+        )
+        raw = {
+            "ccgram:@2": {
+                "session_id": "first-old-session",
+                "cwd": "/proj",
+                "window_name": "proj-a",
+                "transcript_path": str(first_old),
+                "provider_name": "pi",
+            },
+            "ccgram:@3": {
+                "session_id": "second-old-session",
+                "cwd": "/proj",
+                "window_name": "proj-b",
+                "transcript_path": str(second_old),
+                "provider_name": "pi",
+            },
+        }
+
+        with patch("ccgram.session_monitor.get_provider_for_window", return_value=provider):
+            current_map = await monitor._detect_and_cleanup_changes(raw)
+
+        assert current_map["@2"]["session_id"] == "shared-new-session"
+        assert current_map["@3"]["session_id"] == "second-old-session"
+        assert discover_calls[1]["exclude_session_ids"] == {"shared-new-session"}
+
 
 class TestReadNewLines:
     async def test_truncation_resets_offset(self, tmp_path) -> None:
