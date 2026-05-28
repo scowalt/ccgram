@@ -61,6 +61,29 @@ _TRANSCRIPT_ACTIVE_SECS = 30
 logger = structlog.get_logger()
 
 
+def _discovery_claims(
+    current_map: dict[str, dict[str, str]],
+) -> tuple[dict[str, set[str]], dict[str, set[str]], dict[tuple[str, str], int]]:
+    claimed_by_provider: dict[str, set[str]] = {}
+    claimed_paths_by_provider: dict[str, set[str]] = {}
+    cwd_counts_by_provider: dict[tuple[str, str], int] = {}
+    for details in current_map.values():
+        provider_name = details.get("provider_name", "")
+        session_id = details.get("session_id", "")
+        transcript_path = details.get("transcript_path", "")
+        cwd = details.get("cwd", "")
+        if provider_name and session_id:
+            claimed_by_provider.setdefault(provider_name, set()).add(session_id)
+        if provider_name and transcript_path:
+            claimed_paths_by_provider.setdefault(provider_name, set()).add(
+                transcript_path
+            )
+        if provider_name and cwd:
+            key = (provider_name, cwd)
+            cwd_counts_by_provider[key] = cwd_counts_by_provider.get(key, 0) + 1
+    return claimed_by_provider, claimed_paths_by_provider, cwd_counts_by_provider
+
+
 class SessionMonitor:
     """Monitors Claude Code sessions for new assistant messages.
 
@@ -175,18 +198,9 @@ class SessionMonitor:
         now = time.time()
         changed = False
 
-        claimed_by_provider: dict[str, set[str]] = {}
-        claimed_paths_by_provider: dict[str, set[str]] = {}
-        for details in current_map.values():
-            provider_name = details.get("provider_name", "")
-            session_id = details.get("session_id", "")
-            transcript_path = details.get("transcript_path", "")
-            if provider_name and session_id:
-                claimed_by_provider.setdefault(provider_name, set()).add(session_id)
-            if provider_name and transcript_path:
-                claimed_paths_by_provider.setdefault(provider_name, set()).add(
-                    transcript_path
-                )
+        claimed_by_provider, claimed_paths_by_provider, cwd_counts_by_provider = (
+            _discovery_claims(current_map)
+        )
 
         for window_id, details in current_map.items():
             if not window_id.startswith("@"):
@@ -205,6 +219,18 @@ class SessionMonitor:
                 window_id, provider_name=details.get("provider_name", "")
             )
             if not provider.capabilities.supports_hook:
+                continue
+            if (
+                provider.capabilities.name == "pi"
+                and cwd_counts_by_provider.get(
+                    (provider.capabilities.name, details.get("cwd", "")), 0
+                )
+                > 1
+            ):
+                logger.debug(
+                    "Skipping Pi transcript discovery for %s: cwd shared by multiple windows",
+                    window_id,
+                )
                 continue
 
             provider_claims = claimed_by_provider.setdefault(

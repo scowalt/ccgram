@@ -66,6 +66,23 @@ def _window_claim_rank(window_id: str) -> tuple[int, str]:
     return (1, window_id)
 
 
+def _same_cwd_provider_peer_exists(
+    window_id: str, provider_name: str, cwd: str
+) -> bool:
+    """Return True when another tracked window has the same provider and cwd."""
+    if not cwd:
+        return False
+    for other_window_id in identity_state.iter_window_ids():
+        if other_window_id == window_id:
+            continue
+        other_identity = identity_state.get_identity(other_window_id)
+        if other_identity is None or other_identity.provider_name != provider_name:
+            continue
+        if other_identity.cwd == cwd:
+            return True
+    return False
+
+
 def _claimed_hookless_sessions(
     window_ids: list[str],
     provider_name: str,
@@ -222,6 +239,15 @@ async def _find_and_register_transcript(
     )
 
     for provider_name, provider in providers_to_try:
+        if provider.capabilities.supports_hook and _same_cwd_provider_peer_exists(
+            window_id, provider_name, identity.cwd
+        ):
+            logger.debug(
+                "Skipping %s transcript discovery for %s: cwd shared by multiple windows",
+                provider_name,
+                window_id,
+            )
+            continue
         max_age = (
             None
             if provider.capabilities.supports_hook

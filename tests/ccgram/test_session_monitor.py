@@ -4,7 +4,7 @@ import json
 import os
 import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -319,7 +319,7 @@ class TestStaleTranscriptAdoption:
             },
             "ccgram:@3": {
                 "session_id": "claimed-session",
-                "cwd": "/proj",
+                "cwd": "/other",
                 "window_name": "proj-b",
                 "transcript_path": str(claimed_file),
                 "provider_name": "pi",
@@ -332,6 +332,45 @@ class TestStaleTranscriptAdoption:
         assert current_map["@2"]["session_id"] == "old-session"
         assert discover_calls[0]["exclude_session_ids"] == {"claimed-session"}
         assert discover_calls[0]["exclude_transcript_paths"] == {str(claimed_file)}
+
+    async def test_adoption_skips_pi_when_cwd_shared_by_multiple_windows(
+        self, monitor: SessionMonitor, tmp_path
+    ) -> None:
+        first_old = tmp_path / "first-old.jsonl"
+        second_old = tmp_path / "second-old.jsonl"
+        first_old.write_text('{"type":"session"}\n')
+        second_old.write_text('{"type":"session"}\n')
+        stale_time = time.time() - 300
+        os.utime(first_old, (stale_time, stale_time))
+        os.utime(second_old, (stale_time, stale_time))
+
+        provider = SimpleNamespace(
+            capabilities=SimpleNamespace(supports_hook=True, name="pi"),
+            discover_transcript=MagicMock(),
+        )
+        raw = {
+            "ccgram:@2": {
+                "session_id": "first-old-session",
+                "cwd": "/proj",
+                "window_name": "proj-a",
+                "transcript_path": str(first_old),
+                "provider_name": "pi",
+            },
+            "ccgram:@3": {
+                "session_id": "second-old-session",
+                "cwd": "/proj",
+                "window_name": "proj-b",
+                "transcript_path": str(second_old),
+                "provider_name": "pi",
+            },
+        }
+
+        with patch("ccgram.session_monitor.get_provider_for_window", return_value=provider):
+            current_map = await monitor._detect_and_cleanup_changes(raw)
+
+        assert current_map["@2"]["session_id"] == "first-old-session"
+        assert current_map["@3"]["session_id"] == "second-old-session"
+        provider.discover_transcript.assert_not_called()
 
     async def test_adoption_claims_new_transcript_within_same_loop(
         self, monitor: SessionMonitor, tmp_path
@@ -373,7 +412,7 @@ class TestStaleTranscriptAdoption:
             },
             "ccgram:@3": {
                 "session_id": "second-old-session",
-                "cwd": "/proj",
+                "cwd": "/other",
                 "window_name": "proj-b",
                 "transcript_path": str(second_old),
                 "provider_name": "pi",

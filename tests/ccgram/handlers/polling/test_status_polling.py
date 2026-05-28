@@ -1371,6 +1371,57 @@ class TestMaybeDiscoverTranscript:
             exclude_transcript_paths=set(),
         )
 
+    async def test_hookful_provider_discovery_skips_shared_cwd(self) -> None:
+        from ccgram.handlers.recovery.transcript_discovery import (
+            discover_and_register_transcript,
+        )
+
+        mock_provider = MagicMock()
+        mock_provider.capabilities.supports_hook = True
+        mock_provider.capabilities.supports_mailbox_delivery = True
+        mock_provider.capabilities.name = "pi"
+
+        with (
+            patch("ccgram.window_state_ports.identity_state.window_store") as mock_ws,
+            patch(
+                "ccgram.handlers.recovery.transcript_discovery.get_provider_for_window",
+                return_value=mock_provider,
+            ),
+            patch(
+                "ccgram.handlers.recovery.transcript_discovery.config"
+            ) as mock_config,
+            patch(
+                "ccgram.handlers.recovery.transcript_discovery.tmux_manager"
+            ) as mock_tmux,
+            patch(
+                "ccgram.handlers.recovery.transcript_discovery.detect_provider_from_pane",
+                new_callable=AsyncMock,
+                return_value="pi",
+            ),
+        ):
+            mock_ws.window_states = {
+                "@7": MagicMock(
+                    session_id="",
+                    cwd="/my/project",
+                    transcript_path="",
+                    provider_name="pi",
+                ),
+                "@9": MagicMock(
+                    session_id="other-session",
+                    cwd="/my/project",
+                    transcript_path="/path/to/other.jsonl",
+                    provider_name="pi",
+                ),
+            }
+            mock_config.tmux_session_name = "ccgram"
+            mock_tmux.find_window_by_id = AsyncMock(
+                return_value=MagicMock(pane_current_command="pi", cwd="/my/project")
+            )
+            mock_tmux.get_pane_title = AsyncMock(return_value="")
+            await discover_and_register_transcript("@7")
+
+        mock_provider.discover_transcript.assert_not_called()
+
     async def test_excludes_sessions_claimed_by_other_windows(self) -> None:
         from ccgram.handlers.recovery.transcript_discovery import (
             discover_and_register_transcript,
