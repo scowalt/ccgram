@@ -26,10 +26,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import shlex
 import structlog
 import subprocess
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Callable, Sequence
 from pathlib import Path
+from typing import TypeVar
 
 import libtmux
 from libtmux.exc import LibTmuxException
@@ -69,6 +71,7 @@ __all__ = [
 ]
 
 logger = structlog.get_logger()
+_T = TypeVar("_T")
 
 # Backward-compat alias: callers still import ``TmuxWindow`` from this module.
 # ``WindowRef`` is field-compatible (Task 1), so the alias is exact.
@@ -85,6 +88,188 @@ _TmuxError = (
     OSError,
     subprocess.CalledProcessError,
 )
+
+_WINDOW_LIST_TTL = 0.75  # seconds — coalesce status/monitor window scans
+_TMUX_QUERY_TIMEOUT = 2.0
+_TMUX_BACKOFF_AFTER_FAILURE = 5.0
+_TMUX_KILL_WAIT_TIMEOUT = 0.5
+_TMUX_PROCESS_SNAPSHOT_TIMEOUT = 1.0
+_TMUX_PROCESS_SNAPSHOT_LINES = 40
+
+
+def _tmux_diagnostics_enabled() -> bool:
+    raw = getattr(config, "tmux_diagnostics", False)
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw.lower() in ("1", "true", "yes")
+    return False
+
+
+def _tmux_slow_seconds() -> float:
+    raw = getattr(config, "tmux_slow_ms", 500)
+    if not isinstance(raw, int | float | str):
+        return 0.5
+    try:
+        return max(0.0, float(raw) / 1000)
+    except ValueError:
+        return 0.5
+
+
+def _tmux_command_line(command: Sequence[str]) -> str:
+    return " ".join(shlex.quote(part) for part in command)
+
+
+def _stderr_preview(stderr: bytes, limit: int = 300) -> str:
+    return stderr.decode("utf-8", errors="replace").strip()[:limit]
+
+
+def _log_tmux_command_finished(
+    *,
+    operation: str,
+    command: Sequence[str],
+    proc: asyncio.subprocess.Process,
+    elapsed: float,
+    stdout: bytes,
+    stderr: bytes,
+) -> None:
+    slow = elapsed >= _tmux_slow_seconds()
+    if not (slow or _tmux_diagnostics_enabled()):
+        return
+
+    message = "tmux command slow" if slow else "tmux command completed"
+    log = logger.warning if slow else logger.debug
+    log(
+        message,
+        operation=operation,
+        pid=proc.pid,
+        elapsed_ms=round(elapsed * 1000, 1),
+        returncode=proc.returncode,
+        stdout_bytes=len(stdout),
+        stderr=_stderr_preview(stderr),
+        command=_tmux_command_line(command),
+    )
+
+
+async def _kill_timed_out_process(
+    proc: asyncio.subprocess.Process,
+    *,
+    operation: str,
+    command: Sequence[str],
+) -> None:
+    if proc.returncode is not None:
+        return
+
+    with contextlib.suppress(ProcessLookupError):
+        proc.kill()
+
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=_TMUX_KILL_WAIT_TIMEOUT)
+    except TimeoutError:
+        logger.warning(
+            "tmux client did not exit after kill",
+            operation=operation,
+            pid=proc.pid,
+            kill_wait_timeout_s=_TMUX_KILL_WAIT_TIMEOUT,
+            command=_tmux_command_line(command),
+        )
+
+
+async def _log_tmux_process_snapshot(*, operation: str) -> None:
+    if not _tmux_diagnostics_enabled():
+        return
+
+    command = ["ps", "-eo", "pid,ppid,stat,etime,command"]
+    proc: asyncio.subprocess.Process | None = None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        async with asyncio.timeout(_TMUX_PROCESS_SNAPSHOT_TIMEOUT):
+            stdout, _ = await proc.communicate()
+    except OSError, TimeoutError:
+        if proc and proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            with contextlib.suppress(ProcessLookupError, TimeoutError):
+                await asyncio.wait_for(proc.wait(), timeout=_TMUX_KILL_WAIT_TIMEOUT)
+        return
+
+    lines = stdout.decode("utf-8", errors="replace").splitlines()
+    matching = [line for line in lines if "tmux" in line or "ccgram" in line]
+    snapshot = "\n".join(matching[:_TMUX_PROCESS_SNAPSHOT_LINES])
+    if snapshot:
+        logger.warning(
+            "tmux process snapshot",
+            operation=operation,
+            snapshot=snapshot,
+        )
+
+
+async def _communicate_tmux_process(
+    proc: asyncio.subprocess.Process,
+    *,
+    operation: str,
+    command: Sequence[str],
+    timeout: float,
+) -> tuple[bytes, bytes] | None:
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    try:
+        async with asyncio.timeout(timeout):
+            stdout, stderr = await proc.communicate()
+    except TimeoutError:
+        elapsed = loop.time() - start
+        logger.warning(
+            "tmux command timed out",
+            operation=operation,
+            pid=proc.pid,
+            timeout_s=timeout,
+            elapsed_ms=round(elapsed * 1000, 1),
+            command=_tmux_command_line(command),
+        )
+        await _kill_timed_out_process(proc, operation=operation, command=command)
+        await _log_tmux_process_snapshot(operation=operation)
+        return None
+
+    elapsed = loop.time() - start
+    _log_tmux_command_finished(
+        operation=operation,
+        command=command,
+        proc=proc,
+        elapsed=elapsed,
+        stdout=stdout,
+        stderr=stderr,
+    )
+    return stdout, stderr
+
+
+async def _run_libtmux_operation(
+    operation: str,
+    func: Callable[[], _T],
+    **fields: object,
+) -> _T:
+    if _tmux_diagnostics_enabled():
+        logger.debug("libtmux operation started", operation=operation, **fields)
+
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    result = await asyncio.to_thread(func)
+    elapsed = loop.time() - start
+    slow = elapsed >= _tmux_slow_seconds()
+    if slow or _tmux_diagnostics_enabled():
+        message = "libtmux operation slow" if slow else "libtmux operation completed"
+        log = logger.warning if slow else logger.debug
+        log(
+            message,
+            operation=operation,
+            elapsed_ms=round(elapsed * 1000, 1),
+            **fields,
+        )
+    return result
+
 
 # Static capability declaration for the tmux backend (design Task 2).
 _TMUX_CAPABILITIES = MultiplexerCapabilities(
@@ -120,6 +305,13 @@ class TmuxManager:
         """
         self.session_name = session_name or config.tmux_session_name
         self._server: libtmux.Server | None = None
+        self._windows_cache: list[TmuxWindow] = []
+        self._windows_cache_expires: float = 0.0
+        self._windows_backoff_expires: float = 0.0
+        self._windows_cache_filter_key: tuple[str, str] = ("", "")
+        self._windows_query_lock = asyncio.Lock()
+        self._capture_backoff_expires: dict[str, float] = {}
+        self._capture_locks: dict[str, asyncio.Lock] = {}
 
     @property
     def server(self) -> libtmux.Server:
@@ -158,120 +350,152 @@ class TmuxManager:
             session.windows[0].rename_window(config.tmux_main_window_name)
         return session
 
+    def _ensure_window_scan_state(self) -> None:
+        """Initialize scan caches for tests that construct via ``__new__``."""
+        if not hasattr(self, "_windows_cache"):
+            self._windows_cache = []
+        if not hasattr(self, "_windows_cache_expires"):
+            self._windows_cache_expires = 0.0
+        if not hasattr(self, "_windows_backoff_expires"):
+            self._windows_backoff_expires = 0.0
+        if not hasattr(self, "_windows_cache_filter_key"):
+            self._windows_cache_filter_key = ("", "")
+        if not hasattr(self, "_windows_query_lock"):
+            self._windows_query_lock = asyncio.Lock()
+
     @staticmethod
-    def _window_ref_for_reconciliation(window: libtmux.Window) -> TmuxWindow | None:
-        """Build a window ref while treating pane metadata as optional."""
-        name = window.window_name or ""
-        window_id = window.window_id or ""
-        if name == config.tmux_main_window_name:
-            return None
-        if config.own_window_id and window_id == config.own_window_id:
-            return None
-        if name.startswith("_"):
-            return None
+    def _current_window_filter_key() -> tuple[str, str]:
+        return (config.tmux_main_window_name, config.own_window_id or "")
 
-        cwd = ""
-        pane_cmd = ""
-        pane_tty = ""
-        pw = 0
-        ph = 0
-        try:
-            pane = window.active_pane
-            if pane:
-                cwd = pane.pane_current_path or ""
-                pane_cmd = pane.pane_current_command or ""
-                pane_tty = getattr(pane, "pane_tty", "") or ""
-                pw = int(pane.pane_width or 0)
-                ph = int(pane.pane_height or 0)
-        except _TmuxError as exc:
-            logger.debug("Error getting window info: %s", exc)
+    def _invalidate_window_cache(self) -> None:
+        self._ensure_window_scan_state()
+        self._windows_cache_expires = 0.0
+        self._windows_backoff_expires = 0.0
 
-        return TmuxWindow(
-            window_id=window_id,
-            window_name=name,
-            cwd=cwd,
-            pane_current_command=pane_cmd,
-            pane_tty=pane_tty,
-            pane_width=pw,
-            pane_height=ph,
-        )
+    def _window_scan_cached(self, now: float) -> list[TmuxWindow] | None:
+        if now < self._windows_backoff_expires:
+            return list(self._windows_cache)
+        if self._windows_cache_filter_key != self._current_window_filter_key():
+            return None
+        if now < self._windows_cache_expires:
+            return list(self._windows_cache)
+        return None
 
     async def list_windows(self) -> list[TmuxWindow]:
-        """List all windows in the session with their working directories."""
+        """List all windows in the session with their working directories.
 
-        def _sync_list_windows() -> list[TmuxWindow]:
-            windows = []
-            session = self.get_session()
+        Uses direct ``tmux list-windows`` instead of libtmux's session lookup so
+        the 1s polling path does not spawn expensive ``list-sessions -F``
+        clients. Results are briefly cached and concurrent scans reuse the
+        cache, preventing tmux clients from piling up when the server wedges.
+        """
+        self._ensure_window_scan_state()
+        loop = asyncio.get_running_loop()
+        cached = self._window_scan_cached(loop.time())
+        if cached is not None:
+            return cached
 
-            if not session:
-                return windows
-
-            for window in session.windows:
-                name = window.window_name or ""
-                window_id = window.window_id or ""
-                # Skip the main window (placeholder window)
-                if name == config.tmux_main_window_name:
-                    continue
-                # Skip our own window (auto-detect mode)
-                if config.own_window_id and window_id == config.own_window_id:
-                    continue
-                # Skip hidden windows (name starts with underscore)
-                if name.startswith("_"):
-                    continue
-
-                cwd = ""
-                pane_cmd = ""
-                pane_tty = ""
-                pw = 0
-                ph = 0
-                try:
-                    pane = window.active_pane
-                    if pane:
-                        cwd = pane.pane_current_path or ""
-                        pane_cmd = pane.pane_current_command or ""
-                        pane_tty = getattr(pane, "pane_tty", "") or ""
-                        pw = int(pane.pane_width or 0)
-                        ph = int(pane.pane_height or 0)
-                except _TmuxError as e:
-                    logger.debug("Error getting pane info for %s: %s", window_id, e)
-
-                windows.append(
-                    TmuxWindow(
-                        window_id=window.window_id or "",
-                        window_name=name,
-                        cwd=cwd,
-                        pane_current_command=pane_cmd,
-                        pane_tty=pane_tty,
-                        pane_width=pw,
-                        pane_height=ph,
-                    )
-                )
-
-            return windows
-
-        return await asyncio.to_thread(_sync_list_windows)
+        async with self._windows_query_lock:
+            cached = self._window_scan_cached(loop.time())
+            if cached is not None:
+                return cached
+            await self._refresh_window_cache(loop, none_on_failure=False)
+            return list(self._windows_cache)
 
     async def list_windows_for_reconciliation(self) -> list[TmuxWindow] | None:
         """List windows, or return None when tmux cannot confirm the session."""
-
-        def _sync_list_windows() -> list[TmuxWindow] | None:
-            try:
-                session = self.server.sessions.get(
-                    session_name=self.session_name, default=None
-                )
-                if session is None:
-                    return []
-                windows = [
-                    ref
-                    for window in session.windows
-                    if (ref := self._window_ref_for_reconciliation(window)) is not None
-                ]
-            except _TmuxError:
-                self._reset_server()
+        self._ensure_window_scan_state()
+        loop = asyncio.get_running_loop()
+        async with self._windows_query_lock:
+            ok = await self._refresh_window_cache(loop, none_on_failure=True)
+            if ok is None:
                 return None
-            return windows
+            return list(self._windows_cache)
 
-        return await asyncio.to_thread(_sync_list_windows)
+    async def _refresh_window_cache(
+        self, loop: asyncio.AbstractEventLoop, *, none_on_failure: bool = False
+    ) -> bool | None:
+        command = [
+            "tmux",
+            "list-windows",
+            "-t",
+            self.session_name,
+            "-F",
+            "#{window_id}\t#{window_name}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_tty}\t#{pane_width}\t#{pane_height}",
+        ]
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            result = await _communicate_tmux_process(
+                proc,
+                operation="list_windows",
+                command=command,
+                timeout=_TMUX_QUERY_TIMEOUT,
+            )
+        except TimeoutError:
+            self._windows_backoff_expires = loop.time() + _TMUX_BACKOFF_AFTER_FAILURE
+            logger.warning(
+                "tmux list-windows timed out before client start; backing off window scans"
+            )
+            return None if none_on_failure else False
+        except OSError as exc:
+            self._windows_backoff_expires = loop.time() + _TMUX_BACKOFF_AFTER_FAILURE
+            logger.debug("tmux list-windows failed: %s", exc)
+            return None if none_on_failure else False
+
+        if result is None:
+            self._windows_backoff_expires = loop.time() + _TMUX_BACKOFF_AFTER_FAILURE
+            return None if none_on_failure else False
+
+        stdout, _ = result
+        if proc.returncode != 0:
+            self._windows_cache_filter_key = self._current_window_filter_key()
+            self._windows_cache = []
+            self._windows_cache_expires = loop.time() + _WINDOW_LIST_TTL
+            return None if none_on_failure else False
+
+        self._windows_cache_filter_key = self._current_window_filter_key()
+        self._windows_cache = self._parse_list_windows_output(stdout.decode())
+        self._windows_cache_expires = loop.time() + _WINDOW_LIST_TTL
+        return True
+
+    @staticmethod
+    def _int_or_zero(value: str) -> int:
+        return int(value) if value.isdigit() else 0
+
+    def _parse_list_windows_output(self, text: str) -> list[TmuxWindow]:
+        windows: list[TmuxWindow] = []
+        for line in text.strip().split("\n"):
+            if not line:
+                continue
+            parts = line.split("\t", 6)
+            if len(parts) < 4:  # noqa: PLR2004
+                continue
+            window_id, name, cwd, pane_cmd = parts[:4]
+            pane_tty = parts[4] if len(parts) > 4 else ""  # noqa: PLR2004
+            width = self._int_or_zero(parts[5]) if len(parts) > 5 else 0  # noqa: PLR2004
+            height = self._int_or_zero(parts[6]) if len(parts) > 6 else 0  # noqa: PLR2004
+            if name == config.tmux_main_window_name:
+                continue
+            if config.own_window_id and window_id == config.own_window_id:
+                continue
+            if name.startswith("_"):
+                continue
+            windows.append(
+                TmuxWindow(
+                    window_id=window_id,
+                    window_name=name,
+                    cwd=cwd,
+                    pane_current_command=pane_cmd,
+                    pane_tty=pane_tty,
+                    pane_width=width,
+                    pane_height=height,
+                )
+            )
+        return windows
 
     async def find_window_by_name(self, window_name: str) -> TmuxWindow | None:
         """Find a window by its name.
