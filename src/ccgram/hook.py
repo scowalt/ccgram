@@ -948,10 +948,23 @@ def _resolve_transcript_path(
     provider_name: str, session_id: str, cwd: str, transcript_path: str
 ) -> str:
     """Return transcript path from payload or provider-specific fallback."""
-    if transcript_path:
-        return transcript_path
     if provider_name == "pi":
-        return _resolve_pi_transcript_path(session_id, cwd)
+        if transcript_path and session_id in Path(transcript_path).name:
+            return transcript_path
+        resolved = _resolve_pi_transcript_path(session_id, cwd)
+        if resolved:
+            if transcript_path and transcript_path != resolved:
+                logger.warning(
+                    "Ignoring stale Pi transcript path for session %s: %s -> %s",
+                    session_id,
+                    transcript_path,
+                    resolved,
+                )
+            return resolved
+        if transcript_path:
+            return transcript_path
+    elif transcript_path:
+        return transcript_path
     return ""
 
 
@@ -997,15 +1010,19 @@ def _refresh_session_map_if_stale(
         # tracked here — leave the fallback (cwd-based discovery in
         # SessionMonitor) to handle it.
         return
-    if (
-        existing.get("session_id") == session_id
-        and existing.get("provider_name") == provider_name
-    ):
-        return
     cwd = payload_cwd or existing.get("cwd", "")
     transcript_path = _resolve_transcript_path(
         provider_name, session_id, cwd, payload_transcript_path
     )
+    if (
+        existing.get("session_id") == session_id
+        and existing.get("provider_name") == provider_name
+        and (
+            not transcript_path
+            or existing.get("transcript_path", "") == transcript_path
+        )
+    ):
+        return
     tmux_session_name = session_window_key.rsplit(":", 1)[0]
     _update_session_map(
         session_window_key,

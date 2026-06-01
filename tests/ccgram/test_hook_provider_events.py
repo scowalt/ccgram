@@ -52,6 +52,95 @@ def test_pi_session_start_writes_provider_and_resolves_transcript(
     assert entry["transcript_path"] == str(transcript)
 
 
+def test_pi_session_start_ignores_stale_payload_transcript_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    cwd = str(tmp_path / "proj")
+    session_id = "019e214d-7011-754d-9efb-60106dfa967c"
+    stale_session_id = "019e214d-7011-754d-9efb-60106dfa0000"
+    transcript_dir = (
+        tmp_path / ".pi" / "agent" / "sessions" / _encode_pi_cwd_dirname(cwd)
+    )
+    transcript_dir.mkdir(parents=True)
+    stale_transcript = (
+        transcript_dir / f"2026-05-13T12-00-00-000Z_{stale_session_id}.jsonl"
+    )
+    transcript = transcript_dir / f"2026-05-13T12-26-23-633Z_{session_id}.jsonl"
+    stale_transcript.write_text('{"type":"session"}\n')
+    transcript.write_text('{"type":"session"}\n')
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("CCGRAM_DIR", str(tmp_path / "state"))
+
+    _run_hook(
+        monkeypatch,
+        {
+            "session_id": session_id,
+            "cwd": cwd,
+            "hook_event_name": "SessionStart",
+            "transcript_path": str(stale_transcript),
+        },
+        "pi",
+    )
+
+    session_map = json.loads((tmp_path / "state" / "session_map.json").read_text())
+    entry = session_map["ccgram:@0"]
+    assert entry["provider_name"] == "pi"
+    assert entry["session_id"] == session_id
+    assert entry["transcript_path"] == str(transcript)
+
+
+def test_pi_stop_refreshes_stale_transcript_path_when_session_is_in_sync(
+    tmp_path: Path, monkeypatch
+) -> None:
+    cwd = str(tmp_path / "proj")
+    session_id = "019e214d-7011-754d-9efb-60106dfa967c"
+    stale_session_id = "019e214d-7011-754d-9efb-60106dfa0000"
+    transcript_dir = (
+        tmp_path / ".pi" / "agent" / "sessions" / _encode_pi_cwd_dirname(cwd)
+    )
+    transcript_dir.mkdir(parents=True)
+    stale_transcript = (
+        transcript_dir / f"2026-05-13T12-00-00-000Z_{stale_session_id}.jsonl"
+    )
+    transcript = transcript_dir / f"2026-05-13T12-26-23-633Z_{session_id}.jsonl"
+    stale_transcript.write_text('{"type":"session"}\n')
+    transcript.write_text('{"type":"session"}\n')
+    monkeypatch.setenv("HOME", str(tmp_path))
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    monkeypatch.setenv("CCGRAM_DIR", str(state_dir))
+    (state_dir / "session_map.json").write_text(
+        json.dumps(
+            {
+                "ccgram:@0": {
+                    "session_id": session_id,
+                    "cwd": cwd,
+                    "window_name": "project",
+                    "transcript_path": str(stale_transcript),
+                    "provider_name": "pi",
+                }
+            }
+        )
+    )
+
+    _run_hook(
+        monkeypatch,
+        {
+            "session_id": session_id,
+            "cwd": cwd,
+            "hook_event_name": "Stop",
+            "transcript_path": str(stale_transcript),
+        },
+        "pi",
+    )
+
+    session_map = json.loads((state_dir / "session_map.json").read_text())
+    entry = session_map["ccgram:@0"]
+    assert entry["session_id"] == session_id
+    assert entry["provider_name"] == "pi"
+    assert entry["transcript_path"] == str(transcript)
+
+
 _CODEX_SESSION_ID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 _GEMINI_SESSION_ID = "b2c3d4e5-f678-90ab-cdef-1234567890ab"
 
