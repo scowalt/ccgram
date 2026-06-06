@@ -274,7 +274,7 @@ async def _handle_new(
         context.user_data.get(PENDING_THREAD_ID) if context.user_data else None
     )
     # A live picker always has a pending thread (set when it was shown).
-    # None means the flow was reset (e.g. /new) and this is a stale tap —
+    # None means the flow was reset (e.g. /start) and this is a stale tap —
     # rebuilding the browser here would leave it pending-thread-less and
     # let a later confirm spawn an unbound window in the bot's own cwd.
     if pending_tid is None:

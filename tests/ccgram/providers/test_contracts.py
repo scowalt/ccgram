@@ -27,7 +27,6 @@ class StubProvider(JsonlProvider):
         supports_resume=True,
         supports_continue=True,
         supports_structured_transcript=True,
-        transcript_format="jsonl",
         builtin_commands=("help", "clear"),
     )
 

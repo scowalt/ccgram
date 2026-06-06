@@ -70,7 +70,6 @@ class TestHookAwareCapabilities:
     def test_hook_flags(self, hook_aware_jsonl_provider) -> None:
         caps = hook_aware_jsonl_provider.capabilities
         assert caps.supports_hook is True
-        assert caps.supports_hook_events is True
         assert caps.supports_resume is True
         assert caps.supports_continue is True
 
@@ -1882,7 +1881,6 @@ class TestGeminiCapabilityFlag:
     def test_gemini_supports_incremental_read(self) -> None:
         gemini = GeminiProvider()
         assert gemini.capabilities.supports_incremental_read is True
-        assert gemini.capabilities.transcript_format == "jsonl"
 
     def test_codex_supports_incremental_read(self) -> None:
         codex = CodexProvider()

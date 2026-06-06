@@ -110,7 +110,6 @@ class ClaudeHookAdapter:
     # ~/.claude/settings.json schema rather than the JSON-hook installer,
     # but installable_events lets call sites read every adapter uniformly.
     installable_events: tuple[str, ...] = event_types
-    install_managed_by_ccgram = True
 
     def normalize(self, payload: dict[str, object]) -> NormalizedHookEvent | None:
         event_name = _str_field(payload, "hook_event_name")
@@ -145,7 +144,6 @@ class PiHookAdapter:
     )
     # Pi hooks are installed by cc-thingz hook-runner, not ccgram.
     installable_events: tuple[str, ...] = ()
-    install_managed_by_ccgram = False
 
     def normalize(self, payload: dict[str, object]) -> NormalizedHookEvent | None:
         event_name = _str_field(payload, "hook_event_name")
@@ -196,7 +194,6 @@ class CodexHookAdapter:
     # Only the lifecycle signals ccgram acts on — the rest are accepted by
     # normalize() in case Codex starts emitting them with useful data.
     installable_events: tuple[str, ...] = ("SessionStart", "Stop")
-    install_managed_by_ccgram = True
 
     def normalize(self, payload: dict[str, object]) -> NormalizedHookEvent | None:
         event_name = _str_field(payload, "hook_event_name")
@@ -248,7 +245,6 @@ class GeminiHookAdapter:
         "SessionEnd",
         "Notification",
     )
-    install_managed_by_ccgram = True
 
     def normalize(self, payload: dict[str, object]) -> NormalizedHookEvent | None:
         # Gemini session IDs are not UUIDs in current builds (free-form CLI
@@ -339,11 +335,6 @@ def get_hook_adapter(provider_name: str) -> HookAdapter | None:
     if provider_name not in _SAFE_PROVIDERS:
         return None
     return _ADAPTERS[cast(ProviderName, provider_name)]
-
-
-def all_hook_adapters() -> tuple[HookAdapter, ...]:
-    """Return all known hook adapters."""
-    return tuple(_ADAPTERS.values())
 
 
 def detect_provider_from_payload(payload: dict[str, object]) -> ProviderName | None:

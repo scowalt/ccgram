@@ -41,6 +41,7 @@ class TestCliCommands:
         assert "hook" in result.output
         assert "status" in result.output
         assert "doctor" in result.output
+        assert "msg" not in result.output
 
     def test_run_help(self, runner):
         result = runner.invoke(cli, ["run", "--help"])
@@ -63,6 +64,21 @@ class TestCliCommands:
     def test_status_help(self, runner):
         result = runner.invoke(cli, ["status", "--help"])
         assert result.exit_code == 0
+
+    def test_short_flag_rewrites_to_run(self, runner):
+        result = runner.invoke(cli, ["-v", "--help"])
+        assert result.exit_code == 0
+        assert "Start the bot with optional overrides." in result.output
+
+    def test_long_flag_rewrites_to_run(self, runner):
+        result = runner.invoke(cli, ["--tmux-session", "demo", "--help"])
+        assert result.exit_code == 0
+        assert "Start the bot with optional overrides." in result.output
+
+    def test_removed_msg_subcommand_fails_clearly(self, runner):
+        result = runner.invoke(cli, ["msg", "--help"])
+        assert result.exit_code != 0
+        assert "No such command 'msg'" in result.output
 
 
 class TestRunValidation:
@@ -137,7 +153,6 @@ class TestApplyArgsToEnv:
             tmux_session="s",
             monitor_interval=3.0,
             group_id=99,
-            instance_name="n",
             autoclose_done=10,
             autoclose_dead=5,
         )
@@ -146,7 +161,6 @@ class TestApplyArgsToEnv:
         assert os.environ["TMUX_SESSION_NAME"] == "s"
         assert os.environ["MONITOR_POLL_INTERVAL"] == "3.0"
         assert os.environ["CCGRAM_GROUP_ID"] == "99"
-        assert os.environ["CCGRAM_INSTANCE_NAME"] == "n"
         assert os.environ["AUTOCLOSE_DONE_MINUTES"] == "10"
         assert os.environ["AUTOCLOSE_DEAD_MINUTES"] == "5"
 

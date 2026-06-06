@@ -27,7 +27,6 @@ from ...session import session_manager
 from ...session_map import session_map_sync
 from ...telegram_client import TelegramClient
 from ...tmux_manager import tmux_manager
-from ...window_resolver import is_foreign_window
 from ...window_state_ports import identity_state
 
 if TYPE_CHECKING:
@@ -207,7 +206,7 @@ def _resolve_providers_to_try(
 
     if identity.provider_name:
         provider = get_provider_for_window(window_id, identity.provider_name)
-        if not provider.capabilities.supports_mailbox_delivery:
+        if provider.capabilities.chat_first_command_path:
             return []
         return [(provider.capabilities.name, provider)]
 
@@ -228,11 +227,7 @@ async def _find_and_register_transcript(
     pane_alive: bool,
 ) -> None:
     """Search for transcripts among candidate providers and register if found."""
-    window_key = (
-        window_id
-        if is_foreign_window(window_id)
-        else f"{config.tmux_session_name}:{window_id}"
-    )
+    window_key = f"{config.tmux_session_name}:{window_id}"
 
     transcript_path_str = (
         str(identity.transcript_path) if identity.transcript_path else ""
@@ -249,11 +244,7 @@ async def _find_and_register_transcript(
             )
             continue
         max_age = (
-            None
-            if provider.capabilities.supports_hook
-            else 0
-            if pane_alive
-            else None
+            None if provider.capabilities.supports_hook else 0 if pane_alive else None
         )
         (
             claimed_session_ids,

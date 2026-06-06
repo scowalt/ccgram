@@ -219,7 +219,8 @@ class TestClaudeCommandDiscovery:
         assert core <= set(CC_BUILTINS.keys())
 
     def test_cc_builtins_exclude_bot_native_collisions(self) -> None:
-        # /new collides with bot-native /new (handlers/topics/new_command.py)
         # /resume collides with bot-native /resume (handlers/recovery/resume_command.py)
-        assert "new" not in CC_BUILTINS
         assert "resume" not in CC_BUILTINS
+
+    def test_claude_builtins_do_not_advertise_new(self) -> None:
+        assert "new" not in CC_BUILTINS

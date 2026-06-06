@@ -182,16 +182,6 @@ def _check_hooks(provider_name: str = "claude") -> tuple[str, str, dict[str, boo
     )
 
 
-def _check_hook() -> tuple[str, str, bool]:
-    """Check hook installation (backward compat wrapper).
-
-    Returns (status, message, is_installed).
-    """
-    status, message, event_status = _check_hooks()
-    any_installed = any(event_status.values()) if event_status else False
-    return status, message, any_installed
-
-
 def _check_config_dir() -> tuple[str, str]:
     """Check config directory exists."""
     config_dir = ccgram_dir()
@@ -352,13 +342,6 @@ def _fix_hooks(
         _print_check(_PASS, "hooks installed (fixed)")
     else:
         _print_check(_FAIL, "failed to install hooks")
-
-
-def _fix_hook(hook_installed: bool, fix: bool) -> None:
-    """Attempt to fix missing hook if --fix is set (backward compat)."""
-    if not fix or hook_installed:
-        return
-    _fix_hooks({}, fix)
 
 
 def _fix_orphans(orphans: list[tuple[str, str]], fix: bool) -> None:

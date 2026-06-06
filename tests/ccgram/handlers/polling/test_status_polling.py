@@ -15,7 +15,6 @@ from ccgram.handlers.topics.topic_lifecycle import (
 )
 from ccgram.handlers.polling.window_tick import (
     _handle_dead_window_notification,
-    _maybe_warn_external_gemini,
     _parse_with_pyte,
     _scan_window_panes,
     decide_tick,
@@ -984,11 +983,9 @@ class TestProviderSwitchChain:
         shell_caps = MagicMock()
         shell_caps.capabilities.supports_hook = False
         shell_caps.capabilities.chat_first_command_path = True
-        shell_caps.capabilities.supports_mailbox_delivery = False
         gemini_caps = MagicMock()
         gemini_caps.capabilities.supports_hook = False
         gemini_caps.capabilities.chat_first_command_path = False
-        gemini_caps.capabilities.supports_mailbox_delivery = True
         gemini_caps.capabilities.name = "gemini"
         gemini_caps.discover_transcript.return_value = None
 
@@ -1103,6 +1100,7 @@ class TestMaybeDiscoverTranscript:
 
         mock_provider = MagicMock()
         mock_provider.capabilities.supports_hook = False
+        mock_provider.capabilities.chat_first_command_path = False
         mock_provider.capabilities.name = "codex"
         mock_provider.discover_transcript.return_value = SessionStartEvent(
             session_id="existing-id",
@@ -1172,6 +1170,7 @@ class TestMaybeDiscoverTranscript:
 
         mock_provider = MagicMock()
         mock_provider.capabilities.supports_hook = False
+        mock_provider.capabilities.chat_first_command_path = False
         mock_provider.capabilities.name = "codex"
         event = SessionStartEvent(
             session_id="uuid-xyz",
@@ -1260,6 +1259,7 @@ class TestMaybeDiscoverTranscript:
 
         mock_provider = MagicMock()
         mock_provider.capabilities.supports_hook = False
+        mock_provider.capabilities.chat_first_command_path = False
         mock_provider.capabilities.name = "codex"
         event = SessionStartEvent(
             session_id="uuid-abc",
@@ -1327,6 +1327,7 @@ class TestMaybeDiscoverTranscript:
         mock_provider = MagicMock()
         mock_provider.capabilities.supports_hook = True
         mock_provider.capabilities.supports_mailbox_delivery = True
+        mock_provider.capabilities.chat_first_command_path = False
         mock_provider.capabilities.name = "pi"
         mock_provider.discover_transcript.return_value = None
 
@@ -1379,6 +1380,7 @@ class TestMaybeDiscoverTranscript:
         mock_provider = MagicMock()
         mock_provider.capabilities.supports_hook = True
         mock_provider.capabilities.supports_mailbox_delivery = True
+        mock_provider.capabilities.chat_first_command_path = False
         mock_provider.capabilities.name = "pi"
 
         with (
@@ -1430,6 +1432,7 @@ class TestMaybeDiscoverTranscript:
 
         mock_provider = MagicMock()
         mock_provider.capabilities.supports_hook = False
+        mock_provider.capabilities.chat_first_command_path = False
         mock_provider.capabilities.name = "codex"
         mock_provider.discover_transcript.return_value = SessionStartEvent(
             session_id="uuid-new",
@@ -1488,6 +1491,7 @@ class TestMaybeDiscoverTranscript:
 
         mock_provider = MagicMock()
         mock_provider.capabilities.supports_hook = False
+        mock_provider.capabilities.chat_first_command_path = False
         mock_provider.capabilities.name = "codex"
         mock_provider.discover_transcript.return_value = SessionStartEvent(
             session_id="uuid-claimed",
@@ -1546,6 +1550,7 @@ class TestMaybeDiscoverTranscript:
 
         mock_provider = MagicMock()
         mock_provider.capabilities.supports_hook = False
+        mock_provider.capabilities.chat_first_command_path = False
         mock_provider.capabilities.name = "codex"
         event = SessionStartEvent(
             session_id="shared-session",
@@ -1609,6 +1614,7 @@ class TestMaybeDiscoverTranscript:
 
         mock_provider = MagicMock()
         mock_provider.capabilities.supports_hook = False
+        mock_provider.capabilities.chat_first_command_path = False
         mock_provider.capabilities.name = "codex"
         event = SessionStartEvent(
             session_id="uuid-new",
@@ -1667,6 +1673,7 @@ class TestMaybeDiscoverTranscript:
 
         mock_provider = MagicMock()
         mock_provider.capabilities.supports_hook = False
+        mock_provider.capabilities.chat_first_command_path = False
         mock_provider.discover_transcript.return_value = None
 
         with (
@@ -1706,6 +1713,7 @@ class TestMaybeDiscoverTranscript:
 
         mock_provider = MagicMock()
         mock_provider.capabilities.supports_hook = False
+        mock_provider.capabilities.chat_first_command_path = False
         mock_provider.capabilities.name = "codex"
         event = SessionStartEvent(
             session_id="uuid-abc",
@@ -1769,11 +1777,13 @@ class TestMaybeDiscoverTranscript:
 
         mock_codex = MagicMock()
         mock_codex.capabilities.supports_hook = False
+        mock_codex.capabilities.chat_first_command_path = False
         mock_codex.capabilities.name = "codex"
         mock_codex.discover_transcript.return_value = event
 
         mock_gemini = MagicMock()
         mock_gemini.capabilities.supports_hook = False
+        mock_gemini.capabilities.chat_first_command_path = False
         mock_gemini.capabilities.name = "gemini"
         mock_gemini.discover_transcript.return_value = None
 
@@ -1848,11 +1858,13 @@ class TestMaybeDiscoverTranscript:
 
         mock_codex = MagicMock()
         mock_codex.capabilities.supports_hook = False
+        mock_codex.capabilities.chat_first_command_path = False
         mock_codex.capabilities.name = "codex"
         mock_codex.discover_transcript.return_value = conflicting_event
 
         mock_gemini = MagicMock()
         mock_gemini.capabilities.supports_hook = False
+        mock_gemini.capabilities.chat_first_command_path = False
         mock_gemini.capabilities.name = "gemini"
         mock_gemini.discover_transcript.return_value = alternative_event
 
@@ -1941,6 +1953,7 @@ class TestMaybeDiscoverTranscript:
 
         mock_provider = MagicMock()
         mock_provider.capabilities.supports_hook = False
+        mock_provider.capabilities.chat_first_command_path = False
         mock_provider.capabilities.name = "codex"
         mock_provider.discover_transcript.return_value = None
 
@@ -1985,6 +1998,7 @@ class TestMaybeDiscoverTranscript:
 
         mock_provider = MagicMock()
         mock_provider.capabilities.supports_hook = False
+        mock_provider.capabilities.chat_first_command_path = False
         mock_provider.capabilities.name = "codex"
         mock_provider.discover_transcript.return_value = None
 
@@ -2027,6 +2041,7 @@ class TestMaybeDiscoverTranscript:
 
         mock_codex = MagicMock()
         mock_codex.capabilities.supports_hook = False
+        mock_codex.capabilities.chat_first_command_path = False
         mock_codex.capabilities.name = "codex"
         mock_codex.discover_transcript.return_value = None
 
@@ -2038,6 +2053,7 @@ class TestMaybeDiscoverTranscript:
         )
         mock_gemini = MagicMock()
         mock_gemini.capabilities.supports_hook = False
+        mock_gemini.capabilities.chat_first_command_path = False
         mock_gemini.capabilities.name = "gemini"
         mock_gemini.discover_transcript.return_value = gemini_event
 
@@ -2128,6 +2144,7 @@ class TestMaybeDiscoverTranscript:
         )
         mock_codex = MagicMock()
         mock_codex.capabilities.supports_hook = False
+        mock_codex.capabilities.chat_first_command_path = False
         mock_codex.capabilities.name = "codex"
         mock_codex.discover_transcript.return_value = codex_event
 
@@ -2207,85 +2224,6 @@ class TestMaybeDiscoverTranscript:
             transcript_path="/Users/alexei/.codex/sessions/2026/03/23/test.jsonl",
             provider_name="codex",
         )
-
-
-class TestMaybeWarnExternalGemini:
-    def _patches(
-        self,
-        *,
-        provider: str,
-        external: bool,
-        already_warned: bool,
-        view: object | None = "__default__",
-    ):
-        prov = MagicMock()
-        prov.capabilities.name = provider
-        win_view = MagicMock(external=external) if view == "__default__" else view
-        return prov, already_warned, win_view
-
-    async def _run(self, prov, already_warned, win_view):
-        bot = AsyncMock(spec=Bot)
-        with (
-            patch(
-                "ccgram.handlers.polling.window_tick.apply.was_gemini_external_warned",
-                return_value=already_warned,
-            ) as mock_was,
-            patch(
-                "ccgram.handlers.polling.window_tick.apply.mark_gemini_external_warned"
-            ) as mock_mark,
-            patch("ccgram.handlers.polling.window_tick.apply.window_query") as mock_wq,
-            patch("ccgram.handlers.polling.window_tick.apply.thread_router") as mock_tr,
-            patch(
-                "ccgram.handlers.polling.window_tick.apply._get_provider",
-                return_value=prov,
-            ),
-            patch(
-                "ccgram.handlers.polling.window_tick.apply.safe_send",
-                new_callable=AsyncMock,
-            ) as mock_send,
-        ):
-            mock_wq.view_window.return_value = win_view
-            mock_tr.resolve_chat_id.return_value = -100
-            await _maybe_warn_external_gemini(bot, 1, "@9", 42)
-        return mock_send, mock_was, mock_mark
-
-    async def test_warns_once_for_external_gemini(self) -> None:
-        prov, warned, view = self._patches(
-            provider="gemini", external=True, already_warned=False
-        )
-        mock_send, _, mock_mark = await self._run(prov, warned, view)
-        mock_send.assert_called_once()
-        mock_mark.assert_called_once_with("@9")
-
-    async def test_silent_when_already_warned(self) -> None:
-        prov, warned, view = self._patches(
-            provider="gemini", external=True, already_warned=True
-        )
-        mock_send, _, mock_mark = await self._run(prov, warned, view)
-        mock_send.assert_not_called()
-        mock_mark.assert_not_called()
-
-    async def test_silent_for_managed_gemini(self) -> None:
-        prov, warned, view = self._patches(
-            provider="gemini", external=False, already_warned=False
-        )
-        mock_send, _, _ = await self._run(prov, warned, view)
-        mock_send.assert_not_called()
-
-    async def test_silent_for_external_non_gemini(self) -> None:
-        prov, warned, view = self._patches(
-            provider="claude", external=True, already_warned=False
-        )
-        mock_send, _, mock_mark = await self._run(prov, warned, view)
-        mock_send.assert_not_called()
-        mock_mark.assert_not_called()
-
-    async def test_silent_when_no_window_view(self) -> None:
-        prov, warned, _ = self._patches(
-            provider="gemini", external=True, already_warned=False, view=None
-        )
-        mock_send, _, _ = await self._run(prov, warned, None)
-        mock_send.assert_not_called()
 
 
 class TestDeadWindowNotification:

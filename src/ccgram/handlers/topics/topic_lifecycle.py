@@ -21,7 +21,6 @@ from ...telegram_client import PTBTelegramClient, TelegramClient
 from ...thread_router import thread_router
 from ...tmux_manager import tmux_manager
 from ...utils import log_throttled
-from ...window_resolver import is_foreign_window
 from ...window_state_store import CCGRAM_CREATED_WINDOW_ORIGIN
 from ..cleanup import clear_topic_state
 from ..messaging_pipeline.message_sender import is_thread_gone
@@ -47,7 +46,7 @@ async def check_autoclose_timers(client: TelegramClient) -> None:
         return
 
     now = time.monotonic()
-    expired: list[tuple[int, int]] = []
+    expired: list[tuple[int, int, str]] = []
     for user_id, thread_id, ts in all_topics:
         if ts.autoclose is None:
             continue
@@ -59,18 +58,30 @@ async def check_autoclose_timers(client: TelegramClient) -> None:
         else:
             continue
         if timeout > 0 and now - entered_at >= timeout:
-            expired.append((user_id, thread_id))
+            expired.append((user_id, thread_id, state))
 
-    for user_id, thread_id in expired:
-        await _close_expired_topic(client, user_id, thread_id)
+    for user_id, thread_id, state in expired:
+        await _close_expired_topic(client, user_id, thread_id, state)
 
 
 async def _close_expired_topic(
-    client: TelegramClient, user_id: int, thread_id: int
+    client: TelegramClient, user_id: int, thread_id: int, state: str
 ) -> None:
     """Attempt to close/delete an expired topic and clean up state."""
-    chat_id = thread_router.resolve_chat_id(user_id, thread_id)
     window_id = thread_router.get_window_for_thread(user_id, thread_id)
+    if state == "dead" and window_id is not None:
+        live_window = await tmux_manager.find_window_by_id(window_id)
+        if live_window is not None:
+            lifecycle_strategy.clear_autoclose_timer(user_id, thread_id)
+            logger.info(
+                "stale_dead_autoclose_cleared",
+                thread_id=thread_id,
+                user_id=user_id,
+                window_id=window_id,
+            )
+            return
+
+    chat_id = thread_router.resolve_chat_id(user_id, thread_id)
     removed = False
     try:
         await client.delete_forum_topic(chat_id=chat_id, message_thread_id=thread_id)
@@ -129,7 +140,7 @@ async def check_unbound_window_ttl(
 
     now = time.monotonic()
     for w in live_windows:
-        if w.window_id in bound_ids or is_foreign_window(w.window_id):
+        if w.window_id in bound_ids:
             continue
         view = window_query.view_window(w.window_id)
         if view is None or view.origin != CCGRAM_CREATED_WINDOW_ORIGIN:
@@ -155,9 +166,7 @@ async def _kill_expired_unbound(now: float, timeout: float) -> None:
         from ...topic_state_registry import topic_state
 
         topic_state.clear_window(wid)
-        qualified_id = (
-            wid if is_foreign_window(wid) else f"{config.tmux_session_name}:{wid}"
-        )
+        qualified_id = f"{config.tmux_session_name}:{wid}"
         topic_state.clear_qualified(qualified_id)
         logger.info("auto_killed_unbound_window", window_id=wid)
 

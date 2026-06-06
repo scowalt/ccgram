@@ -75,7 +75,7 @@ Each Telegram Forum topic binds to one tmux window. Messages you type are sent a
 - **Topic-per-agent** — each Telegram Forum topic is one tmux window running one agent CLI
 - **Git worktree topics** — when a new topic's directory is an eligible git repo, you can spin the agent up in a fresh worktree on a new branch (suggested `ccg/<topic-title>`, one-tap confirm or edit the name) instead of the current branch; non-git directories see the unchanged flow
 - **Interactive prompts** — AskUserQuestion, ExitPlanMode, and Permission dialogs rendered as inline keyboards
-- **Slash commands** — provider-aware menu (Claude `/cost`, Codex `/status`, Gemini `/chat`, Pi `/compact`, etc.); mismatched commands report errors
+- **Slash commands** — provider-aware menu (Claude `/cost`, Codex `/status`, Gemini `/chat`, Pi `/new`, `/compact`, `/scoped_models`, etc.); Pi also supports `/followup <message>` to queue Pi's Alt+Enter follow-up message; mismatched commands report errors
 - **Voice messages** — transcribed via Whisper API (OpenAI/Groq), shown with **Send / Discard** buttons before forwarding
 - **Multi-pane support** — auto-detects blocked panes in agent teams, surfaces prompts as alerts; `/panes` for overview
 - **Terminal screenshots** — capture the current pane (or any specific pane) as a readable PNG of the current viewport, with ANSI color
@@ -132,7 +132,6 @@ graph TB
 
 - **Per-topic provider** — different topics can use different agents simultaneously
 - **Auto-detect** — externally created tmux windows are detected via process name, with `ps -t` TTY fallback for JS runtime wrappers (node/bun)
-- **[Emdash](https://emdash.ai) integration** — auto-discovers emdash tmux sessions; bind Telegram topics to emdash-managed agents with zero configuration
 
 ### Shell Provider
 
@@ -141,41 +140,6 @@ graph TB
 - **Voice-to-command** — voice messages transcribed via Whisper, then routed through the LLM
 - **Dangerous command detection** — extra confirmation step before running destructive commands
 - **BYOK LLM** — OpenAI, Anthropic, xAI, DeepSeek, Groq, Ollama (zero new dependencies)
-
-### Inter-Agent Messaging (Swarm)
-
-```mermaid
-graph LR
-  subgraph agents["Agent Windows"]
-    A1["claude · api"]
-    A2["codex · ui"]
-    A3["shell · ops"]
-  end
-
-  subgraph mailbox["~/.ccgram/mailbox/"]
-    M["file-based\nper-window inboxes\nJSON messages · TTL"]
-  end
-
-  subgraph telegram["Telegram"]
-    N["silent notifications\nin sender + recipient topics"]
-    S["spawn approval\ninline keyboard"]
-  end
-
-  A1 -- "ccgram msg send" --> mailbox
-  mailbox -- "broker injects\nvia send-keys" --> A2
-  A3 -- "ccgram msg spawn" --> S
-  mailbox --> N
-
-  style agents fill:#f0faf0,stroke:#2ea44f,stroke-width:2px,color:#333
-  style mailbox fill:#fce4ec,stroke:#c62828,stroke-width:2px,color:#333
-  style telegram fill:#e8f4fd,stroke:#0088cc,stroke-width:2px,color:#333
-```
-
-- Agents discover each other, exchange messages, broadcast notifications, and spawn new agents
-- File-based mailbox (`~/.ccgram/mailbox/`) — no database, no daemon
-- Broker delivers pending messages to idle windows automatically
-- Spawn approval requires Telegram keyboard confirmation
-- See **[docs/guides.md](docs/guides.md#inter-agent-messaging)** for setup and usage
 
 ---
 
@@ -298,7 +262,7 @@ Tokens are HMAC-signed with the bot token, scoped to a single window + user, and
 
 ### Reverse-proxy snippet (caddy)
 
-```
+```caddy
 ccgram.example.com {
   reverse_proxy 127.0.0.1:8765
 }

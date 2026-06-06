@@ -161,13 +161,5 @@ class CommandCatalog:
         self._cache[cache_key] = (now, list(deduped))
         return deduped
 
-    def invalidate(self, provider_name: str | None = None) -> None:
-        if provider_name is None:
-            self._cache.clear()
-            return
-        keys = [key for key in self._cache if key[0] == provider_name]
-        for key in keys:
-            self._cache.pop(key, None)
-
 
 command_catalog = CommandCatalog()

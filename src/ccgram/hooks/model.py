@@ -41,7 +41,6 @@ class HookAdapter(Protocol):
     provider_name: ProviderName
     event_types: tuple[str, ...]
     installable_events: tuple[str, ...]
-    install_managed_by_ccgram: bool
 
     def normalize(self, payload: dict[str, object]) -> NormalizedHookEvent | None:
         """Return a safe normalized event, or None for invalid/unhandled input."""

@@ -70,6 +70,27 @@ class TestCheckAutocloseTimers:
             await check_autoclose_timers(bot)
         bot.delete_forum_topic.assert_not_called()
 
+    async def test_expired_dead_topic_stays_when_window_is_live(self):
+        bot = AsyncMock(spec=Bot)
+        user_id, thread_id = 1, 100
+        lifecycle_strategy.start_autoclose_timer(
+            user_id, thread_id, "dead", time.monotonic() - 99999
+        )
+        with (
+            patch("ccgram.handlers.topics.topic_lifecycle.config") as mock_config,
+            patch(
+                "ccgram.handlers.topics.topic_lifecycle.thread_router"
+            ) as mock_router,
+            patch("ccgram.handlers.topics.topic_lifecycle.tmux_manager") as mock_tmux,
+        ):
+            mock_config.autoclose_done_minutes = 30
+            mock_config.autoclose_dead_minutes = 10
+            mock_router.get_window_for_thread.return_value = "@0"
+            mock_tmux.find_window_by_id = AsyncMock(return_value=MagicMock())
+            await check_autoclose_timers(bot)
+        bot.delete_forum_topic.assert_not_called()
+        assert lifecycle_strategy.get_state(user_id, thread_id).autoclose is None
+
 
 def _window_view(origin: str) -> WindowView:
     return WindowView(
@@ -82,7 +103,6 @@ def _window_view(origin: str) -> WindowView:
         transcript_path=None,
         window_name="test",
         session_id="s1",
-        external=False,
         origin=origin,
     )
 

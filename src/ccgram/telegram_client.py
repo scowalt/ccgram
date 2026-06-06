@@ -94,19 +94,19 @@ class TelegramClient(Protocol):
         **kwargs: Any,
     ) -> Message: ...
 
-    async def send_voice(
-        self,
-        chat_id: int | str,
-        voice: Any,
-        **kwargs: Any,
-    ) -> Message: ...
-
     async def send_chat_action(
         self,
         chat_id: int | str,
         action: str,
         **kwargs: Any,
     ) -> bool: ...
+
+    async def send_voice(
+        self,
+        chat_id: int | str,
+        voice: Any,
+        **kwargs: Any,
+    ) -> Message: ...
 
     async def set_message_reaction(
         self,
@@ -247,17 +247,17 @@ class PTBTelegramClient:
             chat_id=chat_id, document=document, **kwargs
         )
 
-    async def send_voice(
-        self, chat_id: int | str, voice: Any, **kwargs: Any
-    ) -> Message:
-        return await self._bot.send_voice(chat_id=chat_id, voice=voice, **kwargs)
-
     async def send_chat_action(
         self, chat_id: int | str, action: str, **kwargs: Any
     ) -> bool:
         return await self._bot.send_chat_action(
             chat_id=chat_id, action=action, **kwargs
         )
+
+    async def send_voice(
+        self, chat_id: int | str, voice: Any, **kwargs: Any
+    ) -> Message:
+        return await self._bot.send_voice(chat_id=chat_id, voice=voice, **kwargs)
 
     async def set_message_reaction(
         self,
@@ -456,18 +456,18 @@ class FakeTelegramClient:
             "send_document", {"chat_id": chat_id, "document": document, **kwargs}
         )
 
-    async def send_voice(
-        self, chat_id: int | str, voice: Any, **kwargs: Any
-    ) -> Message:
-        return self._record(
-            "send_voice", {"chat_id": chat_id, "voice": voice, **kwargs}
-        )
-
     async def send_chat_action(
         self, chat_id: int | str, action: str, **kwargs: Any
     ) -> bool:
         return self._record(
             "send_chat_action", {"chat_id": chat_id, "action": action, **kwargs}
+        )
+
+    async def send_voice(
+        self, chat_id: int | str, voice: Any, **kwargs: Any
+    ) -> Message:
+        return self._record(
+            "send_voice", {"chat_id": chat_id, "voice": voice, **kwargs}
         )
 
     async def set_message_reaction(

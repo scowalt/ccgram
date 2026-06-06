@@ -256,7 +256,7 @@ class TestRegisterCommands:
 
         registered = bot.set_my_commands.call_args[0][0]
         names = [c.command for c in registered]
-        assert names[0] == "new"
+        assert names[0] == "start"
         assert "clear" in names
         assert "compact" in names
 
@@ -331,8 +331,9 @@ class TestRegisterCommands:
 
         registered = bot.set_my_commands.call_args[0][0]
         names = [c.command for c in registered]
-        assert "new" in names
+        assert "start" in names
         assert "commands" in names
+        assert "new" not in names
         assert "clear" not in names
 
     async def test_register_commands_supports_scope(self, tmp_path: Path) -> None:
@@ -350,11 +351,11 @@ class TestRegisterCommands:
         assert bot.set_my_commands.call_args.kwargs.get("scope") is scope
 
     async def test_bot_native_name_collision_skipped(self, tmp_path: Path) -> None:
-        # A skill that sanitizes to "new" should not create a duplicate
-        skill_dir = tmp_path / "skills" / "new"
+        # A skill that sanitizes to "start" should not create a duplicate.
+        skill_dir = tmp_path / "skills" / "start"
         skill_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
-            "---\nname: new\nuser-invocable: true\n---\n"
+            "---\nname: start\nuser-invocable: true\n---\n"
         )
 
         bot = AsyncMock()
@@ -362,7 +363,18 @@ class TestRegisterCommands:
 
         registered = bot.set_my_commands.call_args[0][0]
         tg_names = [c.command for c in registered]
-        assert tg_names.count("new") == 1
+        assert tg_names.count("start") == 1
+
+    async def test_provider_new_command_can_register(self, tmp_path: Path) -> None:
+        from ccgram.providers.pi import PiProvider
+
+        bot = AsyncMock()
+        await register_commands(bot, claude_dir=tmp_path, provider=PiProvider())
+
+        registered = bot.set_my_commands.call_args[0][0]
+        names = [c.command for c in registered]
+        assert "start" in names
+        assert "new" in names
 
 
 class TestProviderCommandHelpers:

@@ -63,7 +63,7 @@ Each provider exposes its own slash commands to the Telegram menu. Examples:
 - **Claude**: `/clear`, `/compact`, `/cost`, `/doctor`, `/permissions`...
 - **Codex**: `/model`, `/mode`, `/status`, `/diff`, `/compact`, `/mcp`...
 - **Gemini**: `/chat`, `/clear`, `/compress`, `/model`, `/memory`, `/vim`...
-- **Pi**: `/clear`, `/compact`, `/export`, `/name`, `/reload`, `/session`, `/share`, `/changelog`... (plus discovered skills/prompts/extensions)
+- **Pi**: `/new`, `/compact`, `/followup`, `/scoped_models`, `/export`, `/name`, `/reload`, `/session`, `/share`, `/changelog`... (plus discovered skills/prompts/extensions)
 
 ---
 
@@ -166,7 +166,7 @@ Pi transcripts are JSONL files (v3 format) under `~/.pi/agent/sessions/--<encode
 
 ### Commands
 
-Pi exposes a Telegram-safe subset of built-in slash commands (`/clear`, `/changelog`, `/compact`, `/export`, `/name`, `/reload`, `/session`, `/share`). Dynamic discovery surfaces three more sources:
+Pi exposes a Telegram-safe command list based on the [Pi usage docs](https://pi.dev/docs/latest/usage): `/changelog`, `/clone`, `/compact`, `/copy`, `/export`, `/fork`, `/hotkeys`, `/login`, `/logout`, `/model`, `/name`, `/new`, `/quit`, `/reload`, `/scoped_models` (native `/scoped-models`), `/session`, `/settings`, `/share`, and `/tree`. `/followup <message>` is ccgram's Pi-only bridge to Pi's Alt+Enter behavior: it queues the message after current work finishes instead of steering the active turn. `/clear` is accepted as a hidden compatibility alias for Pi `/new`, but it is not advertised because Pi does not define `/clear`. Pi `/resume` is not advertised because it collides with ccgram's bot-native session picker. Dynamic discovery surfaces three more sources:
 
 - **Skills** — `SKILL.md` under `~/.pi/agent/skills/<name>/`, `~/.agents/skills/<name>/`, `<project>/.pi/skills/<name>/`, or `<project>/.agents/skills/<name>/`. Loose `.md` files at the root of `~/.pi/agent/skills/` or `<project>/.pi/skills/` are also picked up.
 - **Prompt templates** — `.md` files under `~/.pi/agent/prompts/` or `<project>/.pi/prompts/` (per-project walk stops at the first `.git` ancestor).
@@ -176,7 +176,7 @@ Names collide-dedupe with first-source wins (skills > prompts > extensions).
 
 ### Status Detection
 
-With hook-runner installed, Pi `Stop` hooks mark the topic ready immediately and trigger pending mailbox delivery. Without hooks, status is inferred from transcript activity — idle when the latest assistant message has no pending tool calls, working when there are unreturned tool uses.
+With hook-runner installed, Pi `Stop` hooks mark the topic ready immediately. Without hooks, status is inferred from transcript activity — idle when the latest assistant message has no pending tool calls, working when there are unreturned tool uses.
 
 ### Toolbar
 

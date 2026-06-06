@@ -70,8 +70,7 @@ def register_all(
     MessageHandler, which must precede the TEXT MessageHandler.
     """
     command_specs: list[CommandSpec] = [
-        CommandSpec("new", new_command),
-        CommandSpec("start", new_command),  # compat alias
+        CommandSpec("start", new_command),
         CommandSpec("history", history_command),
         CommandSpec("commands", commands_command),
         CommandSpec("sessions", sessions_command),
@@ -145,7 +144,6 @@ def register_all(
 
 
 COMMAND_NAMES: tuple[str, ...] = (
-    "new",
     "start",
     "history",
     "commands",

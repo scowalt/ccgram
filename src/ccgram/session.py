@@ -22,7 +22,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .config import config
-from .mailbox import Mailbox
 from .session_map import (
     SessionMapSync,
     install_session_map_sync,
@@ -36,7 +35,7 @@ from .user_preferences import (
     install_user_preferences,
     user_preferences,
 )
-from .window_resolver import EMDASH_SESSION_PREFIX, is_foreign_window, is_window_id
+from .window_resolver import is_window_id
 from .window_view import WindowView
 from .window_state_ports import identity_state as _identity_state
 from .window_state_ports import lifecycle_state as _lifecycle_state
@@ -76,38 +75,6 @@ class AuditResult:
     @property
     def has_issues(self) -> bool:
         return len(self.issues) > 0
-
-
-def _migrate_mailbox_ids(
-    old_display: dict[str, str],
-    new_states: dict[str, "WindowState"],
-    tmux_session: str,
-) -> None:
-    """Migrate mailbox directories when window IDs change after tmux restart.
-
-    Builds a remap dict by matching old→new IDs via display name, then
-    renames mailbox directories to match.
-    """
-    # Build new key→display_name from current window_display_names
-    new_display = {
-        wid: thread_router.window_display_names.get(wid, "") for wid in new_states
-    }
-    # Invert new display → new_id
-    display_to_new: dict[str, str] = {}
-    for wid, name in new_display.items():
-        if name:
-            display_to_new[name] = wid
-
-    remap: dict[str, str] = {}
-    for old_id, name in old_display.items():
-        if not name or old_id in new_states:
-            continue
-        new_id = display_to_new.get(name)
-        if new_id and new_id != old_id:
-            remap[f"{tmux_session}:{old_id}"] = f"{tmux_session}:{new_id}"
-
-    if remap:
-        Mailbox(config.mailbox_dir).migrate_ids(remap)
 
 
 @dataclass
@@ -202,16 +169,15 @@ class SessionManager:
         thread_router.from_dict(state)
 
         # Detect old format: keys that don't look like window IDs
-        # Foreign windows (emdash) use qualified IDs — not old format.
         needs_migration = False
         for k in window_store.window_states:
-            if not self._is_window_id(k) and not is_foreign_window(k):
+            if not self._is_window_id(k):
                 needs_migration = True
                 break
         if not needs_migration:
             for bindings in thread_router.thread_bindings.values():
                 for wid in bindings.values():
-                    if not self._is_window_id(wid) and not is_foreign_window(wid):
+                    if not self._is_window_id(wid):
                         needs_migration = True
                         break
                 if needs_migration:
@@ -228,7 +194,6 @@ class SessionManager:
 
         Called on startup. Delegates to window_resolver for the heavy lifting.
         Dead window bindings and states are preserved for /restore recovery.
-        Also migrates mailbox directories when window IDs change.
         """
         # Lazy: window_resolver imports session-state types; hoisting forms
         # session → window_resolver → session.WindowState cycle.
@@ -240,13 +205,6 @@ class SessionManager:
             LiveWindow(window_id=w.window_id, window_name=w.window_name)
             for w in windows
         ]
-
-        # Snapshot old key→display_name mapping for mailbox migration
-        tmux_session = config.tmux_session_name
-        old_display = {
-            wid: thread_router.window_display_names.get(wid, "")
-            for wid in self.window_states
-        }
 
         changed = _resolve(
             live,
@@ -260,9 +218,6 @@ class SessionManager:
             thread_router._rebuild_reverse_index()
             self._save_state()
             logger.info("Startup re-resolution complete")
-
-            # Migrate mailbox directories for remapped window IDs
-            _migrate_mailbox_ids(old_display, self.window_states, tmux_session)
 
         # Prune session_map.json entries for dead windows
         live_ids = {w.window_id for w in live}
@@ -341,16 +296,6 @@ class SessionManager:
         all_known = live_window_ids | in_use
         offsets_changed = user_preferences.prune_stale_offsets(all_known)
 
-        # Prune dead mailbox directories
-        qualified_live: set[str] = set()
-        for wid in all_known:
-            if is_foreign_window(wid):
-                qualified_live.add(wid)
-            else:
-                qualified_live.add(f"{config.tmux_session_name}:{wid}")
-
-        Mailbox(config.mailbox_dir).prune_dead(qualified_live)
-
         if not stale_display and not stale_chat:
             return offsets_changed
 
@@ -372,8 +317,7 @@ class SessionManager:
     def _get_session_map_window_ids(self) -> set[str]:
         """Read session_map.json and return window IDs tracked by ccgram.
 
-        Includes native windows (stripped to @id) and emdash windows
-        (full qualified key like "emdash-claude-main-xxx:@0").
+        Native windows are stripped to their @id form.
         """
         if not config.session_map_file.exists():
             return set()
@@ -388,8 +332,6 @@ class SessionManager:
                 wid = key[len(prefix) :]
                 if self._is_window_id(wid):
                     result.add(wid)
-            elif key.startswith(EMDASH_SESSION_PREFIX):
-                result.add(key)
         return result
 
     def audit_state(

@@ -1,4 +1,4 @@
-"""Tests for /new command (renamed from /start)."""
+"""Tests for the /start welcome command."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -40,7 +40,7 @@ class TestNewCommand:
 
         update.message.reply_text.assert_called_once()
         text = update.message.reply_text.call_args[0][0]
-        assert "Claude Code Monitor" in text
+        assert "CCGram" in text
 
     async def test_clears_browse_state(self) -> None:
         update = _make_update(100)
@@ -101,7 +101,9 @@ class TestNewCommand:
 
 class TestCommandRegistration:
     @patch("ccgram.bot.config")
-    def test_new_and_start_both_registered(self, mock_config: MagicMock) -> None:
+    def test_start_registered_and_new_is_provider_forwardable(
+        self, mock_config: MagicMock
+    ) -> None:
         mock_config.telegram_bot_token = "fake:token"
         app = create_bot()
 
@@ -111,24 +113,19 @@ class TestCommandRegistration:
                 if hasattr(handler, "commands"):
                     handler_commands.extend(handler.commands)  # type: ignore[union-attr]
 
-        assert "new" in handler_commands
         assert "start" in handler_commands
+        assert "new" not in handler_commands
 
     @patch("ccgram.bot.config")
-    def test_start_alias_uses_new_command(self, mock_config: MagicMock) -> None:
+    def test_start_uses_welcome_command(self, mock_config: MagicMock) -> None:
         mock_config.telegram_bot_token = "fake:token"
         app = create_bot()
 
-        new_handler = None
         start_handler = None
         for group_handlers in app.handlers.values():
             for handler in group_handlers:
-                if hasattr(handler, "commands"):
-                    if "new" in handler.commands:  # type: ignore[union-attr]
-                        new_handler = handler
-                    if "start" in handler.commands:  # type: ignore[union-attr]
-                        start_handler = handler
+                if hasattr(handler, "commands") and "start" in handler.commands:  # type: ignore[union-attr]
+                    start_handler = handler
 
-        assert new_handler is not None
         assert start_handler is not None
-        assert new_handler.callback is start_handler.callback
+        assert start_handler.callback is new_command

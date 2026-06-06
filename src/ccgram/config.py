@@ -10,7 +10,6 @@ Key class: Config (singleton instantiated as `config`).
 
 import structlog
 import os
-import socket
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -18,18 +17,6 @@ from dotenv import load_dotenv
 from .utils import ccgram_dir
 
 logger = structlog.get_logger()
-
-
-def _env_with_fallback(new_name: str, old_name: str, default: str = "") -> str:
-    """Read env var with fallback to legacy CCBOT_* name."""
-    val = os.getenv(new_name)
-    if val is not None:
-        return val
-    val = os.getenv(old_name)
-    if val is not None:
-        logger.warning("%s is deprecated, use %s instead", old_name, new_name)
-        return val
-    return default
 
 
 def _parse_int_env(name: str, default: int) -> int:
@@ -95,17 +82,11 @@ class Config:
         # Own tmux window ID (set by run_bot() after auto-detect, used to skip self in list_windows)
         self.own_window_id: str | None = None
 
-        # External session discovery: comma-separated glob patterns to filter session names.
-        # Empty string (default) means all sessions are scanned (excluding own session).
-        # Example: "omc-*,omx-*" limits discovery to sessions matching those patterns.
-        self.tmux_external_patterns: str = os.getenv("TMUX_EXTERNAL_PATTERNS", "")
-
         # All state files live under config_dir
         self.state_file = self.config_dir / "state.json"
         self.session_map_file = self.config_dir / "session_map.json"
         self.monitor_state_file = self.config_dir / "monitor_state.json"
         self.events_file = self.config_dir / "events.jsonl"
-        self.mailbox_dir = self.config_dir / "mailbox"
 
         # Claude Code session monitoring configuration
         _claude_config_dir = os.getenv("CLAUDE_CONFIG_DIR")
@@ -123,7 +104,7 @@ class Config:
         )
 
         # Multi-instance support
-        group_id_str = _env_with_fallback("CCGRAM_GROUP_ID", "CCBOT_GROUP_ID")
+        group_id_str = os.getenv("CCGRAM_GROUP_ID")
         if group_id_str:
             try:
                 self.group_id: int | None = int(group_id_str)
@@ -132,42 +113,23 @@ class Config:
         else:
             self.group_id = None
 
-        self.instance_name: str = (
-            _env_with_fallback("CCGRAM_INSTANCE_NAME", "CCBOT_INSTANCE_NAME")
-            or socket.gethostname()
-        )
-
         # Provider selection
-        self.provider_name: str = _env_with_fallback(
-            "CCGRAM_PROVIDER", "CCBOT_PROVIDER", "claude"
-        )
+        self.provider_name: str = os.getenv("CCGRAM_PROVIDER", "claude")
 
         # Directory browser: show hidden (dot) directories
-        self.show_hidden_dirs: bool = _env_with_fallback(
-            "CCGRAM_SHOW_HIDDEN_DIRS", "CCBOT_SHOW_HIDDEN_DIRS"
+        self.show_hidden_dirs: bool = os.getenv(
+            "CCGRAM_SHOW_HIDDEN_DIRS", ""
         ).lower() in ("1", "true", "yes")
 
         # Ack reaction: react to forwarded messages with an emoji (empty = disabled)
-        self.ack_reaction: str = _env_with_fallback(
-            "CCGRAM_ACK_REACTION", "CCBOT_ACK_REACTION"
-        )
+        self.ack_reaction: str = os.getenv("CCGRAM_ACK_REACTION", "")
 
         # Whisper transcription
-        self.whisper_provider: str = _env_with_fallback(
-            "CCGRAM_WHISPER_PROVIDER", "CCBOT_WHISPER_PROVIDER"
-        )
-        self.whisper_api_key: str = _env_with_fallback(
-            "CCGRAM_WHISPER_API_KEY", "CCBOT_WHISPER_API_KEY"
-        )
-        self.whisper_base_url: str = _env_with_fallback(
-            "CCGRAM_WHISPER_BASE_URL", "CCBOT_WHISPER_BASE_URL"
-        )
-        self.whisper_model: str = _env_with_fallback(
-            "CCGRAM_WHISPER_MODEL", "CCBOT_WHISPER_MODEL"
-        )
-        self.whisper_language: str = _env_with_fallback(
-            "CCGRAM_WHISPER_LANGUAGE", "CCBOT_WHISPER_LANGUAGE"
-        )
+        self.whisper_provider: str = os.getenv("CCGRAM_WHISPER_PROVIDER", "")
+        self.whisper_api_key: str = os.getenv("CCGRAM_WHISPER_API_KEY", "")
+        self.whisper_base_url: str = os.getenv("CCGRAM_WHISPER_BASE_URL", "")
+        self.whisper_model: str = os.getenv("CCGRAM_WHISPER_MODEL", "")
+        self.whisper_language: str = os.getenv("CCGRAM_WHISPER_LANGUAGE", "")
 
         # Voice replies (text-to-speech)
         # CCGRAM_TTS_PROVIDER: empty = disabled; "edge" = edge-tts; "openai" = OpenAI TTS
@@ -183,7 +145,7 @@ class Config:
         # Empty string means "use built-in defaults". The handler layer passes
         # this path to ``toolbar_config.load_toolbar_config()`` once at startup.
         self._init_shell_and_llm()
-        self._init_messaging()
+        self._init_forwarding_controls()
         self._init_live_view()
         self._init_send()
         self._init_lifecycle()
@@ -232,19 +194,6 @@ class Config:
         self.diagnostic_logs: bool = os.getenv(
             "CCGRAM_DIAGNOSTIC_LOGS", ""
         ).lower() in ("1", "true", "yes")
-
-    def _init_messaging(self) -> None:
-        self._init_forwarding_controls()
-        self.msg_auto_spawn: bool = os.getenv("CCGRAM_MSG_AUTO_SPAWN", "").lower() in (
-            "1",
-            "true",
-            "yes",
-        )
-        self.msg_max_windows: int = _parse_int_env("CCGRAM_MSG_MAX_WINDOWS", 10)
-        self.msg_wait_timeout: int = _parse_int_env("CCGRAM_MSG_WAIT_TIMEOUT", 60)
-        self.msg_spawn_timeout: int = _parse_int_env("CCGRAM_MSG_SPAWN_TIMEOUT", 300)
-        self.msg_spawn_rate: int = _parse_int_env("CCGRAM_MSG_SPAWN_RATE", 3)
-        self.msg_rate_limit: int = _parse_int_env("CCGRAM_MSG_RATE_LIMIT", 10)
 
     def _init_live_view(self) -> None:
         self.live_view_interval: int = max(

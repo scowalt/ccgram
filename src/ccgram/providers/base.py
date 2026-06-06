@@ -110,14 +110,11 @@ class ProviderCapabilities:
     name: str  # e.g. "claude", "codex", "gemini"
     launch_command: str  # e.g. "claude", "codex"
     supports_hook: bool = False
-    supports_hook_events: bool = False
-    hook_event_types: tuple[str, ...] = ()
     hook_install_managed_by_ccgram: bool = False
     supports_resume: bool = False
     supports_continue: bool = False
     supports_structured_transcript: bool = False
     supports_incremental_read: bool = True  # False → whole-file JSON (e.g. Gemini)
-    transcript_format: Literal["jsonl", "plain"] = "jsonl"
     uses_pane_title: bool = False  # Provider reads OSC pane title for status
     # True only for providers whose terminal chrome matches Claude Code's
     # UI_PATTERNS + ─-separator status block, so the shared pyte fast-path
@@ -131,9 +128,6 @@ class ProviderCapabilities:
     # the configured command sources (currently ~/.claude skills/commands).
     supports_user_command_discovery: bool = False
     supports_status_snapshot: bool = False
-    supports_mailbox_delivery: bool = (
-        True  # False for shell (no agent to receive send_keys)
-    )
     # True for shell-like providers that route inbound text through an LLM
     # → command flow with a prompt-marker terminal loop. Used by handlers to
     # gate shell-specific behavior without checking ``provider_name == "shell"``.

@@ -26,36 +26,36 @@ _PI_EXTENSION_COMMAND_RE = re.compile(
     r"pi\.registerCommand\(\s*[\"'](?P<name>[^\"']+)[\"']",
 )
 
-# Telegram-friendly Pi built-ins. The forward path lets users send *any*
-# /-command through to the provider, so this list is purely for discovery
-# (/commands listing, menu autocomplete). Modal-TUI flows like /model,
-# /login open pickers the user navigates with the inline toolbar.
+# Telegram-friendly Pi built-ins from https://pi.dev/docs/latest/usage.
+# The forward path lets users send *any* /-command through to the provider,
+# so this list is purely for discovery (/commands listing, menu autocomplete).
+# Modal-TUI flows like /model and /settings are navigated with the inline toolbar.
 #
-# NOTE: /new and /resume excluded — they collide with bot-native handlers
-# (handlers/topics/new_command.py, handlers/recovery/resume_command.py)
-# and will never be forwarded to Pi. Same convention as codex.py.
+# NOTE: /resume remains excluded because it collides with ccgram's bot-native
+# session picker (handlers/recovery/resume_command.py). /clear is accepted as a
+# hidden compatibility alias in forward.py, but Pi's documented reset command is /new.
 _PI_TELEGRAM_BUILTINS: dict[str, str] = {
     "/changelog": "Show version history",
-    "/clear": "Clear conversation history",
-    "/clone": "Clone session from an earlier message",
-    "/colors": "Show terminal color palette",
+    "/clone": "Duplicate the active branch into a new session",
     "/compact": "Compact conversation context",
-    "/copy": "Copy last response to clipboard",
-    "/debug": "Show debug information",
+    "/copy": "Copy last assistant message to clipboard",
     "/export": "Export session to HTML",
-    "/fork": "Fork conversation from an earlier message",
+    # ccgram synthetic command: sends Pi's Alt+Enter follow-up shortcut.
+    "/followup": "Queue a follow-up message after current work finishes",
+    "/fork": "Fork session from an earlier user message",
     "/hotkeys": "Show keyboard shortcuts",
-    "/import": "Import a previous session",
-    "/login": "Add or update provider credentials",
-    "/logout": "Remove provider credentials",
-    "/model": "Pick the active model",
+    "/login": "Manage OAuth or API-key credentials",
+    "/logout": "Manage OAuth or API-key credentials",
+    "/model": "Switch models",
     "/name": "Set session display name",
-    "/quit": "Exit Pi (Ctrl-C twice)",
-    "/reload": "Reload extensions, skills, prompts, themes",
-    "/session": "Show session info",
-    "/settings": "Open settings TUI",
-    "/share": "Upload as private GitHub gist",
-    "/tree": "Show session tree",
+    "/new": "Start a new Pi session",
+    "/quit": "Quit Pi",
+    "/reload": "Reload keybindings, extensions, skills, prompts, and context files",
+    "/scoped-models": "Enable or disable models for Ctrl+P cycling",
+    "/session": "Show session file, ID, messages, tokens, and cost",
+    "/settings": "Open Pi settings",
+    "/share": "Upload as private GitHub gist with shareable HTML link",
+    "/tree": "Navigate the session tree",
 }
 
 

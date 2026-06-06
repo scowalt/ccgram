@@ -137,7 +137,7 @@ def _browser_flow_stale(update: Update, context: ContextTypes.DEFAULT_TYPE) -> b
     A live browser always has ``PENDING_THREAD_ID`` set in the same topic
     (``_handle_unbound_topic`` / ``_handle_dead_window`` set it together
     with the browse state; navigation never clears it). If it is gone
-    (``/new`` or Cancel cleared it) or the tap arrived in a different
+    (``/start`` or Cancel cleared it) or the tap arrived in a different
     topic, every navigation/favorites handler must fail closed: otherwise
     they repopulate ``BROWSE_PATH_KEY`` (falling back to the bot's own
     cwd) *without* setting ``STATE_KEY``, so ``_check_ui_guards`` can't
@@ -401,7 +401,7 @@ async def _handle_confirm(
 
     # A live browser always has both a selected path and a pending thread
     # (set together when it was shown). Either being absent means the flow
-    # was reset (e.g. /new) and this is a stale tap — proceeding would
+    # was reset (e.g. /start) and this is a stale tap — proceeding would
     # confirm the bot's own cwd and spawn an unbound window/worktree there.
     if selected_path is None or pending_thread_id is None:
         clear_browse_state(context.user_data)
@@ -479,7 +479,7 @@ def _cancel_only_keyboard() -> InlineKeyboardMarkup:
 
 def _required_selected_path(context: ContextTypes.DEFAULT_TYPE) -> str | None:
     """Selected directory for a window-creating step, or None if the flow
-    was reset (e.g. by ``/new``, which clears ``BROWSE_PATH_KEY``).
+    was reset (e.g. by ``/start``, which clears ``BROWSE_PATH_KEY``).
 
     Unlike the navigation handlers, the create path must never fall back
     to the bot's cwd: a stale provider/worktree button tapped after a
@@ -504,7 +504,7 @@ async def _handle_worktree_callback(
     )
     # Same fail-closed invariant as _handle_confirm / window_callbacks
     # _handle_new: a live worktree picker always has PENDING_THREAD_ID.
-    # None means the flow was reset (e.g. /new, or Cancel raced the
+    # None means the flow was reset (e.g. /start, or Cancel raced the
     # eligibility probe in _handle_confirm) — a stale tap that would
     # otherwise reach a sub-handler whose only remaining guard is a
     # leftover PENDING_WORKTREE_REPO and spawn an unbound window.
@@ -634,7 +634,7 @@ async def _handle_wt_edit_name(
     """Prompt for a custom branch name via a text reply."""
     await query.answer()
     # Fail closed like the other worktree handlers: a stale wt:ed tapped
-    # after the flow was reset (e.g. by /new clearing PENDING_WORKTREE_REPO)
+    # after the flow was reset (e.g. by /start clearing PENDING_WORKTREE_REPO)
     # must not arm AWAITING_WORKTREE_BRANCH_NAME — a leaked flag hijacks the
     # next message in a fresh unbound-topic flow with "Worktree state lost".
     repo = context.user_data.get(PENDING_WORKTREE_REPO) if context.user_data else None
@@ -789,19 +789,6 @@ async def _accept_yolo_confirmation(window_id: str, *, timeout: float = 8.0) -> 
     return False
 
 
-def _try_install_messaging_skill(provider_name: str, cwd: str) -> None:
-    """Install the messaging skill for Claude windows (no-op for other providers)."""
-    if provider_name != "claude":
-        return
-    # Lazy: msg_skill is only needed for Claude topics.
-    from ...msg_skill import ensure_skill_installed
-
-    try:
-        ensure_skill_installed(cwd)
-    except Exception:
-        logger.exception("Failed to install messaging skill at %s", cwd)
-
-
 def _cwd_within(cwd: str, worktree_path: str) -> bool:
     """True if *cwd* is the worktree root or nested inside it."""
     try:
@@ -909,8 +896,6 @@ async def _create_window_and_bind(  # noqa: PLR0915
 
         await _wait_for_shell_ready(created_wid)
         await ensure_setup(created_wid, "auto")
-
-    _try_install_messaging_skill(provider_name, selected_path)
 
     if pending_thread_id is not None:
         thread_router.bind_thread(

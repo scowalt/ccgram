@@ -167,15 +167,6 @@ async def wait_for_pane(
     )
 
 
-def find_sends(calls, *, method="sendMessage", predicate=None):
-    """Return all intercepted calls matching criteria."""
-    results = []
-    for endpoint, data in calls:
-        if endpoint == method and (predicate is None or predicate(data)):
-            results.append(data)
-    return results
-
-
 def find_message_id_for(calls, *, method="sendMessage", predicate=None):
     """Find the message_id from the interceptor's response for a matching call.
 

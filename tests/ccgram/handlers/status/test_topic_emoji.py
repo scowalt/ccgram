@@ -308,9 +308,7 @@ class TestUpdateTopicEmoji:
 
 class TestFormatTopicNameForMode:
     def test_formats_yolo_name(self) -> None:
-        assert (
-            format_topic_name_for_mode("myproject", "yolo") == "myproject"
-        )
+        assert format_topic_name_for_mode("myproject", "yolo") == "myproject"
 
     def test_formats_normal_name(self) -> None:
         assert format_topic_name_for_mode("myproject", "normal") == "myproject"

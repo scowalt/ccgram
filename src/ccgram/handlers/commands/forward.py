@@ -21,7 +21,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import structlog
-from telegram import Update
+from telegram import Message, Update
+from telegram.constants import ChatAction
 
 from ...config import config
 from ...providers import (
@@ -31,7 +32,7 @@ from ... import window_query
 from ...telegram_client import PTBTelegramClient
 from ...window_state_store import window_store
 from ...thread_router import thread_router
-from ...tmux_manager import send_to_window, tmux_manager
+from ...tmux_manager import send_followup_to_window, send_to_window, tmux_manager
 from ..callback_helpers import get_thread_id as _get_thread_id
 from ..command_history import record_command
 from ..messaging_pipeline.message_queue import enqueue_status_update
@@ -57,6 +58,9 @@ logger = structlog.get_logger()
 
 
 _NAV_KEYS = ("up", "down", "enter", "esc")
+_PI_CLEAR_ALIAS_COMMAND = "clear"
+_PI_FOLLOWUP_COMMAND = "followup"
+_PI_NEW_COMMAND = "new"
 
 
 def _picker_hint(provider_name: str) -> str:
@@ -81,18 +85,72 @@ def _picker_hint(provider_name: str) -> str:
     return "\n💡 Open /toolbar to drive the picker."
 
 
-async def _handle_clear_command(
+def _default_command_args(cc_name: str, args: str, display: str) -> str:
+    """Fill provider command args that default to the current display name."""
+    if args or cc_name not in ("remote-control", "rc"):
+        return args
+    return display
+
+
+def _provider_command_name(provider_name: str, cc_name: str) -> str:
+    """Apply provider-specific compatibility aliases before forwarding."""
+    if provider_name == "pi" and cc_name.lower() == _PI_CLEAR_ALIAS_COMMAND:
+        return _PI_NEW_COMMAND
+    return cc_name
+
+
+def _is_session_reset_command(provider_name: str, cc_slash: str) -> bool:
+    """Return whether the forwarded command starts a fresh provider session."""
+    parts = cc_slash.split(None, 1)
+    command = parts[0].lstrip("/").lower()
+    if len(parts) > 1:
+        return False
+    return command == _PI_CLEAR_ALIAS_COMMAND or (
+        provider_name == "pi" and command == _PI_NEW_COMMAND
+    )
+
+
+async def _handle_pi_followup_command(
+    message: Message,
+    user_id: int,
+    window_id: str,
+    display: str,
+    args: str,
+    cc_slash: str,
+    thread_id: int | None,
+) -> None:
+    """Queue a Pi follow-up message via Alt+Enter."""
+    if not args:
+        await safe_reply(message, "Usage: `/followup <message>`")
+        return
+    logger.info("Forwarding Pi follow-up to window %s (user=%d)", display, user_id)
+    await message.get_bot().send_chat_action(
+        chat_id=message.chat.id,
+        message_thread_id=thread_id,
+        action=ChatAction.TYPING,
+    )
+    success, error_msg = await send_followup_to_window(window_id, args)
+    if not success:
+        await safe_reply(message, f"❌ {error_msg}")
+        return
+    if thread_id is not None:
+        record_command(user_id, thread_id, cc_slash)
+    await safe_reply(message, f"⏭️ [{display}] Follow-up queued.")
+
+
+async def _handle_session_reset_command(
     update: Update,
     user_id: int,
     window_id: str,
     display: str,
     cc_slash: str,
     thread_id: int | None,
+    provider_name: str,
 ) -> None:
-    """Handle post-send cleanup when /clear is forwarded."""
-    if cc_slash.strip().lower() != "/clear":
+    """Handle post-send cleanup when a provider starts a fresh session."""
+    if not _is_session_reset_command(provider_name, cc_slash):
         return
-    logger.info("Clearing session for window %s after /clear", display)
+    logger.info("Clearing session for window %s after %s", display, cc_slash)
     window_store.clear_window_session(window_id)
 
     await enqueue_status_update(
@@ -159,13 +217,19 @@ async def forward_command_handler(
     provider = get_provider_for_window(
         window_id, provider_name=window_query.get_window_provider(window_id)
     )
+    provider_name = provider.capabilities.name
     await sync_scoped_provider_menu(update.message, user.id, provider)
     provider_map = _build_provider_command_metadata(provider)
     resolved_name = provider_map.get(tg_cmd, tg_cmd)
-    cc_name = resolved_name.lstrip("/")
-    if not args and cc_name in ("remote-control", "rc"):
-        args = display
+    cc_name = _provider_command_name(provider_name, resolved_name.lstrip("/"))
+    args = _default_command_args(cc_name, args, display)
     cc_slash = f"/{cc_name} {args}".rstrip() if args else f"/{cc_name}"
+
+    if provider_name == "pi" and cc_name.lower() == _PI_FOLLOWUP_COMMAND:
+        await _handle_pi_followup_command(
+            update.message, user.id, window_id, display, args, cc_slash, thread_id
+        )
+        return
 
     logger.info(
         "Forwarding command %s to window %s (user=%d)", cc_slash, display, user.id
@@ -192,7 +256,7 @@ async def forward_command_handler(
     # accept a direct value (e.g. /model gpt-5) apply it without opening the
     # modal, so the "type /toolbar" guidance would mislead.
     if not args and cc_name.lower() in provider.capabilities.tui_picker_commands:
-        confirmation += _picker_hint(provider.capabilities.name)
+        confirmation += _picker_hint(provider_name)
     await safe_reply(update.message, confirmation)
     _arm_rc_probe_if_remote_control(update, window_id, cc_name)
     await _maybe_send_status_snapshot(
@@ -212,6 +276,6 @@ async def forward_command_handler(
         since_offset=probe_transcript_offset,
         pane_before=probe_pane_before,
     )
-    await _handle_clear_command(
-        update, user.id, window_id, display, cc_slash, thread_id
+    await _handle_session_reset_command(
+        update, user.id, window_id, display, cc_slash, thread_id, provider_name
     )

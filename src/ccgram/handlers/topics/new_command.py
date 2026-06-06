@@ -1,4 +1,4 @@
-"""``/new`` (and ``/start`` alias) handler — welcome message for the bot.
+"""``/start`` handler — welcome message for the bot.
 
 Authorization is checked first. On unauthorized access an explanatory
 reply is sent. Any in-progress directory-browser, worktree-picker, and
@@ -41,6 +41,6 @@ async def new_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if update.message:
         await safe_reply(
             update.message,
-            "\U0001f916 *Claude Code Monitor*\n\n"
+            "\U0001f916 *CCGram*\n\n"
             "Each topic is a session. Create a new topic to start.",
         )

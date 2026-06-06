@@ -33,7 +33,6 @@ from ccgram.terminal_parser import extract_interactive_content
 
 # Codex CLI known slash commands. Refreshed from
 # github.com/openai/codex/blob/main/codex-rs/tui/tooltips.txt.
-# NOTE: /new excluded — collides with bot-native /new (create session).
 _CODEX_BUILTINS: dict[str, str] = {
     "/clear": "Clear conversation history",
     "/compact": "Summarize history and free up context",
@@ -592,13 +591,10 @@ class CodexProvider(JsonlProvider):
         name="codex",
         launch_command="codex",
         supports_hook=True,
-        supports_hook_events=True,
         hook_install_managed_by_ccgram=True,
-        hook_event_types=("SessionStart", "Stop"),
         supports_resume=True,
         supports_continue=True,
         supports_structured_transcript=True,
-        transcript_format="jsonl",
         builtin_commands=tuple(_CODEX_BUILTINS.keys()),
         supports_user_command_discovery=True,
         supports_status_snapshot=True,

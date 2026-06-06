@@ -12,7 +12,6 @@ import re
 import structlog
 import os
 
-from ccgram.expandable_quote import EXPANDABLE_QUOTE_END, EXPANDABLE_QUOTE_START
 from ccgram.providers.base import (
     AgentMessage,
     AgentProvider,
@@ -260,19 +259,13 @@ def resolve_launch_command(
 
     Resolution: ``CCGRAM_<NAME>_COMMAND`` (e.g. ``CCGRAM_CLAUDE_COMMAND``) if set,
     otherwise the provider's hardcoded default (``capabilities.launch_command``).
-    Falls back to legacy ``CCBOT_<NAME>_COMMAND`` env var.
     When ``approval_mode`` is ``"yolo"``, appends the provider-specific
     permissive-mode flag unless it is already present.
     """
     _ensure_registered()
     provider = provider_name.lower()
-    new_env = f"CCGRAM_{provider.upper()}_COMMAND"
-    old_env = f"CCBOT_{provider.upper()}_COMMAND"
-    override = os.environ.get(new_env)
-    if not override:
-        override = os.environ.get(old_env)
-        if override:
-            logger.warning("%s is deprecated, use %s instead", old_env, new_env)
+    env_key = f"CCGRAM_{provider.upper()}_COMMAND"
+    override = os.environ.get(env_key)
     if override:
         command = override
     else:
@@ -303,19 +296,16 @@ def resolve_launch_command(
 def resolve_capabilities(provider_name: str | None = None) -> ProviderCapabilities:
     """Resolve provider capabilities without requiring full Config.
 
-    Reads ``CCGRAM_PROVIDER`` (or legacy ``CCBOT_PROVIDER``) from env when
-    *provider_name* is not given.  Falls back to ``"claude"`` for unknown
-    providers.  Suitable for lightweight CLI commands (doctor, status) that
+    Reads ``CCGRAM_PROVIDER`` from env when *provider_name* is not given.
+    Falls back to ``"claude"`` for unknown providers.
+    Suitable for lightweight CLI commands (doctor, status) that
     must not import Config (which requires TELEGRAM_BOT_TOKEN).
     """
     _ensure_registered()
     name = (
         provider_name
         if provider_name is not None
-        else (
-            os.environ.get("CCGRAM_PROVIDER")
-            or os.environ.get("CCBOT_PROVIDER", "claude")
-        )
+        else os.environ.get("CCGRAM_PROVIDER", "claude")
     )
     try:
         return registry.get(name).capabilities
@@ -324,8 +314,6 @@ def resolve_capabilities(provider_name: str | None = None) -> ProviderCapabiliti
 
 
 __all__ = [
-    "EXPANDABLE_QUOTE_END",
-    "EXPANDABLE_QUOTE_START",
     "AgentMessage",
     "AgentProvider",
     "DiscoveredCommand",

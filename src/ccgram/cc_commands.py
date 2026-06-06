@@ -29,8 +29,8 @@ logger = structlog.get_logger()
 
 # Built-in Claude Code commands. Refreshed from code.claude.com/docs/en/commands.
 # Telegram menu is a discovery surface only — any /<token> still forwards
-# to the provider (see commands/forward.py). /new is bot-native (excluded);
-# /resume collides with bot-native /resume (excluded — ccgram has its own picker).
+# to the provider (see commands/forward.py). /resume collides with bot-native
+# /resume (excluded — ccgram has its own picker).
 CC_BUILTINS: dict[str, str] = {
     "agents": "↗ Manage subagent configurations",
     "background": "↗ Detach session as background agent",
@@ -73,7 +73,7 @@ CC_BUILTINS: dict[str, str] = {
 
 # Bot-native commands (registered first, not from CC)
 _BOT_COMMANDS: list[tuple[str, str]] = [
-    ("new", "Create new Claude session"),
+    ("start", "Show ccgram welcome message"),
     ("commands", "List commands for this topic provider"),
     ("history", "Message history for this topic"),
     ("sessions", "Sessions dashboard"),
@@ -290,7 +290,7 @@ async def register_commands(
 
     When *providers* is given, commands are merged from each provider in order.
     When *provider* is given, command discovery is delegated to that provider.
-    Registers bot-native commands first (new, history, etc.), then up to
+    Registers bot-native commands first (start, history, etc.), then up to
     the remaining Telegram limit of discovered CC commands. Deduplicates
     by telegram_name (first-wins) and excludes collisions with bot-native names.
     """

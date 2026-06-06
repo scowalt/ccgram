@@ -120,28 +120,17 @@ class PiProvider(JsonlProvider):
         name="pi",
         launch_command="pi",
         supports_hook=True,
-        supports_hook_events=True,
-        hook_event_types=(
-            "SessionStart",
-            "Stop",
-            "SessionEnd",
-            "SubagentStart",
-            "SubagentStop",
-            "Notification",
-        ),
         supports_resume=True,
         supports_continue=True,
         supports_structured_transcript=True,
         supports_incremental_read=True,
-        transcript_format="jsonl",
         builtin_commands=tuple(_PI_TELEGRAM_BUILTINS.keys()),
         supports_user_command_discovery=False,
         supports_status_snapshot=False,
-        supports_mailbox_delivery=True,
         # Pickers verified by sending each command to a live pi process and
         # inspecting tmux capture-pane output (see PR #93 follow-up).
         tui_picker_commands=frozenset(
-            {"model", "login", "fork", "clone", "import", "settings"}
+            {"model", "login", "fork", "clone", "scoped-models", "settings"}
         ),
     )
 
@@ -312,7 +301,10 @@ class PiProvider(JsonlProvider):
             if header_cwd != resolved_target:
                 continue
             session_id = header["id"]
-            if session_id in claimed_session_ids or str(path) in claimed_transcript_paths:
+            if (
+                session_id in claimed_session_ids
+                or str(path) in claimed_transcript_paths
+            ):
                 continue
             return SessionStartEvent(
                 session_id=session_id,

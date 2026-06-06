@@ -7,7 +7,6 @@ and session_map/events.jsonl file management.
 import json
 import time
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -88,17 +87,3 @@ def append_event(state_dir):
             f.write(line + "\n")
 
     return _append
-
-
-@pytest.fixture
-def mock_bot():
-    """A mock Telegram Bot with common methods stubbed."""
-    bot = AsyncMock()
-    bot.send_message = AsyncMock(return_value=MagicMock(message_id=1))
-    bot.edit_message_text = AsyncMock()
-    bot.create_forum_topic = AsyncMock()
-    bot.defaults = None
-    bot.local_mode = False
-    bot.base_url = "https://api.telegram.org/bot"
-    bot.base_file_url = "https://api.telegram.org/file/bot"
-    return bot

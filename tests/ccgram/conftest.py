@@ -31,9 +31,9 @@ async def _shutdown_queue_workers():
 
 @pytest.fixture(autouse=True)
 def _clean_provider_env(monkeypatch):
-    """Remove CCBOT_*/CCGRAM_*_COMMAND env vars so tests use provider defaults."""
+    """Remove CCGRAM_*_COMMAND env vars so tests use provider defaults."""
     for key in list(os.environ):
-        if key.startswith(("CCGRAM_", "CCBOT_")) and key.endswith("_COMMAND"):
+        if key.startswith("CCGRAM_") and key.endswith("_COMMAND"):
             monkeypatch.delenv(key)
 
 

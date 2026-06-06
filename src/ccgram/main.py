@@ -205,11 +205,7 @@ def setup_logging(log_level: str) -> None:
 
 def run_bot() -> None:
     """Start the bot. Called by the ``run`` Click command after env is set."""
-    log_level = (
-        os.environ.get("CCGRAM_LOG_LEVEL")
-        or os.environ.get("CCBOT_LOG_LEVEL")
-        or "INFO"
-    ).upper()
+    log_level = (os.environ.get("CCGRAM_LOG_LEVEL") or "INFO").upper()
     setup_logging(log_level)
 
     # --- Auto-detect tmux session (before config import) ---

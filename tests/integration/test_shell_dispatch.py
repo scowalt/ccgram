@@ -85,7 +85,6 @@ async def app():
         filters,
     )
 
-    application.add_handler(CommandHandler("new", new_command))
     application.add_handler(CommandHandler("start", new_command))
     application.add_handler(CommandHandler("history", history_command))
     application.add_handler(CommandHandler("sessions", sessions_command))

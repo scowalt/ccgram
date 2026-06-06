@@ -326,7 +326,9 @@ class TestStaleTranscriptAdoption:
             },
         }
 
-        with patch("ccgram.session_monitor.get_provider_for_window", return_value=provider):
+        with patch(
+            "ccgram.session_monitor.get_provider_for_window", return_value=provider
+        ):
             current_map = await monitor._detect_and_cleanup_changes(raw)
 
         assert current_map["@2"]["session_id"] == "old-session"
@@ -365,7 +367,9 @@ class TestStaleTranscriptAdoption:
             },
         }
 
-        with patch("ccgram.session_monitor.get_provider_for_window", return_value=provider):
+        with patch(
+            "ccgram.session_monitor.get_provider_for_window", return_value=provider
+        ):
             current_map = await monitor._detect_and_cleanup_changes(raw)
 
         assert current_map["@2"]["session_id"] == "first-old-session"
@@ -419,7 +423,9 @@ class TestStaleTranscriptAdoption:
             },
         }
 
-        with patch("ccgram.session_monitor.get_provider_for_window", return_value=provider):
+        with patch(
+            "ccgram.session_monitor.get_provider_for_window", return_value=provider
+        ):
             current_map = await monitor._detect_and_cleanup_changes(raw)
 
         assert current_map["@2"]["session_id"] == "shared-new-session"

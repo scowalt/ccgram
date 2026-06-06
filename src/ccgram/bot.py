@@ -78,7 +78,7 @@ def is_user_allowed(user_id: int | None) -> bool:
     return user_id is not None and config.is_user_allowed(user_id)
 
 
-# Group filter: when CCBOT_GROUP_ID is set, only process updates from that group.
+# Group filter: when CCGRAM_GROUP_ID is set, only process updates from that group.
 # filters.ALL is a no-op — single-instance backward compat.
 _group_filter: filters.BaseFilter = (
     filters.Chat(chat_id=config.group_id) if config.group_id else filters.ALL

@@ -54,8 +54,6 @@ def _claude_settings_file() -> Path:
 _CURRENT_HOOK_MARKER = "ccgram.main hook"
 # Older installs used the console script name directly.
 _PATH_HOOK_MARKER = "ccgram hook"
-# Legacy marker from pre-rename ccbot — used for detection and cleanup.
-_LEGACY_HOOK_MARKER = "ccbot hook"
 
 # Expected number of parts when parsing tmux display-message output.
 # Minimum is 3 (session_name\t@id\twindow_name); a fourth pane_tty field is
@@ -138,8 +136,7 @@ def _is_current_hook_command(command: str) -> bool:
 def _is_any_ccgram_hook_command(command: str) -> bool:
     """Return True for current, old, or legacy hook command styles."""
     return any(
-        marker in command
-        for marker in (_CURRENT_HOOK_MARKER, _PATH_HOOK_MARKER, _LEGACY_HOOK_MARKER)
+        marker in command for marker in (_CURRENT_HOOK_MARKER, _PATH_HOOK_MARKER)
     )
 
 
@@ -164,7 +161,7 @@ def _has_matching_hook(
 
 
 def _has_ccgram_hook(settings: dict, event_type: str) -> bool:
-    """Check if ccgram hook (or legacy ccbot hook) is installed."""
+    """Check if ccgram hook is installed."""
     return _has_matching_hook(settings, event_type, _is_any_ccgram_hook_command)
 
 
@@ -1003,10 +1000,23 @@ def _resolve_transcript_path(
     provider_name: str, session_id: str, cwd: str, transcript_path: str
 ) -> str:
     """Return transcript path from payload or provider-specific fallback."""
-    if transcript_path:
-        return transcript_path
     if provider_name == "pi":
-        return _resolve_pi_transcript_path(session_id, cwd)
+        if transcript_path and session_id in Path(transcript_path).name:
+            return transcript_path
+        resolved = _resolve_pi_transcript_path(session_id, cwd)
+        if resolved:
+            if transcript_path and transcript_path != resolved:
+                logger.warning(
+                    "Ignoring stale Pi transcript path for session %s: %s -> %s",
+                    session_id,
+                    transcript_path,
+                    resolved,
+                )
+            return resolved
+        if transcript_path:
+            return transcript_path
+    elif transcript_path:
+        return transcript_path
     return ""
 
 
@@ -1052,15 +1062,19 @@ def _refresh_session_map_if_stale(
         # tracked here — leave the fallback (cwd-based discovery in
         # SessionMonitor) to handle it.
         return
-    if (
-        existing.get("session_id") == session_id
-        and existing.get("provider_name") == provider_name
-    ):
-        return
     cwd = payload_cwd or existing.get("cwd", "")
     transcript_path = _resolve_transcript_path(
         provider_name, session_id, cwd, payload_transcript_path
     )
+    if (
+        existing.get("session_id") == session_id
+        and existing.get("provider_name") == provider_name
+        and (
+            not transcript_path
+            or existing.get("transcript_path", "") == transcript_path
+        )
+    ):
+        return
     tmux_session_name = session_window_key.rsplit(":", 1)[0]
     _update_session_map(
         session_window_key,

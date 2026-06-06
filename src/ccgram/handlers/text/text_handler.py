@@ -267,8 +267,6 @@ async def _handle_unbound_topic(
         return False
 
     all_windows = await tmux_manager.list_windows()
-    external_windows = await tmux_manager.discover_external_sessions()
-    all_windows.extend(external_windows)
     bound_ids = {bound_wid for _, _, bound_wid in thread_router.iter_thread_bindings()}
     unbound = [
         (w.window_id, w.window_name, w.cwd)
@@ -333,6 +331,7 @@ async def _handle_dead_window(
     """
     w = await tmux_manager.find_window_by_id(window_id)
     if w:
+        lifecycle_strategy.clear_autoclose_timer(user_id, thread_id)
         return False
 
     display = thread_router.get_display_name(window_id)
@@ -526,7 +525,7 @@ async def handle_text_message(
     provider = get_provider_for_window(
         window_id, provider_name=window_query.get_window_provider(window_id)
     )
-    if not provider.capabilities.supports_mailbox_delivery:
+    if provider.capabilities.chat_first_command_path:
         # Lazy: shell.shell_commands ↔ text_handler via approval callback.
         from ..shell.shell_commands import handle_shell_message
 

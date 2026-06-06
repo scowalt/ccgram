@@ -570,8 +570,6 @@ class SessionMonitor:
     ) -> None:
         """Emit NewWindowEvent once for live windows not represented in session_map."""
         all_windows = await tmux_manager.list_windows()
-        external_windows = await tmux_manager.discover_external_sessions()
-        all_windows = all_windows + external_windows
         live_window_ids = {w.window_id for w in all_windows}
         session_map_sync.prune_session_map(live_window_ids)
         self._emitted_new_window_ids &= live_window_ids

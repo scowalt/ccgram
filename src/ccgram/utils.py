@@ -1,7 +1,7 @@
 """Shared utility functions used across multiple CCGram modules.
 
 Provides:
-  - ccgram_dir(): resolve config directory from CCBOT_DIR env var.
+  - ccgram_dir(): resolve config directory from CCGRAM_DIR env var.
   - tmux_session_name(): resolve tmux session name from env.
   - atomic_write_json(): crash-safe JSON file writes via temp+rename.
   - read_cwd_from_jsonl(): extract the cwd field from the first JSONL entry.
@@ -89,7 +89,6 @@ def log_throttle_sweep(
 
 
 CCGRAM_DIR_ENV = "CCGRAM_DIR"
-_LEGACY_DIR_ENV = "CCBOT_DIR"
 
 # Maximum number of JSONL lines to scan when extracting session metadata.
 _SCAN_LINES = 20
@@ -98,32 +97,11 @@ _SUMMARY_MAX_CHARS = 80
 
 
 def ccgram_dir() -> Path:
-    """Resolve config directory from CCGRAM_DIR env var or default ~/.ccgram.
-
-    Falls back to legacy CCBOT_DIR env var with a deprecation warning.
-    If ~/.ccgram doesn't exist but ~/.ccbot does, logs a migration hint.
-    """
+    """Resolve config directory from CCGRAM_DIR env var or default ~/.ccgram."""
     raw = os.environ.get(CCGRAM_DIR_ENV, "")
-    if not raw:
-        raw = os.environ.get(_LEGACY_DIR_ENV, "")
-        if raw:
-            logger.warning(
-                "CCBOT_DIR is deprecated, use CCGRAM_DIR instead",
-                old="CCBOT_DIR",
-                new="CCGRAM_DIR",
-            )
     if raw:
         return Path(raw)
-
-    default = Path.home() / ".ccgram"
-    legacy = Path.home() / ".ccbot"
-    # Use legacy ~/.ccbot if it has a .env and ~/.ccgram does not
-    if not (default / ".env").is_file() and (legacy / ".env").is_file():
-        logger.warning(
-            "Using legacy ~/.ccbot config dir. Migrate with: mv ~/.ccbot ~/.ccgram"
-        )
-        return legacy
-    return default
+    return Path.home() / ".ccgram"
 
 
 def tmux_session_name() -> str:

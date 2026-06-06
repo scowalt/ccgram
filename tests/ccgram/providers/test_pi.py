@@ -597,39 +597,36 @@ class TestCapabilities:
         assert caps.name == "pi"
         assert caps.launch_command == "pi"
         assert caps.supports_hook is True
-        assert caps.supports_hook_events is True
         assert caps.supports_resume is True
         assert caps.supports_continue is True
-        assert caps.transcript_format == "jsonl"
         assert caps.supports_incremental_read is True
         assert set(caps.builtin_commands) == {
             "/changelog",
-            "/clear",
             "/clone",
-            "/colors",
             "/compact",
             "/copy",
-            "/debug",
             "/export",
+            "/followup",
             "/fork",
             "/hotkeys",
-            "/import",
             "/login",
             "/logout",
             "/model",
             "/name",
+            "/new",
             "/quit",
             "/reload",
+            "/scoped-models",
             "/session",
             "/settings",
             "/share",
             "/tree",
         }
-        assert "/new" not in caps.builtin_commands
+        assert "/clear" not in caps.builtin_commands
         assert "/resume" not in caps.builtin_commands
 
         assert caps.tui_picker_commands == frozenset(
-            {"model", "login", "fork", "clone", "import", "settings"}
+            {"model", "login", "fork", "clone", "scoped-models", "settings"}
         )
 
 
@@ -658,7 +655,10 @@ class TestDiscoverCommands:
 
         cmds = PiProvider().discover_commands(str(tmp_path / "proj"))
         names = {c.name for c in cmds}
-        assert "/clear" in names
+        assert "/new" in names
+        assert "/clear" not in names
+        assert "/followup" in names
+        assert "/scoped-models" in names
         assert "/tree" in names
         assert "/model" in names
         assert "/quit" in names

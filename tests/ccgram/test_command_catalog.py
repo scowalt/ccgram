@@ -106,20 +106,3 @@ class TestCommandCatalog:
         catalog.get_provider_commands(provider, str(tmp_path))  # type: ignore[arg-type]
         catalog.get_provider_commands(provider, str(tmp_path))  # type: ignore[arg-type]
         assert provider.calls == 1
-
-    def test_invalidate_provider_clears_cached_entries(self, tmp_path: Path) -> None:
-        provider = _DummyProvider(
-            name="codex",
-            commands=[
-                DiscoveredCommand(
-                    name="/status", description="status", source="builtin"
-                )
-            ],
-            supports_user_command_discovery=False,
-        )
-        catalog = CommandCatalog(ttl_seconds=60.0)
-
-        catalog.get_provider_commands(provider, str(tmp_path))  # type: ignore[arg-type]
-        catalog.invalidate("codex")
-        catalog.get_provider_commands(provider, str(tmp_path))  # type: ignore[arg-type]
-        assert provider.calls == 2
