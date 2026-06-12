@@ -191,6 +191,23 @@ class TestLiveViewConfig:
 
 
 @pytest.mark.usefixtures("_base_env")
+class TestTmuxDiagnosticsConfig:
+    def test_tmux_diagnostics_default_disabled(self, monkeypatch):
+        monkeypatch.delenv("CCGRAM_TMUX_DIAGNOSTICS", raising=False)
+        assert Config().tmux_diagnostics is False
+
+    @pytest.mark.parametrize("value", ["1", "true", "yes", "True", "YES"])
+    def test_tmux_diagnostics_enabled(self, monkeypatch, value):
+        monkeypatch.setenv("CCGRAM_TMUX_DIAGNOSTICS", value)
+        assert Config().tmux_diagnostics is True
+
+    def test_tmux_slow_ms_default_and_override(self, monkeypatch):
+        assert Config().tmux_slow_ms == 500
+        monkeypatch.setenv("CCGRAM_TMUX_SLOW_MS", "1200")
+        assert Config().tmux_slow_ms == 1200
+
+
+@pytest.mark.usefixtures("_base_env")
 class TestPollingConfig:
     @pytest.mark.parametrize(
         ("attr", "env_var", "default", "env_str", "expected", "clamp_str", "clamped"),

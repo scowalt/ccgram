@@ -149,6 +149,7 @@ class Config:
         self._init_live_view()
         self._init_send()
         self._init_lifecycle()
+        self._init_tmux_diagnostics()
 
         # Global default for hiding tool_use/tool_result content in Telegram.
         # Shown by default; set CCGRAM_HIDE_TOOL_CALLS=true to suppress globally.
@@ -202,6 +203,12 @@ class Config:
         self.live_view_timeout: int = max(
             1, _parse_int_env("CCGRAM_LIVE_VIEW_TIMEOUT", 300)
         )
+
+    def _init_tmux_diagnostics(self) -> None:
+        self.tmux_diagnostics: bool = os.getenv(
+            "CCGRAM_TMUX_DIAGNOSTICS", ""
+        ).lower() in ("1", "true", "yes")
+        self.tmux_slow_ms: int = max(0, _parse_int_env("CCGRAM_TMUX_SLOW_MS", 500))
 
     def _init_shell_and_llm(self) -> None:
         self.prompt_mode = os.getenv("CCGRAM_PROMPT_MODE", "wrap")

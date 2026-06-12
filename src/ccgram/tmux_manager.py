@@ -19,10 +19,13 @@ Module-level: _vim_state cache, _vim_locks for per-window send serialization.
 import asyncio
 import contextlib
 import re
+import shlex
 import structlog
 import subprocess
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypeVar
 
 import libtmux
 from libtmux.exc import LibTmuxException
@@ -32,6 +35,7 @@ from .thread_router import thread_router
 from .topic_state_registry import topic_state
 
 logger = structlog.get_logger()
+_T = TypeVar("_T")
 
 # ── Vim mode state cache ───────────────────────────────────────────────
 # window_id → True (vim mode on) / False (vim mode off)
@@ -85,6 +89,183 @@ _TmuxError = (
 _WINDOW_LIST_TTL = 0.75  # seconds — coalesce status/monitor window scans
 _TMUX_QUERY_TIMEOUT = 2.0
 _TMUX_BACKOFF_AFTER_FAILURE = 5.0
+_TMUX_KILL_WAIT_TIMEOUT = 0.5
+_TMUX_PROCESS_SNAPSHOT_TIMEOUT = 1.0
+_TMUX_PROCESS_SNAPSHOT_LINES = 40
+
+
+def _tmux_diagnostics_enabled() -> bool:
+    raw = getattr(config, "tmux_diagnostics", False)
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw.lower() in ("1", "true", "yes")
+    return False
+
+
+def _tmux_slow_seconds() -> float:
+    raw = getattr(config, "tmux_slow_ms", 500)
+    if not isinstance(raw, int | float | str):
+        return 0.5
+    try:
+        return max(0.0, float(raw) / 1000)
+    except ValueError:
+        return 0.5
+
+
+def _tmux_command_line(command: Sequence[str]) -> str:
+    return " ".join(shlex.quote(part) for part in command)
+
+
+def _stderr_preview(stderr: bytes, limit: int = 300) -> str:
+    return stderr.decode("utf-8", errors="replace").strip()[:limit]
+
+
+def _log_tmux_command_finished(
+    *,
+    operation: str,
+    command: Sequence[str],
+    proc: asyncio.subprocess.Process,
+    elapsed: float,
+    stdout: bytes,
+    stderr: bytes,
+) -> None:
+    slow = elapsed >= _tmux_slow_seconds()
+    if not (slow or _tmux_diagnostics_enabled()):
+        return
+
+    message = "tmux command slow" if slow else "tmux command completed"
+    log = logger.warning if slow else logger.debug
+    log(
+        message,
+        operation=operation,
+        pid=proc.pid,
+        elapsed_ms=round(elapsed * 1000, 1),
+        returncode=proc.returncode,
+        stdout_bytes=len(stdout),
+        stderr=_stderr_preview(stderr),
+        command=_tmux_command_line(command),
+    )
+
+
+async def _kill_timed_out_process(
+    proc: asyncio.subprocess.Process,
+    *,
+    operation: str,
+    command: Sequence[str],
+) -> None:
+    if proc.returncode is not None:
+        return
+
+    with contextlib.suppress(ProcessLookupError):
+        proc.kill()
+
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=_TMUX_KILL_WAIT_TIMEOUT)
+    except TimeoutError:
+        logger.warning(
+            "tmux client did not exit after kill",
+            operation=operation,
+            pid=proc.pid,
+            kill_wait_timeout_s=_TMUX_KILL_WAIT_TIMEOUT,
+            command=_tmux_command_line(command),
+        )
+
+
+async def _log_tmux_process_snapshot(*, operation: str) -> None:
+    if not _tmux_diagnostics_enabled():
+        return
+
+    command = ["ps", "-eo", "pid,ppid,stat,etime,command"]
+    proc: asyncio.subprocess.Process | None = None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        async with asyncio.timeout(_TMUX_PROCESS_SNAPSHOT_TIMEOUT):
+            stdout, _ = await proc.communicate()
+    except (OSError, TimeoutError):
+        if proc and proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            with contextlib.suppress(ProcessLookupError, TimeoutError):
+                await asyncio.wait_for(proc.wait(), timeout=_TMUX_KILL_WAIT_TIMEOUT)
+        return
+
+    lines = stdout.decode("utf-8", errors="replace").splitlines()
+    matching = [line for line in lines if "tmux" in line or "ccgram" in line]
+    snapshot = "\n".join(matching[:_TMUX_PROCESS_SNAPSHOT_LINES])
+    if snapshot:
+        logger.warning(
+            "tmux process snapshot",
+            operation=operation,
+            snapshot=snapshot,
+        )
+
+
+async def _communicate_tmux_process(
+    proc: asyncio.subprocess.Process,
+    *,
+    operation: str,
+    command: Sequence[str],
+    timeout: float,
+) -> tuple[bytes, bytes] | None:
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    try:
+        async with asyncio.timeout(timeout):
+            stdout, stderr = await proc.communicate()
+    except TimeoutError:
+        elapsed = loop.time() - start
+        logger.warning(
+            "tmux command timed out",
+            operation=operation,
+            pid=proc.pid,
+            timeout_s=timeout,
+            elapsed_ms=round(elapsed * 1000, 1),
+            command=_tmux_command_line(command),
+        )
+        await _kill_timed_out_process(proc, operation=operation, command=command)
+        await _log_tmux_process_snapshot(operation=operation)
+        return None
+
+    elapsed = loop.time() - start
+    _log_tmux_command_finished(
+        operation=operation,
+        command=command,
+        proc=proc,
+        elapsed=elapsed,
+        stdout=stdout,
+        stderr=stderr,
+    )
+    return stdout, stderr
+
+
+async def _run_libtmux_operation(
+    operation: str,
+    func: Callable[[], _T],
+    **fields: object,
+) -> _T:
+    if _tmux_diagnostics_enabled():
+        logger.debug("libtmux operation started", operation=operation, **fields)
+
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    result = await asyncio.to_thread(func)
+    elapsed = loop.time() - start
+    slow = elapsed >= _tmux_slow_seconds()
+    if slow or _tmux_diagnostics_enabled():
+        message = "libtmux operation slow" if slow else "libtmux operation completed"
+        log = logger.warning if slow else logger.debug
+        log(
+            message,
+            operation=operation,
+            elapsed_ms=round(elapsed * 1000, 1),
+            **fields,
+        )
+    return result
 
 
 @dataclass
@@ -222,33 +403,42 @@ class TmuxManager:
             return list(self._windows_cache)
 
     async def _refresh_window_cache(self, loop: asyncio.AbstractEventLoop) -> None:
-        proc: asyncio.subprocess.Process | None = None
+        command = [
+            "tmux",
+            "list-windows",
+            "-t",
+            self.session_name,
+            "-F",
+            "#{window_id}\t#{window_name}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_tty}\t#{pane_width}\t#{pane_height}",
+        ]
         try:
             proc = await asyncio.create_subprocess_exec(
-                "tmux",
-                "list-windows",
-                "-t",
-                self.session_name,
-                "-F",
-                "#{window_id}\t#{window_name}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_tty}\t#{pane_width}\t#{pane_height}",
+                *command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            async with asyncio.timeout(_TMUX_QUERY_TIMEOUT):
-                stdout, _ = await proc.communicate()
+            result = await _communicate_tmux_process(
+                proc,
+                operation="list_windows",
+                command=command,
+                timeout=_TMUX_QUERY_TIMEOUT,
+            )
         except TimeoutError:
-            if proc:
-                with contextlib.suppress(ProcessLookupError):
-                    proc.kill()
-                    await proc.wait()
             self._windows_backoff_expires = loop.time() + _TMUX_BACKOFF_AFTER_FAILURE
-            logger.warning("tmux list-windows timed out; backing off window scans")
+            logger.warning(
+                "tmux list-windows timed out before client start; backing off window scans"
+            )
             return
         except OSError as exc:
             self._windows_backoff_expires = loop.time() + _TMUX_BACKOFF_AFTER_FAILURE
             logger.debug("tmux list-windows failed: %s", exc)
             return
 
+        if result is None:
+            self._windows_backoff_expires = loop.time() + _TMUX_BACKOFF_AFTER_FAILURE
+            return
+
+        stdout, _ = result
         if proc.returncode != 0:
             self._windows_cache_filter_key = self._current_window_filter_key()
             self._windows_cache = []
@@ -349,32 +539,34 @@ class TmuxManager:
         wrapped lines so prompt markers are never split across lines on narrow
         terminals. Returns stripped text or None on failure.
         """
-        proc: asyncio.subprocess.Process | None = None
+        cmd = [
+            "tmux",
+            "capture-pane",
+            "-p",
+            "-J",
+            "-S",
+            f"-{history}",
+            "-t",
+            window_id,
+        ]
         try:
-            cmd = [
-                "tmux",
-                "capture-pane",
-                "-p",
-                "-J",
-                "-S",
-                f"-{history}",
-                "-t",
-                window_id,
-            ]
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            async with asyncio.timeout(5.0):
-                stdout, _ = await proc.communicate()
+            result = await _communicate_tmux_process(
+                proc,
+                operation="capture_pane_scrollback",
+                command=cmd,
+                timeout=5.0,
+            )
+            if result is None:
+                return None
+            stdout, _ = result
             text = stdout.decode("utf-8", errors="replace").rstrip()
             return text if text else None
         except TimeoutError:
-            if proc:
-                with contextlib.suppress(ProcessLookupError):
-                    proc.kill()
-                    await proc.wait()
             logger.debug("capture_pane_scrollback timed out", window_id=window_id)
             return None
         except OSError as exc:
@@ -389,21 +581,30 @@ class TmuxManager:
         Returns (raw_text, columns, rows) or None on failure. The raw text
         includes ANSI escape sequences suitable for feeding into pyte.
         """
-        proc: asyncio.subprocess.Process | None = None
+        cmd = [
+            "tmux",
+            "display-message",
+            "-p",
+            "-t",
+            window_id,
+            "#{pane_width}:#{pane_height}",
+        ]
         try:
             # Get dimensions and capture in one shell command
             proc = await asyncio.create_subprocess_exec(
-                "tmux",
-                "display-message",
-                "-p",
-                "-t",
-                window_id,
-                "#{pane_width}:#{pane_height}",
+                *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            async with asyncio.timeout(5.0):
-                stdout, stderr = await proc.communicate()
+            result = await _communicate_tmux_process(
+                proc,
+                operation="capture_pane_raw_dimensions",
+                command=cmd,
+                timeout=5.0,
+            )
+            if result is None:
+                return None
+            stdout, stderr = result
             if proc.returncode != 0:
                 # Window/pane gone mid-capture — a race in the live-view poll,
                 # not an operator-actionable error. TimeoutError below stays
@@ -428,12 +629,6 @@ class TmuxManager:
             return (text, columns, rows)
         except TimeoutError:
             logger.warning("Capture pane raw %s timed out", window_id)
-            if proc:
-                try:
-                    proc.kill()
-                    await proc.wait()
-                except ProcessLookupError:
-                    pass
             return None
         except OSError:
             logger.exception("Unexpected error capturing pane raw %s", window_id)
@@ -476,20 +671,19 @@ class TmuxManager:
         if with_ansi:
             cmd.append("-e")
         cmd.extend(["-p", "-t", window_id])
-        proc: asyncio.subprocess.Process | None = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            async with asyncio.timeout(_TMUX_QUERY_TIMEOUT):
-                stdout, stderr = await proc.communicate()
+            result = await _communicate_tmux_process(
+                proc,
+                operation="capture_pane",
+                command=cmd,
+                timeout=_TMUX_QUERY_TIMEOUT,
+            )
         except TimeoutError:
-            if proc:
-                with contextlib.suppress(ProcessLookupError):
-                    proc.kill()
-                    await proc.wait()
             self._capture_backoff_expires[window_id] = (
                 asyncio.get_running_loop().time() + _TMUX_BACKOFF_AFTER_FAILURE
             )
@@ -502,6 +696,13 @@ class TmuxManager:
             logger.debug("Capture pane %s failed: %s", window_id, exc)
             return None
 
+        if result is None:
+            self._capture_backoff_expires[window_id] = (
+                asyncio.get_running_loop().time() + _TMUX_BACKOFF_AFTER_FAILURE
+            )
+            return None
+
+        stdout, stderr = result
         if proc.returncode != 0:
             logger.debug(
                 "Failed to capture pane %s: %s",
@@ -518,30 +719,33 @@ class TmuxManager:
         Some CLIs (e.g. Gemini) broadcast state via OSC escape sequences
         that set the terminal title. Returns empty string on failure.
         """
-        proc: asyncio.subprocess.Process | None = None
+        cmd = [
+            "tmux",
+            "display-message",
+            "-p",
+            "-t",
+            window_id,
+            "#{pane_title}",
+        ]
         try:
             proc = await asyncio.create_subprocess_exec(
-                "tmux",
-                "display-message",
-                "-p",
-                "-t",
-                window_id,
-                "#{pane_title}",
+                *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            async with asyncio.timeout(5.0):
-                stdout, _ = await proc.communicate()
+            result = await _communicate_tmux_process(
+                proc,
+                operation="get_pane_title",
+                command=cmd,
+                timeout=5.0,
+            )
+            if result is None:
+                return ""
+            stdout, _ = result
             if proc.returncode != 0:
                 return ""
             return stdout.decode("utf-8", errors="replace").strip()
         except TimeoutError:
-            if proc:
-                try:
-                    proc.kill()
-                    await proc.wait()
-                except ProcessLookupError:
-                    pass
             return ""
         except OSError:
             return ""
@@ -554,19 +758,20 @@ class TmuxManager:
         """
         title = f"ccgram:{provider_name}"
         target = f"{self.session_name}:{window_id}"
+        command = ["tmux", "select-pane", "-t", target, "-T", title]
         try:
             proc = await asyncio.create_subprocess_exec(
-                "tmux",
-                "select-pane",
-                "-t",
-                target,
-                "-T",
-                title,
+                *command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            await proc.communicate()
-        except OSError:
+            await _communicate_tmux_process(
+                proc,
+                operation="stamp_pane_title",
+                command=command,
+                timeout=5.0,
+            )
+        except (OSError, TimeoutError):
             pass
 
     def _pane_send(
@@ -591,6 +796,29 @@ class TmuxManager:
         except _TmuxError:
             logger.exception("Failed to send keys to window %s", window_id)
             return False
+
+    async def _pane_send_async(
+        self,
+        window_id: str,
+        chars: str,
+        *,
+        enter: bool,
+        literal: bool,
+        operation: str,
+    ) -> bool:
+        return await _run_libtmux_operation(
+            operation,
+            lambda: self._pane_send(
+                window_id,
+                chars,
+                enter=enter,
+                literal=literal,
+            ),
+            window_id=window_id,
+            chars_len=len(chars),
+            enter=enter,
+            literal=literal,
+        )
 
     async def _ensure_vim_insert_mode(self, window_id: str) -> None:
         """Enter vim INSERT mode before sending text — only when vim is known on.
@@ -628,8 +856,12 @@ class TmuxManager:
             return  # already in INSERT
 
         # vim on, no INSERT indicator → NORMAL mode; enter INSERT.
-        await asyncio.to_thread(
-            self._pane_send, window_id, "i", enter=False, literal=True
+        await self._pane_send_async(
+            window_id,
+            "i",
+            enter=False,
+            literal=True,
+            operation="vim_insert_key",
         )
 
     async def _send_literal_then_enter(self, window_id: str, text: str) -> bool:
@@ -655,25 +887,41 @@ class TmuxManager:
         await self._ensure_vim_insert_mode(window_id)
 
         if text.startswith("!"):
-            if not await asyncio.to_thread(
-                self._pane_send, window_id, "!", enter=False, literal=True
+            if not await self._pane_send_async(
+                window_id,
+                "!",
+                enter=False,
+                literal=True,
+                operation="send_shell_bang_prefix",
             ):
                 return False
             rest = text[1:]
             if rest:
                 await asyncio.sleep(1.0)
-                if not await asyncio.to_thread(
-                    self._pane_send, window_id, rest, enter=False, literal=True
+                if not await self._pane_send_async(
+                    window_id,
+                    rest,
+                    enter=False,
+                    literal=True,
+                    operation="send_literal_text",
                 ):
                     return False
         else:
-            if not await asyncio.to_thread(
-                self._pane_send, window_id, text, enter=False, literal=True
+            if not await self._pane_send_async(
+                window_id,
+                text,
+                enter=False,
+                literal=True,
+                operation="send_literal_text",
             ):
                 return False
         await asyncio.sleep(0.5)
-        return await asyncio.to_thread(
-            self._pane_send, window_id, "", enter=True, literal=False
+        return await self._pane_send_async(
+            window_id,
+            "",
+            enter=True,
+            literal=False,
+            operation="send_enter",
         )
 
     async def send_keys(
@@ -702,8 +950,12 @@ class TmuxManager:
         if literal and enter and not raw:
             return await self._send_literal_then_enter(window_id, text)
 
-        return await asyncio.to_thread(
-            self._pane_send, window_id, text, enter=enter, literal=literal
+        return await self._pane_send_async(
+            window_id,
+            text,
+            enter=enter,
+            literal=literal,
+            operation="send_keys",
         )
 
     async def kill_window(self, window_id: str) -> bool:
@@ -724,7 +976,11 @@ class TmuxManager:
                 logger.exception("Failed to kill window %s", window_id)
                 return False
 
-        killed = await asyncio.to_thread(_sync_kill)
+        killed = await _run_libtmux_operation(
+            "kill_window",
+            _sync_kill,
+            window_id=window_id,
+        )
         if killed:
             self._invalidate_window_cache()
         return killed
@@ -747,7 +1003,12 @@ class TmuxManager:
                 logger.exception("Failed to rename window %s", window_id)
                 return False
 
-        renamed = await asyncio.to_thread(_sync_rename)
+        renamed = await _run_libtmux_operation(
+            "rename_window",
+            _sync_rename,
+            window_id=window_id,
+            new_name=new_name,
+        )
         if renamed:
             self._invalidate_window_cache()
         return renamed
@@ -789,7 +1050,11 @@ class TmuxManager:
                 self._reset_server()
                 return []
 
-        return await asyncio.to_thread(_sync_list_panes)
+        return await _run_libtmux_operation(
+            "list_panes",
+            _sync_list_panes,
+            window_id=window_id,
+        )
 
     async def capture_pane_by_id(
         self,
@@ -834,7 +1099,12 @@ class TmuxManager:
                 self._reset_server()
                 return None
 
-        return await asyncio.to_thread(_sync_capture)
+        return await _run_libtmux_operation(
+            "capture_pane_by_id",
+            _sync_capture,
+            pane_id=pane_id,
+            window_id=window_id,
+        )
 
     async def send_keys_to_pane(
         self,
@@ -869,7 +1139,15 @@ class TmuxManager:
                 logger.exception("Failed to send keys to pane %s", pane_id)
                 return False
 
-        return await asyncio.to_thread(_sync_send)
+        return await _run_libtmux_operation(
+            "send_keys_to_pane",
+            _sync_send,
+            pane_id=pane_id,
+            window_id=window_id,
+            text_len=len(text),
+            enter=enter,
+            literal=literal,
+        )
 
     @staticmethod
     def _find_pane(
@@ -985,7 +1263,14 @@ class TmuxManager:
                 logger.exception("Failed to create window")
                 return False, f"Failed to create window: {e}", "", ""
 
-        result = await asyncio.to_thread(_create_and_start)
+        result = await _run_libtmux_operation(
+            "create_window",
+            _create_and_start,
+            path=str(path),
+            window_name=final_window_name,
+            start_agent=start_agent,
+            launch_command=launch_command or "",
+        )
         if result[0]:
             self._invalidate_window_cache()
         return result
