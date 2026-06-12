@@ -552,32 +552,34 @@ class TmuxManager:
         wrapped lines so prompt markers are never split across lines on narrow
         terminals. Returns stripped text or None on failure.
         """
-        proc: asyncio.subprocess.Process | None = None
+        cmd = [
+            "tmux",
+            "capture-pane",
+            "-p",
+            "-J",
+            "-S",
+            f"-{history}",
+            "-t",
+            window_id,
+        ]
         try:
-            cmd = [
-                "tmux",
-                "capture-pane",
-                "-p",
-                "-J",
-                "-S",
-                f"-{history}",
-                "-t",
-                window_id,
-            ]
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            async with asyncio.timeout(5.0):
-                stdout, _ = await proc.communicate()
+            result = await _communicate_tmux_process(
+                proc,
+                operation="capture_pane_scrollback",
+                command=cmd,
+                timeout=5.0,
+            )
+            if result is None:
+                return None
+            stdout, _ = result
             text = stdout.decode("utf-8", errors="replace").rstrip()
             return text if text else None
         except TimeoutError:
-            if proc:
-                with contextlib.suppress(ProcessLookupError):
-                    proc.kill()
-                    await proc.wait()
             logger.debug("capture_pane_scrollback timed out", window_id=window_id)
             return None
         except OSError as exc:
@@ -592,21 +594,30 @@ class TmuxManager:
         Returns (raw_text, columns, rows) or None on failure. The raw text
         includes ANSI escape sequences suitable for feeding into pyte.
         """
-        proc: asyncio.subprocess.Process | None = None
+        cmd = [
+            "tmux",
+            "display-message",
+            "-p",
+            "-t",
+            window_id,
+            "#{pane_width}:#{pane_height}",
+        ]
         try:
             # Get dimensions and capture in one shell command
             proc = await asyncio.create_subprocess_exec(
-                "tmux",
-                "display-message",
-                "-p",
-                "-t",
-                window_id,
-                "#{pane_width}:#{pane_height}",
+                *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            async with asyncio.timeout(5.0):
-                stdout, stderr = await proc.communicate()
+            result = await _communicate_tmux_process(
+                proc,
+                operation="capture_pane_raw_dimensions",
+                command=cmd,
+                timeout=5.0,
+            )
+            if result is None:
+                return None
+            stdout, stderr = result
             if proc.returncode != 0:
                 # Window/pane gone mid-capture — a race in the live-view poll,
                 # not an operator-actionable error. TimeoutError below stays
@@ -631,12 +642,6 @@ class TmuxManager:
             return (text, columns, rows)
         except TimeoutError:
             logger.warning("Capture pane raw %s timed out", window_id)
-            if proc:
-                try:
-                    proc.kill()
-                    await proc.wait()
-                except ProcessLookupError:
-                    pass
             return None
         except OSError:
             logger.exception("Unexpected error capturing pane raw %s", window_id)
@@ -644,7 +649,34 @@ class TmuxManager:
 
     async def _capture_pane_ansi(self, window_id: str) -> str | None:
         """Capture pane with ANSI colors via tmux subprocess."""
-        proc: asyncio.subprocess.Process | None = None
+        return await self._capture_pane_subprocess(window_id, with_ansi=True)
+
+    async def _capture_pane_plain(self, window_id: str) -> str | None:
+        """Capture pane as plain text via a bounded tmux subprocess."""
+        return await self._capture_pane_subprocess(window_id, with_ansi=False)
+
+    async def _capture_pane_subprocess(
+        self, window_id: str, *, with_ansi: bool
+    ) -> str | None:
+        self._ensure_capture_state()
+        loop = asyncio.get_running_loop()
+        if loop.time() < self._capture_backoff_expires.get(window_id, 0.0):
+            return None
+
+        lock = self._capture_locks.setdefault(window_id, asyncio.Lock())
+        if lock.locked():
+            return None
+
+        async with lock:
+            if loop.time() < self._capture_backoff_expires.get(window_id, 0.0):
+                return None
+            return await self._run_capture_pane(window_id, with_ansi=with_ansi)
+
+    async def _run_capture_pane(self, window_id: str, *, with_ansi: bool) -> str | None:
+        cmd = ["tmux", "capture-pane"]
+        if with_ansi:
+            cmd.append("-e")
+        cmd.extend(["-p", "-t", window_id])
         try:
             proc = await asyncio.create_subprocess_exec(
                 "tmux",
@@ -656,30 +688,38 @@ class TmuxManager:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            async with asyncio.timeout(5.0):
-                stdout, stderr = await proc.communicate()
-            if proc.returncode != 0:
-                # Window/pane gone mid-capture — live-view race, not actionable.
-                logger.debug(
-                    "Failed to capture pane %s: %s",
-                    window_id,
-                    stderr.decode("utf-8", errors="replace"),
-                )
-                return None
-            text = stdout.decode("utf-8", errors="replace").rstrip()
-            return text if text else None
+            result = await _communicate_tmux_process(
+                proc,
+                operation="capture_pane",
+                command=cmd,
+                timeout=_TMUX_QUERY_TIMEOUT,
+            )
         except TimeoutError:
+            self._capture_backoff_expires[window_id] = (
+                asyncio.get_running_loop().time() + _TMUX_BACKOFF_AFTER_FAILURE
+            )
             logger.warning("Capture pane %s timed out", window_id)
-            if proc:
-                try:
-                    proc.kill()
-                    await proc.wait()
-                except ProcessLookupError:
-                    pass
             return None
         except OSError:
             logger.exception("Unexpected error capturing pane %s", window_id)
             return None
+
+        if result is None:
+            self._capture_backoff_expires[window_id] = (
+                asyncio.get_running_loop().time() + _TMUX_BACKOFF_AFTER_FAILURE
+            )
+            return None
+
+        stdout, stderr = result
+        if proc.returncode != 0:
+            logger.debug(
+                "Failed to capture pane %s: %s",
+                window_id,
+                stderr.decode("utf-8", errors="replace"),
+            )
+            return None
+        text = stdout.decode("utf-8", errors="replace").rstrip()
+        return text if text else None
 
     async def get_pane_title(self, window_id: str) -> str:
         """Get the terminal title of a window's active pane.
@@ -687,30 +727,33 @@ class TmuxManager:
         Some CLIs (e.g. Gemini) broadcast state via OSC escape sequences
         that set the terminal title. Returns empty string on failure.
         """
-        proc: asyncio.subprocess.Process | None = None
+        cmd = [
+            "tmux",
+            "display-message",
+            "-p",
+            "-t",
+            window_id,
+            "#{pane_title}",
+        ]
         try:
             proc = await asyncio.create_subprocess_exec(
-                "tmux",
-                "display-message",
-                "-p",
-                "-t",
-                window_id,
-                "#{pane_title}",
+                *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            async with asyncio.timeout(5.0):
-                stdout, _ = await proc.communicate()
+            result = await _communicate_tmux_process(
+                proc,
+                operation="get_pane_title",
+                command=cmd,
+                timeout=5.0,
+            )
+            if result is None:
+                return ""
+            stdout, _ = result
             if proc.returncode != 0:
                 return ""
             return stdout.decode("utf-8", errors="replace").strip()
         except TimeoutError:
-            if proc:
-                try:
-                    proc.kill()
-                    await proc.wait()
-                except ProcessLookupError:
-                    pass
             return ""
         except OSError:
             return ""
@@ -723,51 +766,21 @@ class TmuxManager:
         """
         title = f"ccgram:{provider_name}"
         target = f"{self.session_name}:{window_id}"
+        command = ["tmux", "select-pane", "-t", target, "-T", title]
         try:
             proc = await asyncio.create_subprocess_exec(
-                "tmux",
-                "select-pane",
-                "-t",
-                target,
-                "-T",
-                title,
+                *command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            await proc.communicate()
-        except OSError:
+            await _communicate_tmux_process(
+                proc,
+                operation="stamp_pane_title",
+                command=command,
+                timeout=5.0,
+            )
+        except (OSError, TimeoutError):
             pass
-
-    async def _capture_pane_plain(self, window_id: str) -> str | None:
-        """Capture pane as plain text via libtmux."""
-
-        def _sync_capture() -> str | None:
-            session = self.get_session()
-            if not session:
-                return None
-            try:
-                window = session.windows.get(window_id=window_id, default=None)
-                if not window:
-                    return None
-                pane = window.active_pane
-                if not pane:
-                    return None
-                lines = pane.capture_pane()
-                text = "\n".join(lines) if isinstance(lines, list) else str(lines)
-                text = text.rstrip()
-                return text if text else None
-            except _TmuxError as e:
-                if "can't find window" in str(e):
-                    # Window closed mid-capture — race, not an error.
-                    logger.debug("Pane capture skipped (window gone): %s", window_id)
-                else:
-                    # Other libtmux errors here are transient races on the
-                    # status-poll path (~1s); server reset below recovers.
-                    logger.debug("Failed to capture pane %s: %s", window_id, e)
-                self._reset_server()
-                return None
-
-        return await asyncio.to_thread(_sync_capture)
 
     def _pane_send(
         self, window_id: str, chars: str, *, enter: bool, literal: bool
@@ -791,6 +804,29 @@ class TmuxManager:
         except _TmuxError:
             logger.exception("Failed to send keys to window %s", window_id)
             return False
+
+    async def _pane_send_async(
+        self,
+        window_id: str,
+        chars: str,
+        *,
+        enter: bool,
+        literal: bool,
+        operation: str,
+    ) -> bool:
+        return await _run_libtmux_operation(
+            operation,
+            lambda: self._pane_send(
+                window_id,
+                chars,
+                enter=enter,
+                literal=literal,
+            ),
+            window_id=window_id,
+            chars_len=len(chars),
+            enter=enter,
+            literal=literal,
+        )
 
     async def _ensure_vim_insert_mode(self, window_id: str) -> None:
         """Enter vim INSERT mode before sending text — only when vim is known on.
@@ -828,8 +864,12 @@ class TmuxManager:
             return  # already in INSERT
 
         # vim on, no INSERT indicator → NORMAL mode; enter INSERT.
-        await asyncio.to_thread(
-            self._pane_send, window_id, "i", enter=False, literal=True
+        await self._pane_send_async(
+            window_id,
+            "i",
+            enter=False,
+            literal=True,
+            operation="vim_insert_key",
         )
 
     async def _send_literal_then_enter(self, window_id: str, text: str) -> bool:
@@ -855,25 +895,41 @@ class TmuxManager:
         await self._ensure_vim_insert_mode(window_id)
 
         if text.startswith("!"):
-            if not await asyncio.to_thread(
-                self._pane_send, window_id, "!", enter=False, literal=True
+            if not await self._pane_send_async(
+                window_id,
+                "!",
+                enter=False,
+                literal=True,
+                operation="send_shell_bang_prefix",
             ):
                 return False
             rest = text[1:]
             if rest:
                 await asyncio.sleep(1.0)
-                if not await asyncio.to_thread(
-                    self._pane_send, window_id, rest, enter=False, literal=True
+                if not await self._pane_send_async(
+                    window_id,
+                    rest,
+                    enter=False,
+                    literal=True,
+                    operation="send_literal_text",
                 ):
                     return False
         else:
-            if not await asyncio.to_thread(
-                self._pane_send, window_id, text, enter=False, literal=True
+            if not await self._pane_send_async(
+                window_id,
+                text,
+                enter=False,
+                literal=True,
+                operation="send_literal_text",
             ):
                 return False
         await asyncio.sleep(0.5)
-        return await asyncio.to_thread(
-            self._pane_send, window_id, "", enter=True, literal=False
+        return await self._pane_send_async(
+            window_id,
+            "",
+            enter=True,
+            literal=False,
+            operation="send_enter",
         )
 
     async def send_keys(
@@ -902,8 +958,12 @@ class TmuxManager:
         if literal and enter and not raw:
             return await self._send_literal_then_enter(window_id, text)
 
-        return await asyncio.to_thread(
-            self._pane_send, window_id, text, enter=enter, literal=literal
+        return await self._pane_send_async(
+            window_id,
+            text,
+            enter=enter,
+            literal=literal,
+            operation="send_keys",
         )
 
     async def kill_window(self, window_id: str) -> bool:
@@ -924,7 +984,14 @@ class TmuxManager:
                 logger.exception("Failed to kill window %s", window_id)
                 return False
 
-        return await asyncio.to_thread(_sync_kill)
+        killed = await _run_libtmux_operation(
+            "kill_window",
+            _sync_kill,
+            window_id=window_id,
+        )
+        if killed:
+            self._invalidate_window_cache()
+        return killed
 
     async def rename_window(self, window_id: str, new_name: str) -> bool:
         """Rename a tmux window by its ID. Returns True on success."""
@@ -944,7 +1011,15 @@ class TmuxManager:
                 logger.exception("Failed to rename window %s", window_id)
                 return False
 
-        return await asyncio.to_thread(_sync_rename)
+        renamed = await _run_libtmux_operation(
+            "rename_window",
+            _sync_rename,
+            window_id=window_id,
+            new_name=new_name,
+        )
+        if renamed:
+            self._invalidate_window_cache()
+        return renamed
 
     # ── Pane-level operations ──────────────────────────────────────────
 
@@ -983,7 +1058,11 @@ class TmuxManager:
                 self._reset_server()
                 return []
 
-        return await asyncio.to_thread(_sync_list_panes)
+        return await _run_libtmux_operation(
+            "list_panes",
+            _sync_list_panes,
+            window_id=window_id,
+        )
 
     async def split_window(self, window_id: str) -> str | None:
         """Split a window's active pane via libtmux; return the new pane id.
@@ -1051,7 +1130,12 @@ class TmuxManager:
                 self._reset_server()
                 return None
 
-        return await asyncio.to_thread(_sync_capture)
+        return await _run_libtmux_operation(
+            "capture_pane_by_id",
+            _sync_capture,
+            pane_id=pane_id,
+            window_id=window_id,
+        )
 
     async def send_keys_to_pane(
         self,
@@ -1086,7 +1170,15 @@ class TmuxManager:
                 logger.exception("Failed to send keys to pane %s", pane_id)
                 return False
 
-        return await asyncio.to_thread(_sync_send)
+        return await _run_libtmux_operation(
+            "send_keys_to_pane",
+            _sync_send,
+            pane_id=pane_id,
+            window_id=window_id,
+            text_len=len(text),
+            enter=enter,
+            literal=literal,
+        )
 
     @staticmethod
     def _find_pane(
@@ -1209,7 +1301,17 @@ class TmuxManager:
                 logger.exception("Failed to create window")
                 return False, f"Failed to create window: {e}", "", ""
 
-        return await asyncio.to_thread(_create_and_start)
+        result = await _run_libtmux_operation(
+            "create_window",
+            _create_and_start,
+            path=str(path),
+            window_name=final_window_name,
+            start_agent=start_agent,
+            launch_command=launch_command or "",
+        )
+        if result[0]:
+            self._invalidate_window_cache()
+        return result
 
     # ── Multiplexer Protocol surface ───────────────────────────────────
     # Neutral-typed wrappers over the libtmux-specific methods above.

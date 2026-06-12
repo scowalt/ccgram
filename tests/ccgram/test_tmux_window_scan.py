@@ -162,6 +162,7 @@ class TestListWindows:
     ) -> None:
         proc = _make_proc()
         proc.communicate.side_effect = TimeoutError
+        proc.returncode = None
         proc.kill = Mock()
         proc.wait = AsyncMock()
 
