@@ -152,7 +152,7 @@ class SessionManager:
     def _is_window_id(self, key: str) -> bool:
         """Check if a key looks like a window ID for the active backend.
 
-        Backend-aware: tmux ``@N`` ids, herdr ``wN:pM`` ids (see
+        Backend-aware: tmux ``@N`` ids, herdr ``wN:tM`` tab ids (see
         ``session_map.is_backend_window_id``). Old-format (window-name) keys
         return False on tmux so startup re-resolution migrates them.
         """

@@ -1,8 +1,10 @@
 import io
 import json
+import os
 import shlex
 import subprocess
 import sys
+import time
 from unittest.mock import patch
 
 import pytest
@@ -16,6 +18,7 @@ from ccgram.hook import (
     _is_nested_session,
     _provider_from_pane_tty,
     _uninstall_hook,
+    _update_session_map,
     get_installed_events,
     hook_main,
 )
@@ -614,6 +617,30 @@ class TestTabDelimitedParsing:
         session_map_file = tmp_path / "session_map.json"
         assert not session_map_file.exists()
 
+    def test_env_file_selects_herdr_when_tmux_env_is_also_present(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        monkeypatch.setenv("CCGRAM_DIR", str(tmp_path))
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("TMUX_PANE", "%0")
+        monkeypatch.setenv("HERDR_PANE_ID", "w2:p1")
+        monkeypatch.delenv("CCGRAM_MULTIPLEXER", raising=False)
+        (tmp_path / ".env").write_text("CCGRAM_MULTIPLEXER=herdr\n")
+        monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(self._VALID_PAYLOAD)))
+        monkeypatch.setattr(
+            "ccgram.hook._resolve_window_id",
+            lambda *_: pytest.fail("tmux should not be queried"),
+        )
+        monkeypatch.setattr("ccgram.hook._resolve_herdr_tab_id", lambda *_: "w2:t1")
+
+        try:
+            hook_main()
+        finally:
+            os.environ.pop("CCGRAM_MULTIPLEXER", None)
+
+        session_map = json.loads((tmp_path / "session_map.json").read_text())
+        assert "herdr:w2:t1" in session_map
+
 
 class TestHookStatus:
     def _all_events_settings(self) -> dict:
@@ -669,6 +696,115 @@ class TestHookStatus:
         result = _hook_status()
         assert result == 1
         assert "Not installed" in capsys.readouterr().out
+
+
+class TestUpdateSessionMap:
+    def test_tmux_fresh_existing_session_is_kept(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setenv("CCGRAM_DIR", str(tmp_path))
+        old_file = tmp_path / "old.jsonl"
+        new_file = tmp_path / "new.jsonl"
+        old_file.write_text("old")
+        new_file.write_text("new")
+        session_map_file = tmp_path / "session_map.json"
+        session_map_file.write_text(
+            json.dumps(
+                {
+                    "ccgram:@2": {
+                        "session_id": "old-session",
+                        "cwd": "/old",
+                        "window_name": "old",
+                        "transcript_path": str(old_file),
+                        "provider_name": "claude",
+                    }
+                }
+            )
+        )
+
+        _update_session_map(
+            "ccgram:@2",
+            "new-session",
+            "/new",
+            "new",
+            str(new_file),
+            "ccgram",
+        )
+
+        session_map = json.loads(session_map_file.read_text())
+        assert session_map["ccgram:@2"]["session_id"] == "old-session"
+        assert session_map["ccgram:@2"]["cwd"] == "/old"
+
+    def test_herdr_fresh_existing_session_is_replaced(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        monkeypatch.setenv("CCGRAM_DIR", str(tmp_path))
+        old_file = tmp_path / "old.jsonl"
+        new_file = tmp_path / "new.jsonl"
+        old_file.write_text("old")
+        new_file.write_text("new")
+        session_map_file = tmp_path / "session_map.json"
+        session_map_file.write_text(
+            json.dumps(
+                {
+                    "herdr:w2:t1": {
+                        "session_id": "old-session",
+                        "cwd": "/old",
+                        "window_name": "old",
+                        "transcript_path": str(old_file),
+                        "provider_name": "claude",
+                    }
+                }
+            )
+        )
+
+        _update_session_map(
+            "herdr:w2:t1",
+            "new-session",
+            "/new",
+            "new",
+            str(new_file),
+            "ccgram",
+        )
+
+        session_map = json.loads(session_map_file.read_text())
+        assert session_map["herdr:w2:t1"]["session_id"] == "new-session"
+        assert session_map["herdr:w2:t1"]["cwd"] == "/new"
+
+    def test_herdr_stale_existing_session_is_replaced(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        monkeypatch.setenv("CCGRAM_DIR", str(tmp_path))
+        old_file = tmp_path / "old.jsonl"
+        new_file = tmp_path / "new.jsonl"
+        old_file.write_text("old")
+        new_file.write_text("new")
+        os.utime(old_file, (time.time() - 60, time.time() - 60))
+        session_map_file = tmp_path / "session_map.json"
+        session_map_file.write_text(
+            json.dumps(
+                {
+                    "herdr:w2:t1": {
+                        "session_id": "old-session",
+                        "cwd": "/old",
+                        "window_name": "old",
+                        "transcript_path": str(old_file),
+                        "provider_name": "claude",
+                    }
+                }
+            )
+        )
+
+        _update_session_map(
+            "herdr:w2:t1",
+            "new-session",
+            "/new",
+            "new",
+            str(new_file),
+            "ccgram",
+        )
+
+        session_map = json.loads(session_map_file.read_text())
+        assert session_map["herdr:w2:t1"]["session_id"] == "new-session"
+        assert session_map["herdr:w2:t1"]["cwd"] == "/new"
 
 
 class TestClaudeSettingsFile:

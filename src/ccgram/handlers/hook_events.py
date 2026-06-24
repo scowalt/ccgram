@@ -40,11 +40,11 @@ def _resolve_users_for_window_key(
     """Resolve window_key to list of (user_id, thread_id, window_id).
 
     The window_key format is "<prefix>:<window_id>" (e.g. "ccgram:@0" for tmux,
-    "herdr:w2:p1" for herdr, whose window_id itself contains a colon). The prefix
+    "herdr:w2:t1" for herdr, whose window_id itself contains a colon). The prefix
     is a single colon-free token, so we split on the FIRST colon to recover the
     full window_id and look up thread bindings.
     """
-    # Extract window_id from key ("ccgram:@0" -> "@0", "herdr:w2:p1" -> "w2:p1")
+    # Extract window_id from key ("ccgram:@0" -> "@0", "herdr:w2:t1" -> "w2:t1")
     parts = window_key.split(":", 1)
     if len(parts) < _WINDOW_KEY_PARTS:
         return []

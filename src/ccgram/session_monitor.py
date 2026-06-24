@@ -36,7 +36,7 @@ from .multiplexer import multiplexer as tmux_manager
 from .multiplexer.topic_mapping import is_agent_topic_window
 from .monitor_events import NewMessage, NewWindowEvent, SessionInfo
 from .transcript_reader import TranscriptReader
-from .utils import atomic_write_json, task_done_callback
+from .utils import atomic_write_json, log_throttled, task_done_callback
 
 import json
 
@@ -194,7 +194,7 @@ class SessionMonitor:
         if not raw_session_map:
             return raw_session_map, False
 
-        prefix = f"{config.tmux_session_name}:"
+        prefix = session_map_prefix()
         current_map = parse_session_map(raw_session_map, prefix)
         now = time.time()
         changed = False
@@ -204,9 +204,6 @@ class SessionMonitor:
         )
 
         for window_id, details in current_map.items():
-            if not window_id.startswith("@"):
-                continue
-
             current_path = details.get("transcript_path", "")
             current_session_id = details.get("session_id", "")
             current_mtime = self._transcript_mtime(current_path)
@@ -244,9 +241,10 @@ class SessionMonitor:
             claimed_session_ids.discard(current_session_id)
             claimed_transcript_paths = set(provider_path_claims)
             claimed_transcript_paths.discard(current_path)
+            window_key = f"{prefix}{window_id}"
             discovered = provider.discover_transcript(
                 details.get("cwd", ""),
-                f"{config.tmux_session_name}:{window_id}",
+                window_key,
                 exclude_session_ids=claimed_session_ids,
                 exclude_transcript_paths=claimed_transcript_paths,
             )
@@ -274,7 +272,7 @@ class SessionMonitor:
             ):
                 continue
 
-            raw_key = f"{config.tmux_session_name}:{window_id}"
+            raw_key = f"{prefix}{window_id}"
             existing = raw_session_map.get(raw_key, {})
             if not isinstance(existing, dict):
                 existing = {}
@@ -612,12 +610,17 @@ class SessionMonitor:
                     window.window_id,
                 )
             else:
-                self._emitted_new_window_ids.add(window.window_id)
+                # Only suppress future attempts after a durable binding exists.
+                # Topic creation can fail transiently without raising through the
+                # callback; retry those instead of losing adoption until restart.
+                if thread_router.has_window(window.window_id):
+                    self._emitted_new_window_ids.add(window.window_id)
 
     async def _emit_known_unbound_window_events(
         self,
         current_map: dict,
         live_window_ids: set[str],
+        live_windows_by_id: dict[str, Any] | None = None,
     ) -> None:
         """Fire a NewWindowEvent for each session_map window that is not bound.
 
@@ -628,7 +631,9 @@ class SessionMonitor:
 
         ``live_window_ids`` is the set from ``list_windows``. Because ``list_windows``
         already filters ``__*__`` workspace/tab labels, any such tab is absent from
-        ``live_window_ids`` and is silently skipped here as well.
+        ``live_window_ids`` and is silently skipped here as well. When live window
+        refs are available, their current label/cwd wins over stale session_map
+        values so workspace/tab renames are reflected during adoption.
         """
         if not self._new_window_callback:
             return
@@ -637,16 +642,28 @@ class SessionMonitor:
         from .thread_router import thread_router
 
         bound_window_ids = {wid for _, _, wid in thread_router.iter_thread_bindings()}
+        caps = tmux_manager.capabilities
         for window_id, details in current_map.items():
             if window_id not in live_window_ids:
                 continue  # dead / __*__-filtered — skip
             if window_id in bound_window_ids:
                 continue  # already has a topic
+            live_window = (live_windows_by_id or {}).get(window_id)
+            if live_window is not None and not is_agent_topic_window(live_window, caps):
+                continue
             event = NewWindowEvent(
                 window_id=window_id,
                 session_id=details.get("session_id", ""),
-                window_name=details.get("window_name", ""),
-                cwd=details.get("cwd", ""),
+                window_name=(
+                    live_window.window_name
+                    if live_window is not None and live_window.window_name
+                    else details.get("window_name", "")
+                ),
+                cwd=(
+                    live_window.cwd
+                    if live_window is not None and live_window.cwd
+                    else details.get("cwd", "")
+                ),
             )
             try:
                 await self._new_window_callback(event)
@@ -681,12 +698,26 @@ class SessionMonitor:
 
                 all_windows = await tmux_manager.list_windows()
                 live_window_ids = {w.window_id for w in all_windows}
-                session_map_sync.prune_session_map(live_window_ids)
-                known_window_ids = set(current_map.keys())
-                await self._emit_unbound_window_events(all_windows, known_window_ids)
-                await self._emit_known_unbound_window_events(
-                    current_map, live_window_ids
+                window_scan_failed = bool(
+                    getattr(tmux_manager, "last_window_scan_failed", False)
                 )
+                if window_scan_failed:
+                    log_throttled(
+                        logger,
+                        "session-monitor-window-scan-failed",
+                        "Skipping window prune/adoption after failed scan",
+                    )
+                else:
+                    session_map_sync.prune_session_map(live_window_ids)
+                    known_window_ids = set(current_map.keys())
+                    await self._emit_unbound_window_events(
+                        all_windows, known_window_ids
+                    )
+                    await self._emit_known_unbound_window_events(
+                        current_map,
+                        live_window_ids,
+                        {window.window_id: window for window in all_windows},
+                    )
 
                 new_messages = await self.check_for_updates(current_map)
 

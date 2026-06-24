@@ -1087,17 +1087,14 @@ class TestResolveStaleIdsHerdrRestart:
     async def test_herdr_restart_reattaches_bound_topic(
         self, mgr: SessionManager, monkeypatch
     ) -> None:
-        # Persisted state from before the restart: pane w2:p1 ran session S1.
-        thread_router.bind_thread(100, 7, "w2:p1", window_name="ccgram")
-        mgr.window_states["w2:p1"] = WindowState(
+        thread_router.bind_thread(100, 7, "w2:t1", window_name="ccgram")
+        mgr.window_states["w2:t1"] = WindowState(
             session_id="S1", cwd="/repo", provider_name="claude"
         )
-        # After a herdr server restart the agent is back as w3:p1; the hook
-        # re-wrote session_map with the new pane id and the same session id.
         self.map_file.write_text(
-            json.dumps({"herdr:w3:p1": {"session_id": "S1", "cwd": "/repo"}})
+            json.dumps({"herdr:w3:t1": {"session_id": "S1", "cwd": "/repo"}})
         )
-        live = [SimpleNamespace(window_id="w3:p1", window_name="ccgram")]
+        live = [SimpleNamespace(window_id="w3:t1", window_name="ccgram")]
         monkeypatch.setattr(
             "ccgram.session.tmux_manager",
             _FakeMux(ids_stable=False, windows=live),
@@ -1105,9 +1102,9 @@ class TestResolveStaleIdsHerdrRestart:
 
         await mgr.resolve_stale_ids()
 
-        assert "w3:p1" in mgr.window_states
-        assert "w2:p1" not in mgr.window_states
-        assert thread_router.get_window_for_thread(100, 7) == "w3:p1"
+        assert "w3:t1" in mgr.window_states
+        assert "w2:t1" not in mgr.window_states
+        assert thread_router.get_window_for_thread(100, 7) == "w3:t1"
 
     async def test_tmux_path_is_noop_for_stable_ids(
         self, mgr: SessionManager, monkeypatch

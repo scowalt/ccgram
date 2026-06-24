@@ -84,13 +84,27 @@ class TestResolveSelfIdentity:
         )
         assert ident == SelfIdentity("herdr", "herdr:w0:t1", "w0:t1", "")
 
-    def test_tmux_wins_when_both_present(self) -> None:
-        # A herdr pane nested inside a tmux pane reports the outer tmux identity.
+    def test_herdr_wins_when_configured_and_both_present(self) -> None:
+        env = {
+            "TMUX_PANE": "%1",
+            "HERDR_PANE_ID": "w2:p1",
+            "CCGRAM_MULTIPLEXER": "herdr",
+        }
+        ident = resolve_self_identity(
+            env,
+            tmux_query=lambda _pane: ("s:@1", "@1", "win", "/dev/ttys1"),
+            herdr_query=lambda _pane: "w2:t1",
+        )
+        assert ident == SelfIdentity("herdr", "herdr:w2:t1", "w2:t1", "")
+
+    def test_tmux_wins_by_default_when_both_present(self) -> None:
         env = {"TMUX_PANE": "%1", "HERDR_PANE_ID": "w2:p1"}
         ident = resolve_self_identity(
-            env, tmux_query=lambda _pane: ("s:@1", "@1", "win", "/dev/ttys1")
+            env,
+            tmux_query=lambda _pane: ("s:@1", "@1", "win", "/dev/ttys1"),
+            herdr_query=lambda _pane: "w2:t1",
         )
-        assert ident is not None and ident.mux == "tmux"
+        assert ident == SelfIdentity("tmux", "s:@1", "@1", "win", "/dev/ttys1")
 
     def test_neither_env_does_not_probe_tmux(self) -> None:
         assert resolve_self_identity({}, tmux_query=_fail_query) is None

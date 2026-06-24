@@ -37,9 +37,9 @@ labels:
   evidence_hash: ec55642ea4c988d3c59782a1946b6789283c755651a138b3f70fb173ebc7dcd2
   status: draft
 - from: app_bootstrap
-  to: tmux_adapter
+  to: multiplexer
   strength: functional
-  rationale: Bootstrap invokes tmux manager initialization and setup functions for shell integration.
+  rationale: Bootstrap invokes multiplexer initialization and setup functions for shell integration.
   evidence_hash: 4bf3c099a1566fd20ea58d847a9ae87285795118083b88d7e10c5b124a8b5c89
   status: draft
 - from: domain_config
@@ -85,9 +85,9 @@ labels:
   evidence_hash: c20e31e9e3512038d78c17532a2485964ccabf34865edb2b8e5b54fcb24c5fff
   status: draft
 - from: handlers
-  to: tmux_adapter
+  to: multiplexer
   strength: functional
-  rationale: Handlers invoke tmux manager and thread routing functions to coordinate shell operations.
+  rationale: Handlers invoke multiplexer and thread routing functions to coordinate shell operations.
   evidence_hash: 6e7d103af801602960ae8d82431e45b59ebf5d92b3ffae958de2c32af0c845f6
   status: draft
 - from: handlers
@@ -145,9 +145,9 @@ labels:
   evidence_hash: ed6d2275745b019234adf9461c9b9d6dc13780c0f8c87e1ad8a6fc7e7273464f
   status: draft
 - from: miniapp
-  to: tmux_adapter
+  to: multiplexer
   strength: functional
-  rationale: Miniapp invokes tmux manager functions to control terminal panes and windows.
+  rationale: Miniapp invokes multiplexer functions to control terminal panes and windows.
   evidence_hash: 958228fc94f2a83c7676203ad29cfd16d0abe16c0e49b55c41d1368b3b7cbe24
   status: draft
 - from: miniapp
@@ -175,9 +175,9 @@ labels:
   evidence_hash: 3c8936e6227ca736f21e8dcfee85eb9a88f03d6429b1216116e0b05be72bdb70
   status: draft
 - from: providers
-  to: tmux_adapter
+  to: multiplexer
   strength: functional
-  rationale: Providers invoke tmux manager functions to manage shell infrastructure and process detection.
+  rationale: Providers invoke multiplexer functions to inspect shell infrastructure and process state.
   evidence_hash: 0775ccb499d5755a574d4b3c34cb7a2acf6f6e033ecc64cc5b982b7aaeb097a7
   status: draft
 - from: providers
@@ -199,9 +199,9 @@ labels:
   evidence_hash: 239fffde599d583b8e3b437e2186d50dd32e3f1c0c5c29417f3347e761a7bdaf
   status: draft
 - from: session_state
-  to: tmux_adapter
+  to: multiplexer
   strength: functional
-  rationale: Invokes terminal manager and thread routing behavior.
+  rationale: Invokes terminal multiplexer and thread routing behavior.
   evidence_hash: 3330693fe10b2251fc93a413a563cd5b031eea6c755efd1a114743bb68e70e7f
   status: draft
 - from: session_state
@@ -253,21 +253,21 @@ labels:
   evidence_hash: 660fc25c250641fe49fe4da9306fac022736ea994d9005bcb873796e2540afa7
   status: draft
 - from: telegram_adapter
-  to: tmux_adapter
+  to: multiplexer
   strength: functional
-  rationale: Invokes thread routing behavior for message dispatch.
+  rationale: Invokes multiplexer-aware thread routing behavior for message dispatch.
   evidence_hash: e21c63f0ee540a145b7e248500187b358ba486ad0710ce17fe7069e15716a8af
   status: draft
-- from: tmux_adapter
+- from: multiplexer_backends
   to: domain_config
   strength: contract
-  rationale: Depends on a stable, centrally published configuration interface.
+  rationale: Concrete multiplexer backends depend on a stable, centrally published configuration interface.
   evidence_hash: 1cb66c152b38a876313857fcdfd921a998feb48ad1b1077c24930e8a03599b0c
   status: draft
-- from: tmux_adapter
+- from: multiplexer
   to: session_state
   strength: model
-  rationale: Depends on topic state registry data structures for terminal synchronization.
+  rationale: Depends on topic state registry data structures for multiplexer state synchronization.
   evidence_hash: 8d4734e6781ff75306d8de57c64783fb97a2863379bae08350c0f6465ed2cd4c
   status: draft
 - from: transcript
@@ -289,9 +289,9 @@ labels:
   evidence_hash: 10c238df7bb200731414009ca09a7dab9157ee407e0e1034480429dc321b4e49
   status: draft
 - from: transcript
-  to: tmux_adapter
+  to: multiplexer
   strength: functional
-  rationale: Invokes terminal manager behavior for state synchronization.
+  rationale: Invokes terminal multiplexer behavior for state synchronization.
   evidence_hash: 9e19808ba3069afa1d7c85d20a9424d2e55ececc7a7acaf671feca56c044d892
   status: draft
 - from: transcript

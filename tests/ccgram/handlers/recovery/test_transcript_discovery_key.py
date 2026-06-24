@@ -67,5 +67,5 @@ class TestFindAndRegisterTranscriptWindowKey:
 
     async def test_herdr_backend_key(self, monkeypatch) -> None:
         monkeypatch.setattr(config, "multiplexer_name", "herdr")
-        key = await self._run("w2:p1")
-        assert key == "herdr:w2:p1"
+        key = await self._run("w2:t1")
+        assert key == "herdr:w2:t1"

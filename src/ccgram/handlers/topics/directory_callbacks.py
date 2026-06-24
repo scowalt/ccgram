@@ -496,6 +496,7 @@ async def _show_workspace_picker_or_provider(
             await safe_edit(query, text, reply_markup=keyboard)
             return
         # No workspaces returned (older herdr) — fall through to provider pick
+    clear_workspace_state(context.user_data if context is not None else None)
     await _show_provider_picker(query, selected_path)
 
 
@@ -524,9 +525,8 @@ async def _handle_workspace_callback(
     await query.answer()
 
     if data == CB_WS_SKIP:
-        # User chose auto-resolve: clear any cached selection, go to provider pick
-        if context.user_data is not None:
-            context.user_data.pop(PENDING_WORKSPACE_ID, None)
+        # User chose auto-resolve: clear any cached workspace state, then pick provider.
+        clear_workspace_state(context.user_data)
         await _show_provider_picker(query, selected_path)
         return
 
@@ -946,6 +946,7 @@ async def _create_window_and_bind(  # noqa: PLR0915
     chosen_workspace_id: str | None = (
         context.user_data.get(PENDING_WORKSPACE_ID) if context.user_data else None
     ) or None
+    clear_workspace_state(context.user_data)
 
     success, message, created_wname, created_wid = await tmux_manager.create_window(
         selected_path,

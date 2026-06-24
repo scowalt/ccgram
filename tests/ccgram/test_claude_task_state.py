@@ -1,9 +1,11 @@
 import pytest
 
 from ccgram.claude_task_state import (
+    add_subagent,
     classify_wait_message,
     claude_task_state,
     get_claude_task_snapshot,
+    get_subagent_names,
 )
 
 
@@ -318,6 +320,11 @@ class TestLastStatus:
         claude_task_state.set_last_status("@0", "Working")
         claude_task_state.reset()
         assert claude_task_state.get_last_status("@0") is None
+
+    def test_reset_clears_active_subagents(self) -> None:
+        add_subagent("@0", "subagent-1", "researcher")
+        claude_task_state.reset()
+        assert get_subagent_names("@0") == []
 
     def test_overwrite(self) -> None:
         claude_task_state.set_last_status("@0", "Reading")

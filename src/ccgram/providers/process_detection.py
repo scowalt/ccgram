@@ -25,6 +25,7 @@ Exposed entry points:
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
@@ -42,6 +43,8 @@ logger = structlog.get_logger()
 _WRAPPER_TOKENS = frozenset(
     {"sudo", "env", "node", "bun", "npx", "bunx", "uv", "python", "python3"}
 )
+
+_ENV_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 # Basename → provider name.  Checked via exact match and prefix (``claude-*``).
 _PROVIDER_BASENAMES: tuple[tuple[frozenset[str], str], ...] = (
@@ -97,7 +100,12 @@ def classify_provider_from_argv(argv: Sequence[str]) -> str:
         cleaned = os.path.basename(token).lower().lstrip("-")
         if cleaned in _WRAPPER_TOKENS:
             continue
-        return _match_token(token)
+        provider = _match_token(token)
+        if provider:
+            return provider
+        if token.startswith("-") or _ENV_ASSIGNMENT_RE.match(token):
+            continue
+        return ""
 
     return ""
 

@@ -167,6 +167,27 @@ async def wait_for_pane(
     )
 
 
+async def wait_for_pane_scrollback(
+    tmux_manager,
+    window_id,
+    *,
+    pattern,
+    timeout=60.0,
+    poll_interval=1.0,
+    history=200,
+):
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        content = await tmux_manager.capture_pane_scrollback(window_id, history=history)
+        if content is not None and re.search(pattern, content):
+            return content
+        await asyncio.sleep(poll_interval)
+    raise TimeoutError(
+        f"Pane {window_id} scrollback did not match pattern {pattern!r} "
+        f"within {timeout}s"
+    )
+
+
 def find_message_id_for(calls, *, method="sendMessage", predicate=None):
     """Find the message_id from the interceptor's response for a matching call.
 

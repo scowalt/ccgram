@@ -112,11 +112,17 @@ class TestShowWorkspacePickerOrProvider:
         mock_mux.capabilities = _capabilities(native_agent_status=True)
         mock_mux.list_workspaces = AsyncMock(return_value=[])
 
-        context = _make_context()
+        user_data = {
+            PENDING_WORKSPACE_ID: "stale",
+            PENDING_WORKSPACES: [("old", "", "")],
+        }
+        context = _make_context(user_data)
         await _show_workspace_picker_or_provider(_make_query(), str(tmp_path), context)
 
         text = mock_edit.call_args[0][1]
         assert "Select Provider" in text
+        assert PENDING_WORKSPACE_ID not in user_data
+        assert PENDING_WORKSPACES not in user_data
 
     @patch(
         "ccgram.handlers.topics.directory_callbacks.safe_edit", new_callable=AsyncMock
@@ -178,6 +184,7 @@ class TestHandleWorkspaceCallback:
             PENDING_THREAD_ID: 42,
             BROWSE_PATH_KEY: str(tmp_path),
             PENDING_WORKSPACE_ID: "stale-ws",
+            PENDING_WORKSPACES: [("ws1", "label", "/cwd")],
         }
         context = _make_context(user_data)
 
@@ -186,6 +193,7 @@ class TestHandleWorkspaceCallback:
         )
 
         assert PENDING_WORKSPACE_ID not in user_data
+        assert PENDING_WORKSPACES not in user_data
         text = mock_edit.call_args[0][1]
         assert "Select Provider" in text
 
@@ -302,6 +310,7 @@ class TestWorkspaceIdThreaded:
         mock_mux.create_window.assert_awaited_once()
         call_kwargs = mock_mux.create_window.call_args[1]
         assert call_kwargs.get("workspace_id") == "ws-chosen"
+        assert PENDING_WORKSPACE_ID not in user_data
 
     @patch(
         "ccgram.handlers.topics.directory_callbacks.safe_edit", new_callable=AsyncMock

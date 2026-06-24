@@ -218,9 +218,70 @@ class TestHandleNewWindowAutoDetection:
 
         await _handle_new_window(event, bot)
 
-        mock_detect.assert_awaited_once()
+        mock_detect.assert_awaited_once_with("codex", window_id="@5")
         mock_sm.set_window_provider.assert_called_once_with(
             "@5", "codex", cwd=mock_window.cwd
+        )
+
+    async def test_sets_provider_from_foreground_when_command_is_runtime(self) -> None:
+        from ccgram.handlers.topics.topic_orchestration import (
+            handle_new_window as _handle_new_window,
+        )
+        from ccgram.session_monitor import NewWindowEvent
+
+        _pgid_cache.clear()
+        mock_window = MagicMock()
+        mock_window.pane_current_command = "bun"
+        mock_window.cwd = "/tmp/proj"
+        foreground = AsyncMock(
+            return_value=ForegroundInfo(
+                pid=123,
+                pgid=123,
+                argv=["bun", "/x/@openai/codex/bin/codex"],
+                cwd="/tmp/proj",
+            )
+        )
+        event = NewWindowEvent(
+            window_id="@5", session_id="uuid-1", window_name="proj", cwd="/tmp/proj"
+        )
+        bot = AsyncMock()
+
+        from ccgram.multiplexer import (
+            _reset_multiplexer_for_testing,
+            install_multiplexer,
+        )
+
+        fake_multiplexer = MagicMock()
+        fake_multiplexer.foreground = foreground
+        try:
+            install_multiplexer(fake_multiplexer)
+            with (
+                patch(
+                    "ccgram.handlers.topics.topic_orchestration.config"
+                ) as mock_config,
+                patch(
+                    "ccgram.handlers.topics.topic_orchestration.session_manager"
+                ) as mock_sm,
+                patch(
+                    "ccgram.handlers.topics.topic_orchestration.tmux_manager"
+                ) as mock_tmux,
+                patch(
+                    "ccgram.handlers.topics.topic_orchestration.window_query.view_window",
+                    return_value=MagicMock(provider_name=""),
+                ),
+            ):
+                mock_config.group_id = None
+                mock_sm.iter_thread_bindings.return_value = []
+                mock_tmux.find_window_by_id = AsyncMock(return_value=mock_window)
+
+                await _handle_new_window(event, bot)
+        finally:
+            _reset_multiplexer_for_testing()
+            _pgid_cache.clear()
+
+        foreground.assert_awaited_once_with("@5")
+        mock_sm.set_window_provider.assert_called_once_with(
+            "@5", "codex", cwd="/tmp/proj"
         )
 
     @patch("ccgram.handlers.topics.topic_orchestration.tmux_manager")

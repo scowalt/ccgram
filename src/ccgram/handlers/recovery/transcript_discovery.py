@@ -356,7 +356,7 @@ async def discover_and_register_transcript(
 
     w = _window or await tmux_manager.find_window_by_id(window_id)
 
-    if w and w.pane_current_command:
+    if w:
         await _detect_and_apply_provider(
             window_id, identity, w, client=client, chat_id=chat_id, thread_id=thread_id
         )

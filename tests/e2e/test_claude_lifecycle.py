@@ -15,6 +15,7 @@ from ._helpers import (
     make_text_update,
     setup_bound_topic,
     wait_for_pane,
+    wait_for_pane_scrollback,
     wait_for_send,
 )
 
@@ -254,16 +255,15 @@ async def test_status_transitions(e2e_app, work_dir):
     # Wait for agent to start
     await wait_for_pane(tmux, window_id, timeout=30)
 
-    # After sending a message, status polling should send typing action
     calls.clear()
     u = make_text_update("say hello", bot=app.bot)
     await app.process_update(u)
 
-    # Verify sendChatAction was called
     await wait_for_send(
         calls,
-        method="sendChatAction",
-        timeout=10,
+        method="editForumTopic",
+        predicate=lambda d: d.get("message_thread_id") == TEST_THREAD_ID,
+        timeout=30,
     )
 
 
@@ -295,16 +295,16 @@ async def test_multi_topic_isolation(e2e_app, work_dir):
     assert thread_router.get_window_for_thread(TEST_USER_ID, thread_a) == window_a
     assert thread_router.get_window_for_thread(TEST_USER_ID, thread_b) == window_b
 
-    # Send message to topic A and verify it arrives in window A
     calls.clear()
     u_a = make_text_update("say A", bot=app.bot, thread_id=thread_a)
     await app.process_update(u_a)
 
-    # Verify typing action for thread_a appears (background polling may also
-    # produce actions for thread_b, so filter specifically)
-    await wait_for_send(
-        calls,
-        method="sendChatAction",
-        predicate=lambda d: d.get("message_thread_id") == thread_a,
+    pane_a = await wait_for_pane_scrollback(
+        tmux,
+        window_a,
+        pattern="say A",
         timeout=10,
     )
+    pane_b = await tmux.capture_pane_scrollback(window_b, history=200)
+    assert "say A" in pane_a
+    assert pane_b is None or "say A" not in pane_b

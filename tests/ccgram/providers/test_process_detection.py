@@ -43,6 +43,10 @@ class TestClassifyProviderFromArgs:
             ("fish", "shell"),
             ("sudo codex", "codex"),
             ("env node /path/to/claude", "claude"),
+            ("env NODE_OPTIONS=--trace node /path/to/gemini-cli/index.js", "gemini"),
+            ("npx -y @openai/codex", "codex"),
+            ("node --no-warnings /path/to/claude-code/cli.js", "claude"),
+            ("bun --bun /Users/x/.bun/bin/codex", "codex"),
             ("sudo env bun /Users/x/.bun/bin/codex", "codex"),
             ("python /path/to/gemini-cli/index.js", "gemini"),
             ("", ""),
@@ -76,6 +80,12 @@ class TestClassifyProviderFromArgv:
         [
             (["bun", "/Users/x/.bun/bin/claude"], "claude"),
             (["sudo", "env", "bun", "/Users/x/.bun/bin/codex"], "codex"),
+            (["npx", "-y", "@openai/codex"], "codex"),
+            (["node", "--no-warnings", "/path/to/claude-code/cli.js"], "claude"),
+            (
+                ["env", "NODE_OPTIONS=--trace", "node", "/path/gemini-cli/index.js"],
+                "gemini",
+            ),
             (["-bash"], "shell"),
             (["bash", "./scripts/restart.sh", "run"], "shell"),
             (["vim", "/path/to/claude"], ""),

@@ -149,6 +149,9 @@ def _prefer_existing_primary(
     window_id: str,
     incoming: dict[str, Any],
 ) -> dict[str, str] | None:
+    if config.multiplexer_name != "tmux":
+        return None
+
     # Lazy: session.py imports both session_map and window_state_store at
     # top; hoisting forms session → session_map → window_state_store →
     # session cycle.  Lazy import also guarantees the store has been

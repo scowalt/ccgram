@@ -11,7 +11,8 @@ Covers:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+import asyncio
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -203,6 +204,57 @@ async def test_foreground_none_without_tty(mgr: TmuxManager) -> None:
 async def test_foreground_none_when_window_gone(mgr: TmuxManager) -> None:
     mgr.find_window_by_id = AsyncMock(return_value=None)  # type: ignore[method-assign]
     assert await mgr.foreground("@0") is None
+
+
+async def test_ps_foreground_runs_ps_and_prefers_group_leader(monkeypatch) -> None:
+    proc = MagicMock()
+    proc.communicate = AsyncMock(
+        return_value=(
+            b"555 321 S+ node /x/@openai/codex/bin/codex\n"
+            b"321 321 S+ claude --continue\n",
+            b"",
+        )
+    )
+    proc.returncode = 0
+    create = AsyncMock(return_value=proc)
+    monkeypatch.setattr("asyncio.create_subprocess_exec", create)
+
+    result = await TmuxManager._ps_foreground("/dev/ttys003")
+
+    assert result == (321, 321, ["claude", "--continue"])
+    create.assert_awaited_once_with(
+        "ps",
+        "-t",
+        "/dev/ttys003",
+        "-o",
+        "pid=,pgid=,stat=,args=",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+
+async def test_ps_foreground_kills_process_on_timeout(monkeypatch) -> None:
+    proc = MagicMock()
+    proc.communicate = AsyncMock(side_effect=TimeoutError)
+    proc.wait = AsyncMock()
+    create = AsyncMock(return_value=proc)
+    monkeypatch.setattr("asyncio.create_subprocess_exec", create)
+
+    result = await TmuxManager._ps_foreground("/dev/ttys003")
+
+    assert result is None
+    proc.kill.assert_called_once_with()
+    proc.wait.assert_awaited_once_with()
+
+
+async def test_ps_foreground_returns_none_on_nonzero_exit(monkeypatch) -> None:
+    proc = MagicMock()
+    proc.communicate = AsyncMock(return_value=(b"", b"no tty"))
+    proc.returncode = 1
+    create = AsyncMock(return_value=proc)
+    monkeypatch.setattr("asyncio.create_subprocess_exec", create)
+
+    assert await TmuxManager._ps_foreground("/dev/missing") is None
 
 
 # ── _parse_ps_line (pure) ──────────────────────────────────────────────

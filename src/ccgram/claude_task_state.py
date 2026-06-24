@@ -102,6 +102,7 @@ class ClaudeTaskStateStore:
         self._window_states.clear()
         self._wait_headers.clear()
         self._last_status.clear()
+        _active_subagents.clear()
 
     def clear_window(self, window_id: str) -> None:
         self._window_states.pop(window_id, None)

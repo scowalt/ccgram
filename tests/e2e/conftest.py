@@ -107,8 +107,13 @@ def e2e_tmux(monkeypatch):
     # wire the multiplexer proxy so proxy/lazy callers resolve to it too.
     manager = TmuxManager(session_name=E2E_TMUX_SESSION)
 
-    from ccgram.multiplexer import install_multiplexer
+    from ccgram.multiplexer import _reset_multiplexer_for_testing, install_multiplexer
+    from ccgram.multiplexer import registry as multiplexer_registry
+    from ccgram.multiplexer import tmux as tmux_backend
 
+    monkeypatch.setattr(tmux_backend, "tmux_manager", manager)
+    multiplexer_registry._reset_multiplexer_cache_for_testing()
+    monkeypatch.setitem(multiplexer_registry._instances, "tmux", manager)
     install_multiplexer(manager)
 
     _tm_modules = [
@@ -142,10 +147,11 @@ def e2e_tmux(monkeypatch):
 
     yield manager
 
-    # Teardown: kill the entire test session
     test_session = server.sessions.get(session_name=E2E_TMUX_SESSION, default=None)
     if test_session:
         test_session.kill()
+    multiplexer_registry._reset_multiplexer_cache_for_testing()
+    _reset_multiplexer_for_testing()
 
 
 # ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ Fixtures are trimmed from live herdr 0.7.0 output.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Sequence
 
@@ -779,6 +780,54 @@ async def test_create_window_falls_back_when_no_workspace_support(tmp_path) -> N
     assert "--workspace" not in tab_call
 
 
+async def test_create_window_fails_and_closes_tab_when_root_pane_missing(
+    tmp_path,
+) -> None:
+    created_without_root = json.dumps(
+        {
+            "result": {
+                "tab": {"label": "work", "tab_id": "w2:t9", "workspace_id": "w2"},
+                "type": "tab_created",
+            }
+        }
+    )
+    fake = (
+        FakeHerdr()
+        .on("tab", "create", out=created_without_root)
+        .on("tab", "close", out=OK)
+    )
+
+    ok, msg, _name, win_id = await _manager(fake).create_window(
+        str(tmp_path), launch_command="claude"
+    )
+
+    assert ok is False
+    assert "root pane" in msg
+    assert win_id == ""
+    assert fake.sent("pane", "run") is None
+    assert fake.sent("tab", "close") == ["tab", "close", "w2:t9"]
+
+
+async def test_create_window_fails_and_closes_tab_when_agent_launch_fails(
+    tmp_path,
+) -> None:
+    fake = (
+        FakeHerdr()
+        .on("tab", "create", out=TAB_CREATE)
+        .on("pane", "run", rc=1, err="launch failed")
+        .on("tab", "close", out=OK)
+    )
+
+    ok, msg, _name, win_id = await _manager(fake).create_window(
+        str(tmp_path), launch_command="claude"
+    )
+
+    assert ok is False
+    assert "Failed to launch" in msg
+    assert win_id == ""
+    assert fake.sent("tab", "close") == ["tab", "close", "w2:t9"]
+
+
 # ── Task 4 fixtures: tab→pane resolution ──────────────────────────────
 
 # Single-pane tab: w2:t1 → pane w2:p1 (focused).
@@ -1151,7 +1200,168 @@ async def test_send_to_pane_bypasses_tab_resolution() -> None:
     assert fake.sent("pane", "list") is None  # no resolution
 
 
+async def test_send_to_pane_rejects_pane_outside_window_scope() -> None:
+    fake = (
+        FakeHerdr().on("pane", "list", out=PANE_LIST_SINGLE).on("pane", "run", out=OK)
+    )
+
+    assert await _manager(fake).send_to_pane("w9:p9", "msg", window_id="w2:t1") is False
+
+    assert fake.sent("pane", "run") is None
+
+
+async def test_send_to_pane_allows_pane_inside_window_scope() -> None:
+    fake = FakeHerdr().on("pane", "list", out=PANE_LIST_SPLIT).on("pane", "run", out=OK)
+
+    assert await _manager(fake).send_to_pane("w2:p2", "msg", window_id="w2:t1") is True
+
+    assert fake.sent("pane", "run") == ["pane", "run", "w2:p2", "msg"]
+
+
+async def test_capture_pane_by_id_rejects_pane_outside_window_scope() -> None:
+    fake = (
+        FakeHerdr()
+        .on("pane", "list", out=PANE_LIST_SINGLE)
+        .on("pane", "read", out=PANE_READ_TEXT)
+    )
+
+    assert await _manager(fake).capture_pane_by_id("w9:p9", window_id="w2:t1") is None
+
+    assert fake.sent("pane", "read") is None
+
+
+async def test_capture_pane_by_id_allows_pane_inside_window_scope() -> None:
+    fake = (
+        FakeHerdr()
+        .on("pane", "list", out=PANE_LIST_SPLIT)
+        .on("pane", "read", out=PANE_READ_TEXT)
+    )
+
+    assert (
+        await _manager(fake).capture_pane_by_id("w2:p2", window_id="w2:t1")
+        == "line one\nline two"
+    )
+
+    assert fake.sent("pane", "read") is not None
+
+
 # ── Boundary: socket down, bad id, protocol ────────────────────────────
+
+
+async def test_list_windows_reuses_last_good_refs_on_transient_scan_failure() -> None:
+    fake = (
+        FakeHerdr()
+        .on("tab", "list", out=TAB_LIST)
+        .on("pane", "list", out=PANE_LIST)
+        .on("workspace", "list", out=WORKSPACE_LIST)
+    )
+    mgr = _manager(fake)
+    first = await mgr.list_windows()
+
+    fake.on("tab", "list", rc=1, err="socket down")
+    second = await mgr.list_windows()
+
+    assert second == first
+    assert mgr.last_window_scan_failed is True
+
+
+async def test_list_windows_reuses_last_good_refs_on_partial_scan_failure() -> None:
+    fake = (
+        FakeHerdr()
+        .on("tab", "list", out=TAB_LIST)
+        .on("pane", "list", out=PANE_LIST)
+        .on("workspace", "list", out=WORKSPACE_LIST)
+    )
+    mgr = _manager(fake)
+    first = await mgr.list_windows()
+
+    fake.on("workspace", "list", rc=1, err="socket down")
+    second = await mgr.list_windows()
+
+    assert second == first
+    assert mgr.last_window_scan_failed is True
+
+
+async def test_list_windows_uses_unlabeled_tabs_when_initial_workspace_scan_fails() -> (
+    None
+):
+    fake = (
+        FakeHerdr()
+        .on("tab", "list", out=TAB_LIST)
+        .on("pane", "list", out=PANE_LIST)
+        .on("workspace", "list", rc=1, err="unknown command")
+    )
+    refs = await _manager(fake).list_windows()
+
+    assert [ref.window_id for ref in refs] == ["w1:t1", "w2:t2"]
+    assert [ref.window_name for ref in refs] == ["archfit", "ralphex"]
+
+
+async def test_list_windows_cold_pane_scan_failure_is_not_authoritative() -> None:
+    fake = (
+        FakeHerdr()
+        .on("tab", "list", out=TAB_LIST)
+        .on("pane", "list", rc=1, err="socket down")
+        .on("workspace", "list", out=WORKSPACE_LIST)
+    )
+    mgr = _manager(fake)
+
+    assert await mgr.list_windows() == []
+    assert mgr.last_window_scan_failed is True
+
+
+async def test_list_windows_does_not_cache_partial_pane_scan() -> None:
+    fake = (
+        FakeHerdr()
+        .on("tab", "list", out=TAB_LIST)
+        .on("pane", "list", out=PANE_LIST)
+        .on("workspace", "list", out=WORKSPACE_LIST)
+    )
+    mgr = _manager(fake)
+    first = await mgr.list_windows()
+
+    fake.on("pane", "list", rc=1, err="socket down")
+    assert await mgr.list_windows() == first
+    assert mgr.last_window_scan_failed is True
+
+    fake.on("pane", "list", out=PANE_LIST)
+    assert await mgr.list_windows() == first
+    assert mgr.last_window_scan_failed is False
+
+
+async def test_subprocess_runner_kills_child_on_cancellation(monkeypatch) -> None:
+    class HangingProc:
+        returncode = None
+
+        def __init__(self) -> None:
+            self.killed = False
+            self.waited = False
+
+        async def communicate(self):
+            await asyncio.Future()
+
+        def kill(self) -> None:
+            self.killed = True
+
+        async def wait(self) -> int:
+            self.waited = True
+            return -9
+
+    proc = HangingProc()
+
+    async def fake_create_subprocess_exec(*_args, **_kwargs):
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    task = asyncio.create_task(HerdrManager(binary="herdr")._subprocess_run(["status"]))
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert proc.killed is True
+    assert proc.waited is True
 
 
 async def test_socket_down_returns_none_not_crash() -> None:
