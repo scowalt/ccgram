@@ -33,7 +33,8 @@ from ...screenshot import text_to_image
 from ... import window_query
 from ...telegram_client import PTBTelegramClient
 from ...thread_router import thread_router
-from ...tmux_manager import send_to_window, tmux_manager
+from ...multiplexer import multiplexer as tmux_manager
+from ...multiplexer.window_ops import send_to_window
 from ...topic_state_registry import topic_state
 from ..callback_data import (
     CB_KEYS_PREFIX,
@@ -82,10 +83,13 @@ def build_dashboard_button(window_id: str, user_id: int) -> InlineKeyboardButton
 @topic_state.register("window")
 def _clear_key_refreshes(window_id: str) -> None:
     """Cancel in-flight debounced key-refresh tasks for a closing window."""
+    # Lazy: pane delimiter constant
+    from ..callback_data import CB_PANE_DELIMITER
+
     stale = [
         k
         for k in _pending_key_refreshes
-        if k[1] == window_id or k[1].startswith(f"{window_id}:%")
+        if k[1] == window_id or k[1].startswith(f"{window_id}{CB_PANE_DELIMITER}")
     ]
     for k in stale:
         task = _pending_key_refreshes.pop(k, None)

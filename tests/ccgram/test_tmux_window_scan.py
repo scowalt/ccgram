@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from ccgram.tmux_manager import TmuxManager, TmuxWindow
+from ccgram.multiplexer.tmux import TmuxManager, TmuxWindow
 
 
 def _make_proc(stdout: str = "", returncode: int = 0) -> AsyncMock:
@@ -29,7 +29,7 @@ class TestCapturePane:
         proc = _make_proc("hello\n")
 
         with patch(
-            "ccgram.tmux_manager.asyncio.create_subprocess_exec", return_value=proc
+            "ccgram.multiplexer.tmux.asyncio.create_subprocess_exec", return_value=proc
         ) as mock_exec:
             text = await manager.capture_pane("@1")
 
@@ -46,7 +46,7 @@ class TestCapturePane:
         self, manager: TmuxManager
     ) -> None:
         with patch(
-            "ccgram.tmux_manager.asyncio.create_subprocess_exec",
+            "ccgram.multiplexer.tmux.asyncio.create_subprocess_exec",
             side_effect=TimeoutError,
         ) as mock_exec:
             assert await manager.capture_pane("@1") is None
@@ -68,9 +68,10 @@ class TestListWindows:
 
         with (
             patch(
-                "ccgram.tmux_manager.asyncio.create_subprocess_exec", return_value=proc
+                "ccgram.multiplexer.tmux.asyncio.create_subprocess_exec",
+                return_value=proc,
             ) as mock_exec,
-            patch("ccgram.tmux_manager.config") as mock_config,
+            patch("ccgram.multiplexer.tmux.config") as mock_config,
         ):
             mock_config.tmux_main_window_name = "__main__"
             mock_config.own_window_id = "@self"
@@ -92,9 +93,10 @@ class TestListWindows:
 
         with (
             patch(
-                "ccgram.tmux_manager.asyncio.create_subprocess_exec", return_value=proc
+                "ccgram.multiplexer.tmux.asyncio.create_subprocess_exec",
+                return_value=proc,
             ) as mock_exec,
-            patch("ccgram.tmux_manager.config") as mock_config,
+            patch("ccgram.multiplexer.tmux.config") as mock_config,
         ):
             mock_config.tmux_main_window_name = "__main__"
             mock_config.own_window_id = ""
@@ -109,9 +111,10 @@ class TestListWindows:
 
         with (
             patch(
-                "ccgram.tmux_manager.asyncio.create_subprocess_exec", return_value=proc
+                "ccgram.multiplexer.tmux.asyncio.create_subprocess_exec",
+                return_value=proc,
             ) as mock_exec,
-            patch("ccgram.tmux_manager.config") as mock_config,
+            patch("ccgram.multiplexer.tmux.config") as mock_config,
         ):
             mock_config.tmux_main_window_name = "__main__"
             mock_config.own_window_id = ""
@@ -139,9 +142,10 @@ class TestListWindows:
 
         with (
             patch(
-                "ccgram.tmux_manager.asyncio.create_subprocess_exec", return_value=proc
+                "ccgram.multiplexer.tmux.asyncio.create_subprocess_exec",
+                return_value=proc,
             ) as mock_exec,
-            patch("ccgram.tmux_manager.config") as mock_config,
+            patch("ccgram.multiplexer.tmux.config") as mock_config,
         ):
             mock_config.tmux_main_window_name = "__main__"
             mock_config.own_window_id = ""
@@ -168,9 +172,10 @@ class TestListWindows:
 
         with (
             patch(
-                "ccgram.tmux_manager.asyncio.create_subprocess_exec", return_value=proc
+                "ccgram.multiplexer.tmux.asyncio.create_subprocess_exec",
+                return_value=proc,
             ) as mock_exec,
-            patch("ccgram.tmux_manager.config") as mock_config,
+            patch("ccgram.multiplexer.tmux.config") as mock_config,
         ):
             mock_config.tmux_main_window_name = "__main__"
             mock_config.own_window_id = ""
@@ -194,7 +199,9 @@ class TestListWindows:
         manager._windows_backoff_expires = asyncio.get_running_loop().time() + 100
         manager._windows_query_lock = asyncio.Lock()
 
-        with patch("ccgram.tmux_manager.asyncio.create_subprocess_exec") as mock_exec:
+        with patch(
+            "ccgram.multiplexer.tmux.asyncio.create_subprocess_exec"
+        ) as mock_exec:
             result = await manager.list_windows()
 
         assert result == [cached]

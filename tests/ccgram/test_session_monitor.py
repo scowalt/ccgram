@@ -9,10 +9,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from ccgram.monitor_state import TrackedSession
+from ccgram.multiplexer.base import MultiplexerCapabilities, WindowRef
 from ccgram.providers.base import SessionStartEvent
 from ccgram.providers.claude import ClaudeProvider
 from ccgram.providers.codex import CodexProvider
+from ccgram.session import SessionManager
 from ccgram.session_monitor import NewWindowEvent, SessionMonitor
+from ccgram.thread_router import thread_router
+from ccgram.window_state_store import window_store
 
 
 @pytest.fixture
@@ -130,6 +134,270 @@ class TestNewWindowDetection:
             await monitor._detect_and_cleanup_changes()
 
         cb.assert_called_once()
+
+
+_TMUX_CAPS = MultiplexerCapabilities(
+    name="tmux",
+    ids_stable_across_restart=True,
+    exposes_pane_tty=True,
+    native_agent_status=False,
+    read_max_lines=None,
+    self_identify_env="TMUX_PANE",
+    supports_event_stream=False,
+)
+_HERDR_CAPS = MultiplexerCapabilities(
+    name="herdr",
+    ids_stable_across_restart=False,
+    exposes_pane_tty=False,
+    native_agent_status=True,
+    read_max_lines=1000,
+    self_identify_env="HERDR_PANE_ID",
+    supports_event_stream=True,
+)
+
+
+def _winref(window_id: str, command: str) -> WindowRef:
+    return WindowRef(
+        window_id=window_id,
+        window_name=window_id,
+        cwd="/proj",
+        pane_current_command=command,
+    )
+
+
+class TestEmitUnboundWindowEvents:
+    """The unbound-window discovery path is capability-gated (Task 10)."""
+
+    @pytest.fixture
+    def wired(self, monkeypatch) -> None:
+        # Wire thread_router via a real SessionManager and start empty.
+        thread_router.reset()
+        window_store.window_states.clear()
+        monkeypatch.setattr(SessionManager, "_load_state", lambda self: None)
+        monkeypatch.setattr(SessionManager, "_save_state", lambda self: None)
+        SessionManager()
+
+    async def test_tmux_surfaces_every_unbound_window(
+        self, monitor: SessionMonitor, wired, monkeypatch
+    ) -> None:
+        cb = AsyncMock(spec=lambda event: None)
+        monitor.set_new_window_callback(cb)
+        monkeypatch.setattr(
+            "ccgram.session_monitor.tmux_manager",
+            SimpleNamespace(capabilities=_TMUX_CAPS),
+        )
+
+        windows = [_winref("@1", "zsh"), _winref("@2", "claude")]
+        await monitor._emit_unbound_window_events(windows, known_window_ids=set())
+
+        surfaced = {c.args[0].window_id for c in cb.call_args_list}
+        assert surfaced == {"@1", "@2"}
+
+    async def test_herdr_surfaces_only_agent_panes(
+        self, monitor: SessionMonitor, wired, monkeypatch
+    ) -> None:
+        cb = AsyncMock(spec=lambda event: None)
+        monitor.set_new_window_callback(cb)
+        monkeypatch.setattr(
+            "ccgram.session_monitor.tmux_manager",
+            SimpleNamespace(capabilities=_HERDR_CAPS),
+        )
+
+        # w2:p1 + w2:p2 are agent panes (a tab split); w3:p1 is a bare shell.
+        windows = [
+            _winref("w2:p1", "claude"),
+            _winref("w2:p2", "claude"),
+            _winref("w3:p1", ""),
+        ]
+        await monitor._emit_unbound_window_events(windows, known_window_ids=set())
+
+        surfaced = {c.args[0].window_id for c in cb.call_args_list}
+        assert surfaced == {"w2:p1", "w2:p2"}
+
+    async def test_skips_known_and_bound_windows(
+        self, monitor: SessionMonitor, wired, monkeypatch
+    ) -> None:
+        thread_router.bind_thread(100, 1, "w2:p2")
+        cb = AsyncMock(spec=lambda event: None)
+        monitor.set_new_window_callback(cb)
+        monkeypatch.setattr(
+            "ccgram.session_monitor.tmux_manager",
+            SimpleNamespace(capabilities=_HERDR_CAPS),
+        )
+
+        windows = [
+            _winref("w2:p1", "claude"),  # already in session_map (known)
+            _winref("w2:p2", "claude"),  # already bound to a topic
+            _winref("w2:p3", "claude"),  # genuinely new → surfaces
+        ]
+        await monitor._emit_unbound_window_events(windows, known_window_ids={"w2:p1"})
+
+        surfaced = {c.args[0].window_id for c in cb.call_args_list}
+        assert surfaced == {"w2:p3"}
+
+
+class TestEmitKnownUnboundWindowEvents:
+    """Steady-state self-heal: session_map windows not bound to a topic retry on each poll."""
+
+    @pytest.fixture
+    def wired(self, monkeypatch) -> None:
+        thread_router.reset()
+        window_store.window_states.clear()
+        monkeypatch.setattr(SessionManager, "_load_state", lambda self: None)
+        monkeypatch.setattr(SessionManager, "_save_state", lambda self: None)
+        SessionManager()
+
+    async def test_known_unbound_window_surfaces(
+        self, monitor: SessionMonitor, wired
+    ) -> None:
+        """A tab in session_map but not bound fires NewWindowEvent (self-heal path)."""
+        cb = AsyncMock(spec=lambda event: None)
+        monitor.set_new_window_callback(cb)
+
+        current_map = {
+            "w1:t1": {
+                "session_id": "S1",
+                "cwd": "/repo",
+                "window_name": "agent",
+            }
+        }
+        live_window_ids = {"w1:t1"}  # tab is live
+
+        await monitor._emit_known_unbound_window_events(current_map, live_window_ids)
+
+        cb.assert_called_once()
+        event = cb.call_args[0][0]
+        assert isinstance(event, NewWindowEvent)
+        assert event.window_id == "w1:t1"
+        assert event.session_id == "S1"
+        assert event.window_name == "agent"
+
+    async def test_bound_window_not_re_fired(
+        self, monitor: SessionMonitor, wired
+    ) -> None:
+        """A tab already bound to a topic is skipped (no spam)."""
+        thread_router.bind_thread(100, 42, "w1:t1")
+        cb = AsyncMock(spec=lambda event: None)
+        monitor.set_new_window_callback(cb)
+
+        current_map = {
+            "w1:t1": {"session_id": "S1", "cwd": "/repo", "window_name": "agent"}
+        }
+        live_window_ids = {"w1:t1"}
+
+        await monitor._emit_known_unbound_window_events(current_map, live_window_ids)
+
+        cb.assert_not_called()
+
+    async def test_dead_window_not_surfaced(
+        self, monitor: SessionMonitor, wired
+    ) -> None:
+        """A session_map entry for a window not in live_window_ids is skipped."""
+        cb = AsyncMock(spec=lambda event: None)
+        monitor.set_new_window_callback(cb)
+
+        current_map = {
+            "w9:t9": {"session_id": "S9", "cwd": "/gone", "window_name": "dead"}
+        }
+        live_window_ids: set[str] = set()  # tab not alive / __*__-filtered
+
+        await monitor._emit_known_unbound_window_events(current_map, live_window_ids)
+
+        cb.assert_not_called()
+
+    async def test_star_tab_not_surfaced(self, monitor: SessionMonitor, wired) -> None:
+        """__*__ tabs are absent from live_window_ids (filtered by list_windows) — never adopted."""
+        cb = AsyncMock(spec=lambda event: None)
+        monitor.set_new_window_callback(cb)
+
+        # Simulate a __*__ tab somehow in session_map; list_windows filtered it out
+        current_map = {
+            "w0:t0": {"session_id": "S0", "cwd": "/self", "window_name": "__main__"}
+        }
+        live_window_ids: set[str] = set()  # __*__ absent from list_windows output
+
+        await monitor._emit_known_unbound_window_events(current_map, live_window_ids)
+
+        cb.assert_not_called()
+
+    async def test_multiple_windows_mixed(self, monitor: SessionMonitor, wired) -> None:
+        """Only unbound live tabs surface; bound and dead are skipped."""
+        thread_router.bind_thread(100, 1, "w1:t1")  # already bound
+        cb = AsyncMock(spec=lambda event: None)
+        monitor.set_new_window_callback(cb)
+
+        current_map = {
+            "w1:t1": {"session_id": "S1", "cwd": "/a", "window_name": "bound"},
+            "w2:t2": {"session_id": "S2", "cwd": "/b", "window_name": "unbound"},
+            "w3:t3": {"session_id": "S3", "cwd": "/c", "window_name": "dead"},
+        }
+        live_window_ids = {"w1:t1", "w2:t2"}  # w3:t3 not live
+
+        await monitor._emit_known_unbound_window_events(current_map, live_window_ids)
+
+        surfaced = {c.args[0].window_id for c in cb.call_args_list}
+        assert surfaced == {"w2:t2"}
+
+    async def test_no_callback_is_noop(self, monitor: SessionMonitor, wired) -> None:
+        """No callback registered — returns without error."""
+        current_map = {
+            "w1:t1": {"session_id": "S1", "cwd": "/repo", "window_name": "agent"}
+        }
+        # No callback set — must not raise
+        await monitor._emit_known_unbound_window_events(current_map, {"w1:t1"})
+
+    async def test_callback_error_does_not_crash(
+        self, monitor: SessionMonitor, wired
+    ) -> None:
+        """Callback error is caught and logged; loop continues."""
+        cb = AsyncMock(side_effect=RuntimeError("boom"))
+        monitor.set_new_window_callback(cb)
+
+        current_map = {
+            "w1:t1": {"session_id": "S1", "cwd": "/a", "window_name": "a"},
+            "w2:t2": {"session_id": "S2", "cwd": "/b", "window_name": "b"},
+        }
+        live_window_ids = {"w1:t1", "w2:t2"}
+
+        # Should not raise despite the callback error
+        await monitor._emit_known_unbound_window_events(current_map, live_window_ids)
+
+        assert cb.call_count == 2
+
+
+class TestLoadCurrentSessionMapBackend:
+    """The monitor's session_map reader must honor the active backend prefix.
+
+    Regression: under herdr the hook writes ``herdr:<wN:pM>`` keys; a tmux-only
+    ``ccgram:`` prefix silently dropped every herdr session so none was tracked.
+    """
+
+    async def test_herdr_keys_surface(
+        self, monitor: SessionMonitor, monkeypatch
+    ) -> None:
+        from ccgram.config import config
+
+        monkeypatch.setattr(config, "multiplexer_name", "herdr")
+        raw = {
+            "herdr:w2:p1": {
+                "session_id": "S1",
+                "cwd": "/repo",
+                "window_name": "agent",
+                "transcript_path": "",
+                "provider_name": "claude",
+            }
+        }
+        result = await monitor._load_current_session_map(raw)
+        assert result.get("w2:p1", {}).get("session_id") == "S1"
+
+    async def test_tmux_skips_herdr_keys(
+        self, monitor: SessionMonitor, monkeypatch
+    ) -> None:
+        from ccgram.config import config
+
+        monkeypatch.setattr(config, "multiplexer_name", "tmux")
+        raw = {"herdr:w2:p1": {"session_id": "S1", "cwd": "/repo"}}
+        assert await monitor._load_current_session_map(raw) == {}
 
 
 class TestPerWindowProviderResolution:

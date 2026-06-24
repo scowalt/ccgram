@@ -17,9 +17,10 @@ from telegram.error import BadRequest, TelegramError
 from ... import window_query
 from ...config import config
 from ...session import session_manager
+from ...session_map import session_map_prefix
 from ...telegram_client import PTBTelegramClient, TelegramClient
 from ...thread_router import thread_router
-from ...tmux_manager import tmux_manager
+from ...multiplexer import multiplexer as tmux_manager
 from ...utils import log_throttled
 from ...window_state_store import CCGRAM_CREATED_WINDOW_ORIGIN
 from ..cleanup import clear_topic_state
@@ -31,7 +32,7 @@ from ..polling.polling_state import (
 
 if TYPE_CHECKING:
     from telegram.ext import ContextTypes
-    from ...tmux_manager import TmuxWindow
+    from ...multiplexer.base import WindowRef as TmuxWindow
 
 logger = structlog.get_logger()
 
@@ -166,7 +167,7 @@ async def _kill_expired_unbound(now: float, timeout: float) -> None:
         from ...topic_state_registry import topic_state
 
         topic_state.clear_window(wid)
-        qualified_id = f"{config.tmux_session_name}:{wid}"
+        qualified_id = f"{session_map_prefix()}{wid}"
         topic_state.clear_qualified(qualified_id)
         logger.info("auto_killed_unbound_window", window_id=wid)
 
@@ -191,10 +192,18 @@ async def prune_stale_state(live_windows: "list[TmuxWindow]") -> None:
 # ── Topic existence probing ───────────────────────────────────────────────
 
 
+# Windows whose chat lacks can_pin_messages: the unpin-based probe can never
+# succeed there, so disable it permanently (per process) instead of counting it
+# as a probe failure (which would suspend deleted-topic detection and re-arm on
+# every inbound message). Reset on restart; mirrors _disabled_chats in
+# handlers/status/topic_emoji.py.
+_probe_pin_disabled: set[str] = set()
+
+
 async def probe_topic_existence(client: TelegramClient) -> None:
     """Probe all bound topics via Telegram API; detect deleted topics."""
     for user_id, thread_id, wid in list(thread_router.iter_thread_bindings()):
-        if lifecycle_strategy.should_skip_probe(wid):
+        if wid in _probe_pin_disabled or lifecycle_strategy.should_skip_probe(wid):
             continue
         try:
             await client.unpin_all_forum_topic_messages(
@@ -223,6 +232,12 @@ async def probe_topic_existence(client: TelegramClient) -> None:
                     wid,
                     thread_id,
                     user_id,
+                )
+            elif isinstance(e, BadRequest) and "not enough rights" in e.message.lower():
+                _probe_pin_disabled.add(wid)
+                logger.info(
+                    "Topic probe disabled for window_id '%s': bot lacks pin rights",
+                    wid,
                 )
             else:
                 lifecycle_strategy.record_probe_failure(wid)

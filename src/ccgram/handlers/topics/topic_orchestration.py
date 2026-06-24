@@ -30,7 +30,7 @@ from ...session import session_manager
 from ...session_monitor import NewWindowEvent
 from ...telegram_client import TelegramClient
 from ...thread_router import thread_router
-from ...tmux_manager import tmux_manager
+from ...multiplexer import multiplexer as tmux_manager
 from ..messaging_pipeline.message_sender import is_thread_gone
 from ..status.topic_emoji import strip_emoji_prefix
 
@@ -160,7 +160,6 @@ async def _auto_detect_provider(window_id: str) -> None:
 
     detected = await detect_provider_from_pane(
         w.pane_current_command,
-        pane_tty=w.pane_tty,
         window_id=window_id,
     )
     if not detected and should_probe_pane_title_for_provider_detection(

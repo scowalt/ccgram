@@ -30,9 +30,10 @@ from .event_reader import read_new_events
 from .idle_tracker import IdleTracker
 from .monitor_state import MonitorState
 from .providers import get_provider_for_window, registry  # noqa: F401 (used by test patches)
-from .session_map import parse_session_map, read_session_map_raw
+from .session_map import parse_session_map, read_session_map_raw, session_map_prefix
 from .session_lifecycle import session_lifecycle
-from .tmux_manager import tmux_manager
+from .multiplexer import multiplexer as tmux_manager
+from .multiplexer.topic_mapping import is_agent_topic_window
 from .monitor_events import NewMessage, NewWindowEvent, SessionInfo
 from .transcript_reader import TranscriptReader
 from .utils import atomic_write_json, task_done_callback
@@ -479,7 +480,7 @@ class SessionMonitor:
             raw = await read_session_map_raw()
         if not raw:
             return {}
-        prefix = f"{config.tmux_session_name}:"
+        prefix = session_map_prefix()
         return parse_session_map(raw, prefix)
 
     async def _cleanup_all_stale_sessions(self) -> None:
@@ -566,31 +567,37 @@ class SessionMonitor:
         return result.current_map
 
     async def _emit_unbound_window_events(
-        self, current_map: dict[str, dict[str, str]], session_map_sync: Any
+        self, all_windows: list, known_window_ids: set[str]
     ) -> None:
-        """Emit NewWindowEvent once for live windows not represented in session_map."""
-        all_windows = await tmux_manager.list_windows()
-        live_window_ids = {w.window_id for w in all_windows}
-        session_map_sync.prune_session_map(live_window_ids)
-        self._emitted_new_window_ids &= live_window_ids
-        known_window_ids = set(current_map.keys())
+        """Fire a NewWindowEvent for each live window not in session_map / bound.
 
+        Surfaces windows the hook never registered (no session_map entry) so
+        they can become topics. On backends that expose agent status natively
+        (herdr), only agent panes qualify — a bare shell pane is not a topic;
+        tmux surfaces every window, preserving today's behavior. The gate is the
+        ``native_agent_status`` capability, not a backend name.
+        """
+        if not self._new_window_callback:
+            return
+
+        live_window_ids = {window.window_id for window in all_windows}
+        self._emitted_new_window_ids &= live_window_ids
+
+        # Lazy: thread_router is wired into session_manager which imports
+        # session_monitor; hoisting forms a startup cycle.
+        from .thread_router import thread_router
+
+        caps = tmux_manager.capabilities
+        bound_window_ids = {wid for _, _, wid in thread_router.iter_thread_bindings()}
         for window in all_windows:
             if window.window_id in known_window_ids:
                 continue
+            if window.window_id in bound_window_ids:
+                continue
             if window.window_id in self._emitted_new_window_ids:
                 continue
-            # Lazy: same cycle as the earlier thread_router import.
-            from .thread_router import thread_router
-
-            already_bound = any(
-                wid == window.window_id
-                for _, _, wid in thread_router.iter_thread_bindings()
-            )
-            if already_bound or not self._new_window_callback:
+            if not is_agent_topic_window(window, caps):
                 continue
-
-            self._emitted_new_window_ids.add(window.window_id)
             event = NewWindowEvent(
                 window_id=window.window_id,
                 session_id="",
@@ -600,7 +607,54 @@ class SessionMonitor:
             try:
                 await self._new_window_callback(event)
             except _CallbackError:
-                logger.exception("New window callback error for %s", window.window_id)
+                logger.exception(
+                    "New window callback error (unbound window path) for %s",
+                    window.window_id,
+                )
+            else:
+                self._emitted_new_window_ids.add(window.window_id)
+
+    async def _emit_known_unbound_window_events(
+        self,
+        current_map: dict,
+        live_window_ids: set[str],
+    ) -> None:
+        """Fire a NewWindowEvent for each session_map window that is not bound.
+
+        Steady-state self-heal: a tab that was in session_map at startup (known,
+        so never a delta) but not yet bound to a Telegram topic retries on every
+        poll until it succeeds. ``handle_new_window`` is idempotent — it skips
+        windows that are already bound — so this generates no spam for bound tabs.
+
+        ``live_window_ids`` is the set from ``list_windows``. Because ``list_windows``
+        already filters ``__*__`` workspace/tab labels, any such tab is absent from
+        ``live_window_ids`` and is silently skipped here as well.
+        """
+        if not self._new_window_callback:
+            return
+        # Lazy: thread_router is wired into session_manager which imports
+        # session_monitor; hoisting forms a startup cycle.
+        from .thread_router import thread_router
+
+        bound_window_ids = {wid for _, _, wid in thread_router.iter_thread_bindings()}
+        for window_id, details in current_map.items():
+            if window_id not in live_window_ids:
+                continue  # dead / __*__-filtered — skip
+            if window_id in bound_window_ids:
+                continue  # already has a topic
+            event = NewWindowEvent(
+                window_id=window_id,
+                session_id=details.get("session_id", ""),
+                window_name=details.get("window_name", ""),
+                cwd=details.get("cwd", ""),
+            )
+            try:
+                await self._new_window_callback(event)
+            except _CallbackError:
+                logger.exception(
+                    "New window callback error (known-unbound path) for %s",
+                    window_id,
+                )
 
     async def _monitor_loop(self) -> None:
         """Background poll loop."""
@@ -625,7 +679,14 @@ class SessionMonitor:
 
                 current_map = await self._detect_and_cleanup_changes(raw_session_map)
 
-                await self._emit_unbound_window_events(current_map, session_map_sync)
+                all_windows = await tmux_manager.list_windows()
+                live_window_ids = {w.window_id for w in all_windows}
+                session_map_sync.prune_session_map(live_window_ids)
+                known_window_ids = set(current_map.keys())
+                await self._emit_unbound_window_events(all_windows, known_window_ids)
+                await self._emit_known_unbound_window_events(
+                    current_map, live_window_ids
+                )
 
                 new_messages = await self.check_for_updates(current_map)
 

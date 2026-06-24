@@ -39,11 +39,13 @@ def _resolve_users_for_window_key(
 ) -> list[tuple[int, int, str]]:
     """Resolve window_key to list of (user_id, thread_id, window_id).
 
-    The window_key format is "tmux_session:window_id" (e.g. "ccgram:@0").
-    We extract the window_id part and look up thread bindings.
+    The window_key format is "<prefix>:<window_id>" (e.g. "ccgram:@0" for tmux,
+    "herdr:w2:p1" for herdr, whose window_id itself contains a colon). The prefix
+    is a single colon-free token, so we split on the FIRST colon to recover the
+    full window_id and look up thread bindings.
     """
-    # Extract window_id from key (e.g. "ccgram:@0" -> "@0")
-    parts = window_key.rsplit(":", 1)
+    # Extract window_id from key ("ccgram:@0" -> "@0", "herdr:w2:p1" -> "w2:p1")
+    parts = window_key.split(":", 1)
     if len(parts) < _WINDOW_KEY_PARTS:
         return []
     window_id = parts[1]
@@ -127,12 +129,13 @@ async def _is_agent_still_active(window_id: str) -> bool:
     # Lazy: providers/tmux imports reach monitor and handler wiring during startup.
     from ..providers import get_provider_for_window
 
-    # Lazy: tmux_manager imports providers and session monitor collaborators.
-    from ..tmux_manager import tmux_manager
+    # Lazy: multiplexer proxy is wired by bootstrap.
+    from ..multiplexer import multiplexer
 
-    pane_text = await tmux_manager.capture_pane(window_id)
-    if not pane_text:
+    capture = await multiplexer.capture(window_id)
+    if not capture or not capture.text:
         return False
+    pane_text = capture.text
     provider = get_provider_for_window(window_id)
     status = provider.parse_terminal_status(pane_text, pane_title="")
     return status is not None and not status.is_interactive

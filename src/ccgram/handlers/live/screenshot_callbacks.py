@@ -33,12 +33,13 @@ from telegram.error import TelegramError
 from ...screenshot import text_to_image
 from ...telegram_client import PTBTelegramClient
 from ...thread_router import thread_router
-from ...tmux_manager import tmux_manager
+from ...multiplexer import multiplexer as tmux_manager
 
 from ..callback_data import (
     CB_KEYS_PREFIX,
     CB_LIVE_START,
     CB_LIVE_STOP,
+    CB_PANE_DELIMITER,
     CB_PANE_SCREENSHOT,
     CB_SCREENSHOT_REFRESH,
     CB_STATUS_SCREENSHOT,
@@ -86,7 +87,7 @@ def build_screenshot_keyboard(
     When *pane_id* is given, keys and refresh target that specific pane
     instead of the window's active pane.
     """
-    target = f"{window_id}:{pane_id}" if pane_id else window_id
+    target = f"{window_id}{CB_PANE_DELIMITER}{pane_id}" if pane_id else window_id
 
     def btn(label: str, key_id: str) -> InlineKeyboardButton:
         return InlineKeyboardButton(
@@ -218,13 +219,13 @@ async def _handle_pane_screenshot(
 ) -> None:
     """Handle CB_PANE_SCREENSHOT: screenshot a specific pane."""
     rest = data[len(CB_PANE_SCREENSHOT) :]
-    # Format: <window_id>:<pane_id> e.g. "@0:%3"
-    colon_idx = rest.find(":")
-    if colon_idx < 0:
+    # Format: <window_id>|<pane_id> — delimiter is | so herdr ids (w2:t1, w2:p1) round-trip
+    delim_idx = rest.find(CB_PANE_DELIMITER)
+    if delim_idx < 0:
         await query.answer("Invalid data")
         return
-    window_id = rest[:colon_idx]
-    pane_id = rest[colon_idx + 1 :]
+    window_id = rest[:delim_idx]
+    pane_id = rest[delim_idx + 1 :]
 
     if not user_owns_window(user_id, window_id):
         await query.answer("Not your session", show_alert=True)

@@ -31,7 +31,7 @@ from ccgram.handlers.polling.polling_types import (
     is_shell_prompt,
 )
 from ccgram.telegram_client import PTBTelegramClient
-from ccgram.tmux_manager import PaneInfo
+from ccgram.multiplexer.base import PaneInfo
 
 
 def _assert_handle_called_once_with_client(mock_handle, bot, *args, **kwargs):
@@ -879,7 +879,7 @@ class TestProviderSwitchPromptSetup:
                 "ccgram.handlers.recovery.transcript_discovery.tmux_manager"
             ) as mock_tmux,
             patch(
-                "ccgram.handlers.recovery.transcript_discovery.config"
+                "ccgram.handlers.recovery.transcript_discovery.session_map_prefix"
             ) as mock_config,
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.detect_provider_from_pane",
@@ -903,7 +903,7 @@ class TestProviderSwitchPromptSetup:
                 return_value=MagicMock(pane_current_command="bash", cwd="/proj")
             )
             mock_tmux.get_pane_title = AsyncMock(return_value="")
-            mock_config.tmux_session_name = "ccgram"
+            mock_config.return_value = "ccgram:"
             await discover_and_register_transcript(
                 "@7", client=bot, user_id=1, thread_id=42
             )
@@ -926,7 +926,7 @@ class TestProviderSwitchPromptSetup:
                 "ccgram.handlers.recovery.transcript_discovery.tmux_manager"
             ) as mock_tmux,
             patch(
-                "ccgram.handlers.recovery.transcript_discovery.config"
+                "ccgram.handlers.recovery.transcript_discovery.session_map_prefix"
             ) as mock_config,
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.detect_provider_from_pane",
@@ -954,7 +954,7 @@ class TestProviderSwitchPromptSetup:
                 return_value=MagicMock(pane_current_command="bash", cwd="/proj")
             )
             mock_tmux.get_pane_title = AsyncMock(return_value="")
-            mock_config.tmux_session_name = "ccgram"
+            mock_config.return_value = "ccgram:"
             await discover_and_register_transcript("@7")
 
         mock_ensure.assert_awaited_once()
@@ -1008,7 +1008,7 @@ class TestProviderSwitchChain:
                 "ccgram.handlers.recovery.transcript_discovery.tmux_manager"
             ) as mock_tmux,
             patch(
-                "ccgram.handlers.recovery.transcript_discovery.config"
+                "ccgram.handlers.recovery.transcript_discovery.session_map_prefix"
             ) as mock_config,
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.detect_provider_from_pane",
@@ -1038,7 +1038,7 @@ class TestProviderSwitchChain:
 
             mock_ws.clear_transcript_path.side_effect = _clear_transcript
             mock_sm.set_window_provider.side_effect = _set_provider
-            mock_config.tmux_session_name = "ccgram"
+            mock_config.return_value = "ccgram:"
 
             # Step 1: claude → shell. User exits claude, pane shows fish.
             mock_detect.return_value = "shell"
@@ -1122,7 +1122,7 @@ class TestMaybeDiscoverTranscript:
                 "ccgram.handlers.recovery.transcript_discovery.tmux_manager"
             ) as mock_tmux,
             patch(
-                "ccgram.handlers.recovery.transcript_discovery.config"
+                "ccgram.handlers.recovery.transcript_discovery.session_map_prefix"
             ) as mock_config,
         ):
             mock_ws.window_states = {
@@ -1137,7 +1137,7 @@ class TestMaybeDiscoverTranscript:
                 return_value=MagicMock(pane_current_command="bun")
             )
             mock_tmux.get_pane_title = AsyncMock(return_value="")
-            mock_config.tmux_session_name = "ccgram"
+            mock_config.return_value = "ccgram:"
             await discover_and_register_transcript("@7")
 
         mock_sm.register_hookless_session.assert_not_called()
@@ -1199,13 +1199,13 @@ class TestMaybeDiscoverTranscript:
                 return_value=mock_provider,
             ),
             patch(
-                "ccgram.handlers.recovery.transcript_discovery.config"
+                "ccgram.handlers.recovery.transcript_discovery.session_map_prefix"
             ) as mock_config,
         ):
             mock_ws.window_states = {"@7": mock_state}
             mock_tmux.find_window_by_id = AsyncMock(return_value=mock_window)
             mock_tmux.get_pane_title = AsyncMock(return_value="")
-            mock_config.tmux_session_name = "ccgram"
+            mock_config.return_value = "ccgram:"
             await discover_and_register_transcript("@7")
 
         mock_sm.set_window_provider.assert_called_once_with(
@@ -1282,7 +1282,7 @@ class TestMaybeDiscoverTranscript:
                 return_value=mock_provider,
             ),
             patch(
-                "ccgram.handlers.recovery.transcript_discovery.config"
+                "ccgram.handlers.recovery.transcript_discovery.session_map_prefix"
             ) as mock_config,
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.tmux_manager"
@@ -1291,7 +1291,7 @@ class TestMaybeDiscoverTranscript:
             mock_ws.window_states = {
                 "@7": MagicMock(session_id="", cwd="/my/project", provider_name="codex")
             }
-            mock_config.tmux_session_name = "ccgram"
+            mock_config.return_value = "ccgram:"
             mock_window = MagicMock(pane_current_command="bun")
             mock_tmux.find_window_by_id = AsyncMock(return_value=mock_window)
             mock_tmux.get_pane_title = AsyncMock(return_value="")
@@ -1338,8 +1338,9 @@ class TestMaybeDiscoverTranscript:
                 return_value=mock_provider,
             ),
             patch(
-                "ccgram.handlers.recovery.transcript_discovery.config"
-            ) as mock_config,
+                "ccgram.handlers.recovery.transcript_discovery.session_map_prefix",
+                return_value="ccgram:",
+            ),
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.tmux_manager"
             ) as mock_tmux,
@@ -1357,7 +1358,6 @@ class TestMaybeDiscoverTranscript:
                     provider_name="pi",
                 )
             }
-            mock_config.tmux_session_name = "ccgram"
             mock_tmux.find_window_by_id = AsyncMock(
                 return_value=MagicMock(pane_current_command="pi", cwd="/my/project")
             )
@@ -1390,8 +1390,9 @@ class TestMaybeDiscoverTranscript:
                 return_value=mock_provider,
             ),
             patch(
-                "ccgram.handlers.recovery.transcript_discovery.config"
-            ) as mock_config,
+                "ccgram.handlers.recovery.transcript_discovery.session_map_prefix",
+                return_value="ccgram:",
+            ),
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.tmux_manager"
             ) as mock_tmux,
@@ -1415,7 +1416,6 @@ class TestMaybeDiscoverTranscript:
                     provider_name="pi",
                 ),
             }
-            mock_config.tmux_session_name = "ccgram"
             mock_tmux.find_window_by_id = AsyncMock(
                 return_value=MagicMock(pane_current_command="pi", cwd="/my/project")
             )
@@ -1448,8 +1448,9 @@ class TestMaybeDiscoverTranscript:
                 return_value=mock_provider,
             ),
             patch(
-                "ccgram.handlers.recovery.transcript_discovery.config"
-            ) as mock_config,
+                "ccgram.handlers.recovery.transcript_discovery.session_map_prefix",
+                return_value="ccgram:",
+            ),
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.tmux_manager"
             ) as mock_tmux,
@@ -1468,7 +1469,6 @@ class TestMaybeDiscoverTranscript:
                     provider_name="codex",
                 ),
             }
-            mock_config.tmux_session_name = "ccgram"
             mock_tmux.find_window_by_id = AsyncMock(
                 return_value=MagicMock(pane_current_command="bun")
             )
@@ -1507,8 +1507,9 @@ class TestMaybeDiscoverTranscript:
                 return_value=mock_provider,
             ),
             patch(
-                "ccgram.handlers.recovery.transcript_discovery.config"
-            ) as mock_config,
+                "ccgram.handlers.recovery.transcript_discovery.session_map_prefix",
+                return_value="ccgram:",
+            ),
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.tmux_manager"
             ) as mock_tmux,
@@ -1527,7 +1528,6 @@ class TestMaybeDiscoverTranscript:
                     provider_name="codex",
                 ),
             }
-            mock_config.tmux_session_name = "ccgram"
             mock_tmux.find_window_by_id = AsyncMock(
                 return_value=MagicMock(pane_current_command="bun")
             )
@@ -1579,7 +1579,7 @@ class TestMaybeDiscoverTranscript:
                 return_value=mock_provider,
             ),
             patch(
-                "ccgram.handlers.recovery.transcript_discovery.config"
+                "ccgram.handlers.recovery.transcript_discovery.session_map_prefix"
             ) as mock_config,
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.tmux_manager"
@@ -1596,7 +1596,7 @@ class TestMaybeDiscoverTranscript:
                     provider_name="codex",
                 ),
             }
-            mock_config.tmux_session_name = "ccgram"
+            mock_config.return_value = "ccgram:"
             mock_tmux.find_window_by_id = AsyncMock(
                 return_value=MagicMock(pane_current_command="bun")
             )
@@ -1637,7 +1637,7 @@ class TestMaybeDiscoverTranscript:
                 return_value=mock_provider,
             ),
             patch(
-                "ccgram.handlers.recovery.transcript_discovery.config"
+                "ccgram.handlers.recovery.transcript_discovery.session_map_prefix"
             ) as mock_config,
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.tmux_manager"
@@ -1651,7 +1651,7 @@ class TestMaybeDiscoverTranscript:
                     provider_name="codex",
                 )
             }
-            mock_config.tmux_session_name = "ccgram"
+            mock_config.return_value = "ccgram:"
             mock_tmux.find_window_by_id = AsyncMock(
                 return_value=MagicMock(pane_current_command="bun")
             )
@@ -1686,7 +1686,7 @@ class TestMaybeDiscoverTranscript:
                 return_value=mock_provider,
             ),
             patch(
-                "ccgram.handlers.recovery.transcript_discovery.config"
+                "ccgram.handlers.recovery.transcript_discovery.session_map_prefix"
             ) as mock_config,
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.tmux_manager"
@@ -1695,7 +1695,7 @@ class TestMaybeDiscoverTranscript:
             mock_ws.window_states = {
                 "@7": MagicMock(session_id="", cwd="/proj", provider_name="codex")
             }
-            mock_config.tmux_session_name = "ccgram"
+            mock_config.return_value = "ccgram:"
             mock_tmux.find_window_by_id = AsyncMock(
                 return_value=MagicMock(pane_current_command="bun")
             )
@@ -1736,7 +1736,7 @@ class TestMaybeDiscoverTranscript:
                 return_value=mock_provider,
             ),
             patch(
-                "ccgram.handlers.recovery.transcript_discovery.config"
+                "ccgram.handlers.recovery.transcript_discovery.session_map_prefix"
             ) as mock_config,
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.asyncio"
@@ -1748,7 +1748,7 @@ class TestMaybeDiscoverTranscript:
             mock_ws.window_states = {
                 "@7": MagicMock(session_id="", cwd="/my/project", provider_name="codex")
             }
-            mock_config.tmux_session_name = "ccgram"
+            mock_config.return_value = "ccgram:"
             mock_window = MagicMock(pane_current_command="bun")
             mock_tmux.find_window_by_id = AsyncMock(return_value=mock_window)
             mock_tmux.get_pane_title = AsyncMock(return_value="")
@@ -1815,14 +1815,14 @@ class TestMaybeDiscoverTranscript:
                 "ccgram.handlers.recovery.transcript_discovery.tmux_manager"
             ) as mock_tmux,
             patch(
-                "ccgram.handlers.recovery.transcript_discovery.config"
+                "ccgram.handlers.recovery.transcript_discovery.session_map_prefix"
             ) as mock_config,
             patch("ccgram.providers.registry", mock_registry),
         ):
             mock_ws.window_states = {
                 "@7": MagicMock(session_id="", cwd="/proj", provider_name="")
             }
-            mock_config.tmux_session_name = "ccgram"
+            mock_config.return_value = "ccgram:"
             mock_tmux.find_window_by_id = AsyncMock(return_value=mock_window)
             mock_tmux.get_pane_title = AsyncMock(return_value="")
             await discover_and_register_transcript("@7")
@@ -1896,7 +1896,7 @@ class TestMaybeDiscoverTranscript:
                 "ccgram.handlers.recovery.transcript_discovery.tmux_manager"
             ) as mock_tmux,
             patch(
-                "ccgram.handlers.recovery.transcript_discovery.config"
+                "ccgram.handlers.recovery.transcript_discovery.session_map_prefix"
             ) as mock_config,
             patch("ccgram.providers.registry", mock_registry),
             patch("ccgram.thread_router.thread_router", mock_router),
@@ -1905,7 +1905,7 @@ class TestMaybeDiscoverTranscript:
                 "@7": MagicMock(session_id="", cwd="/proj", provider_name=""),
                 "@9": mock_bound_state,
             }
-            mock_config.tmux_session_name = "ccgram"
+            mock_config.return_value = "ccgram:"
             mock_tmux.find_window_by_id = AsyncMock(
                 return_value=MagicMock(pane_current_command="bun")
             )
@@ -1967,7 +1967,7 @@ class TestMaybeDiscoverTranscript:
                 return_value=mock_provider,
             ),
             patch(
-                "ccgram.handlers.recovery.transcript_discovery.config"
+                "ccgram.handlers.recovery.transcript_discovery.session_map_prefix"
             ) as mock_config,
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.tmux_manager"
@@ -1979,7 +1979,7 @@ class TestMaybeDiscoverTranscript:
             mock_ws.window_states = {
                 "@7": MagicMock(session_id="", cwd="/proj", provider_name="codex")
             }
-            mock_config.tmux_session_name = "ccgram"
+            mock_config.return_value = "ccgram:"
             mock_tmux.find_window_by_id = AsyncMock(
                 return_value=MagicMock(pane_current_command="bun")
             )
@@ -2012,7 +2012,7 @@ class TestMaybeDiscoverTranscript:
                 return_value=mock_provider,
             ),
             patch(
-                "ccgram.handlers.recovery.transcript_discovery.config"
+                "ccgram.handlers.recovery.transcript_discovery.session_map_prefix"
             ) as mock_config,
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.tmux_manager"
@@ -2024,7 +2024,7 @@ class TestMaybeDiscoverTranscript:
             mock_ws.window_states = {
                 "@7": MagicMock(session_id="", cwd="/proj", provider_name="codex")
             }
-            mock_config.tmux_session_name = "ccgram"
+            mock_config.return_value = "ccgram:"
             mock_tmux.find_window_by_id = AsyncMock(return_value=None)
             mock_asyncio.to_thread = AsyncMock(return_value=None)
             await discover_and_register_transcript("@7")
@@ -2095,7 +2095,7 @@ class TestMaybeDiscoverTranscript:
                 return_value="",
             ),
             patch(
-                "ccgram.handlers.recovery.transcript_discovery.config"
+                "ccgram.handlers.recovery.transcript_discovery.session_map_prefix"
             ) as mock_config,
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.tmux_manager"
@@ -2110,7 +2110,7 @@ class TestMaybeDiscoverTranscript:
                 )
             )
             mock_tmux.get_pane_title = AsyncMock(return_value="◇  Ready (ccbot)")
-            mock_config.tmux_session_name = "ccgram"
+            mock_config.return_value = "ccgram:"
             await discover_and_register_transcript("@7")
 
         mock_codex.discover_transcript.assert_not_called()
@@ -2194,7 +2194,7 @@ class TestMaybeDiscoverTranscript:
                 return_value=False,
             ),
             patch(
-                "ccgram.handlers.recovery.transcript_discovery.config"
+                "ccgram.handlers.recovery.transcript_discovery.session_map_prefix"
             ) as mock_config,
             patch(
                 "ccgram.handlers.recovery.transcript_discovery.tmux_manager"
@@ -2208,7 +2208,7 @@ class TestMaybeDiscoverTranscript:
                     cwd="/Users/alexei/Workspace/ccgram",
                 )
             )
-            mock_config.tmux_session_name = "ccgram"
+            mock_config.return_value = "ccgram:"
             await discover_and_register_transcript("@7")
 
         mock_sm.set_window_provider.assert_called_once_with(
@@ -2356,7 +2356,7 @@ class TestScanWindowPanes:
     async def test_skips_single_pane_window(self) -> None:
         bot = AsyncMock(spec=Bot)
         with (
-            patch("ccgram.tmux_manager.tmux_manager") as mock_tm,
+            patch("ccgram.multiplexer.multiplexer") as mock_tm,
             patch(
                 "ccgram.handlers.polling.window_tick.apply.handle_interactive_ui",
                 new_callable=AsyncMock,
@@ -2379,7 +2379,7 @@ class TestScanWindowPanes:
         mock_provider = MagicMock()
         mock_provider.parse_terminal_status.return_value = interactive
         with (
-            patch("ccgram.tmux_manager.tmux_manager") as mock_tm,
+            patch("ccgram.multiplexer.multiplexer") as mock_tm,
             patch(
                 "ccgram.providers.get_provider_for_window",
                 return_value=mock_provider,
@@ -2403,7 +2403,7 @@ class TestScanWindowPanes:
         mock_provider = MagicMock()
         mock_provider.parse_terminal_status.return_value = None
         with (
-            patch("ccgram.tmux_manager.tmux_manager") as mock_tm,
+            patch("ccgram.multiplexer.multiplexer") as mock_tm,
             patch(
                 "ccgram.providers.get_provider_for_window",
                 return_value=mock_provider,
@@ -2434,7 +2434,7 @@ class TestScanWindowPanes:
         mock_provider = MagicMock()
         mock_provider.parse_terminal_status.return_value = interactive
         with (
-            patch("ccgram.tmux_manager.tmux_manager") as mock_tm,
+            patch("ccgram.multiplexer.multiplexer") as mock_tm,
             patch(
                 "ccgram.providers.get_provider_for_window",
                 return_value=mock_provider,
@@ -2455,7 +2455,7 @@ class TestScanWindowPanes:
     async def test_clears_stale_alert_when_pane_disappears(self) -> None:
         _pane_alert_hashes["%2"] = ("old prompt", 100.0, "@0")
         bot = AsyncMock(spec=Bot)
-        with patch("ccgram.tmux_manager.tmux_manager") as mock_tm:
+        with patch("ccgram.multiplexer.multiplexer") as mock_tm:
             mock_tm.list_panes = AsyncMock(return_value=[_make_pane()])
             await _scan_window_panes(bot, 1, "@0", 42)
         assert "%2" not in _pane_alert_hashes
@@ -2466,7 +2466,7 @@ class TestScanWindowPanes:
         mock_provider = MagicMock()
         mock_provider.parse_terminal_status.return_value = None
         with (
-            patch("ccgram.tmux_manager.tmux_manager") as mock_tm,
+            patch("ccgram.multiplexer.multiplexer") as mock_tm,
             patch(
                 "ccgram.providers.get_provider_for_window",
                 return_value=mock_provider,
@@ -2486,7 +2486,7 @@ class TestScanWindowPanes:
 
     async def test_cached_pane_count_skips_subprocess(self) -> None:
         bot = AsyncMock(spec=Bot)
-        with patch("ccgram.tmux_manager.tmux_manager") as mock_tm:
+        with patch("ccgram.multiplexer.multiplexer") as mock_tm:
             mock_tm.list_panes = AsyncMock(return_value=[_make_pane()])
             await _scan_window_panes(bot, 1, "@0", 42)
             await _scan_window_panes(bot, 1, "@0", 42)
@@ -2616,8 +2616,10 @@ class TestUpdateStatusMessageEdgeCases:
                 "ccgram.handlers.polling.window_tick.observe._parse_with_pyte",
                 return_value=pyte_status,
             ),
-            patch("ccgram.tmux_manager.has_insert_indicator", return_value=False),
-            patch("ccgram.tmux_manager.notify_vim_insert_seen"),
+            patch(
+                "ccgram.multiplexer.vim_state.has_insert_indicator", return_value=False
+            ),
+            patch("ccgram.multiplexer.vim_state.notify_vim_insert_seen"),
             patch("ccgram.handlers.polling.window_tick.apply._send_typing_throttled"),
             patch(
                 "ccgram.handlers.polling.window_tick.apply.get_subagent_names",
@@ -2672,8 +2674,10 @@ class TestUpdateStatusMessageEdgeCases:
                 "ccgram.handlers.polling.window_tick.observe._parse_with_pyte",
                 return_value=pyte_status,
             ),
-            patch("ccgram.tmux_manager.has_insert_indicator", return_value=False),
-            patch("ccgram.tmux_manager.notify_vim_insert_seen"),
+            patch(
+                "ccgram.multiplexer.vim_state.has_insert_indicator", return_value=False
+            ),
+            patch("ccgram.multiplexer.vim_state.notify_vim_insert_seen"),
             patch("ccgram.handlers.polling.window_tick.apply._send_typing_throttled"),
             patch(
                 "ccgram.handlers.polling.window_tick.apply.get_subagent_names",
@@ -2722,8 +2726,10 @@ class TestUpdateStatusMessageEdgeCases:
                 "ccgram.handlers.polling.window_tick.apply.clear_interactive_msg",
                 new_callable=AsyncMock,
             ) as mock_clear,
-            patch("ccgram.tmux_manager.has_insert_indicator", return_value=False),
-            patch("ccgram.tmux_manager.notify_vim_insert_seen"),
+            patch(
+                "ccgram.multiplexer.vim_state.has_insert_indicator", return_value=False
+            ),
+            patch("ccgram.multiplexer.vim_state.notify_vim_insert_seen"),
             patch("ccgram.handlers.polling.window_tick.apply._send_typing_throttled"),
             patch(
                 "ccgram.handlers.polling.window_tick.apply.get_subagent_names",
@@ -2773,8 +2779,10 @@ class TestUpdateStatusMessageEdgeCases:
                 "ccgram.handlers.polling.window_tick.apply.handle_interactive_ui",
                 new_callable=AsyncMock,
             ) as mock_handle,
-            patch("ccgram.tmux_manager.has_insert_indicator", return_value=False),
-            patch("ccgram.tmux_manager.notify_vim_insert_seen"),
+            patch(
+                "ccgram.multiplexer.vim_state.has_insert_indicator", return_value=False
+            ),
+            patch("ccgram.multiplexer.vim_state.notify_vim_insert_seen"),
         ):
             mock_tm.find_window_by_id = AsyncMock(return_value=mock_window)
             mock_tm.capture_pane = AsyncMock(return_value="Allow?\nEsc\n")

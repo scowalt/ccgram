@@ -15,7 +15,7 @@ import structlog
 
 from telegram import CallbackQuery, Update
 from ...telegram_client import PTBTelegramClient
-from ...tmux_manager import tmux_manager
+from ...multiplexer import multiplexer as tmux_manager
 from ..callback_data import (
     CB_ASK_DOWN,
     CB_ASK_ENTER,
@@ -68,16 +68,20 @@ def match_interactive_prefix(data: str) -> tuple[str, str, str | None] | None:
     Returns (cb_prefix, window_id, pane_id_or_None) or None.
 
     Callback data format:
-      - ``"aq:enter:@12"``      → window @12, active pane
-      - ``"aq:enter:@12:%5"``   → window @12, specific pane %5
+      - ``"aq:enter:@12"``         → window @12, active pane
+      - ``"aq:enter:@12|%5"``      → tmux: window @12, pane %5
+      - ``"aq:enter:w2:t1|w2:p1"`` → herdr: tab w2:t1, pane w2:p1
     """
+    # Lazy: avoid a module-level import that ruff flags as unused before the
+    # function body is reached; CB_PANE_DELIMITER is a plain string constant.
+    from ..callback_data import CB_PANE_DELIMITER
+
     for prefix in INTERACTIVE_PREFIXES:
         if data.startswith(prefix):
             remainder = data[len(prefix) :]
-            # Check for pane_id suffix: "@12:%5"
-            if ":%" in remainder:
-                window_id, pane_id = remainder.split(":%", 1)
-                return prefix, window_id, f"%{pane_id}"
+            if CB_PANE_DELIMITER in remainder:
+                window_id, pane_id = remainder.split(CB_PANE_DELIMITER, 1)
+                return prefix, window_id, pane_id
             return prefix, remainder, None
     return None
 
@@ -97,7 +101,6 @@ async def handle_interactive_callback(
     cb_prefix, window_id, pane_id = matched
     # Lazy: callback_helpers ↔ callback_registry ↔ interactive_callbacks
     # cycle through registration side effects.
-    # Lazy: callback_helpers ↔ interactive cycle through the registry
     from ..callback_helpers import get_thread_id, user_owns_window
 
     if not user_owns_window(user_id, window_id):

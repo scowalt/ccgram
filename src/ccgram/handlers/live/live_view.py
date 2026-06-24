@@ -26,7 +26,7 @@ from telegram.error import RetryAfter, TelegramError
 from ...config import config
 from ...screenshot import text_to_image
 from ...telegram_client import TelegramClient
-from ...tmux_manager import tmux_manager
+from ...multiplexer import multiplexer as tmux_manager
 from ...topic_state_registry import topic_state
 from ..callback_data import CB_KEYS_PREFIX, CB_LIVE_STOP
 from ..messaging_pipeline.message_sender import rate_limit_send
@@ -81,7 +81,10 @@ def build_live_keyboard(
     window_id: str, pane_id: str | None = None
 ) -> InlineKeyboardMarkup:
     """Build inline keyboard for live view: quick keys + stop button."""
-    target = f"{window_id}:{pane_id}" if pane_id else window_id
+    # Lazy: pane delimiter constant
+    from ..callback_data import CB_PANE_DELIMITER
+
+    target = f"{window_id}{CB_PANE_DELIMITER}{pane_id}" if pane_id else window_id
 
     def btn(label: str, key_id: str) -> InlineKeyboardButton:
         return InlineKeyboardButton(

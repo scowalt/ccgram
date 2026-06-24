@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from ...config import config
 from ...providers import (
     detect_provider_from_pane,
     detect_provider_from_runtime,
@@ -24,14 +23,14 @@ from ...providers import (
     should_probe_pane_title_for_provider_detection,
 )
 from ...session import session_manager
-from ...session_map import session_map_sync
+from ...session_map import session_map_prefix, session_map_sync
 from ...telegram_client import TelegramClient
-from ...tmux_manager import tmux_manager
+from ...multiplexer import multiplexer as tmux_manager
 from ...window_state_ports import identity_state
 
 if TYPE_CHECKING:
     from ...providers.base import AgentProvider
-    from ...tmux_manager import TmuxWindow
+    from ...multiplexer.base import WindowRef as TmuxWindow
 
 logger = structlog.get_logger()
 
@@ -132,7 +131,7 @@ async def _detect_and_apply_provider(
     if identity_state.is_provider_manually_overridden(window_id):
         return
     detected = await detect_provider_from_pane(
-        w.pane_current_command, pane_tty=w.pane_tty, window_id=window_id
+        w.pane_current_command, window_id=window_id
     )
     if not detected and should_probe_pane_title_for_provider_detection(
         w.pane_current_command
@@ -227,7 +226,7 @@ async def _find_and_register_transcript(
     pane_alive: bool,
 ) -> None:
     """Search for transcripts among candidate providers and register if found."""
-    window_key = f"{config.tmux_session_name}:{window_id}"
+    window_key = f"{session_map_prefix()}{window_id}"
 
     transcript_path_str = (
         str(identity.transcript_path) if identity.transcript_path else ""

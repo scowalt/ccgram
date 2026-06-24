@@ -128,7 +128,7 @@ async def has_prompt_marker(
     if capture_fn is None:
         # Lazy: tmux_manager imports providers; lazy fallback when tests
         # don't inject capture_fn keeps the providers ↔ tmux_manager cycle broken.
-        from ccgram.tmux_manager import tmux_manager
+        from ccgram.multiplexer import multiplexer as tmux_manager
 
         capture_fn = tmux_manager.capture_pane
     capture = await capture_fn(window_id)
@@ -146,23 +146,31 @@ def get_shell_name() -> str:
 
 
 async def detect_pane_shell(window_id: str) -> str:
-    """Detect the shell running in a tmux pane via pane_current_command.
+    """Detect the shell running in a pane via the multiplexer seam.
 
-    Falls back to ``get_shell_name()`` when the pane is unavailable or
-    its command is not a recognized shell.
+    Prefers ``pane_current_command`` (tmux names the shell there); when the
+    backend leaves it empty or non-shell (herdr carries the agent name, empty
+    for a bare shell), falls back to the pane's foreground process argv via
+    ``Multiplexer.foreground``. Only if neither identifies a known shell does it
+    fall back to the bot's own ``$SHELL``, which may not match the pane.
     """
     # Lazy: tmux_manager pulls providers; resolved per-call
-    from ccgram.tmux_manager import tmux_manager
+    from ccgram.multiplexer import multiplexer as tmux_manager
 
     window = await tmux_manager.find_window_by_id(window_id)
     if window and window.pane_current_command:
         tokens = window.pane_current_command.split()
-        if not tokens:
-            return get_shell_name()
-        basename = os.path.basename(tokens[0])
-        cleaned = basename.lstrip("-")
+        if tokens:
+            cleaned = os.path.basename(tokens[0]).lstrip("-")
+            if cleaned in KNOWN_SHELLS:
+                return cleaned
+
+    fg = await tmux_manager.foreground(window_id)
+    if fg and fg.argv:
+        cleaned = os.path.basename(fg.argv[0]).lstrip("-")
         if cleaned in KNOWN_SHELLS:
             return cleaned
+
     return get_shell_name()
 
 
@@ -219,37 +227,28 @@ def _replace_setup_commands(shell: str, prefix: str) -> str:
 async def _is_interactive_shell(window_id: str) -> bool:
     """Check if the pane has an interactive shell at a prompt (not running a script).
 
-    Uses ``ps -t`` to inspect the foreground process. A shell running a script
-    (e.g. ``bash ./scripts/restart.sh``) has child processes in the foreground
-    group, while an idle interactive shell is its own foreground leader with
-    bare args like ``-bash``, ``fish``, or ``/bin/zsh``.
+    Inspects the pane's foreground process via the multiplexer seam. A shell
+    running a script (e.g. ``bash ./scripts/restart.sh``) has child processes
+    in the foreground group, while an idle interactive shell is its own
+    foreground leader with a single bare argv like ``-bash``, ``fish``, or
+    ``/bin/zsh``.
 
     Returns True if the shell looks interactive, False if it's running a script
     or if detection fails (fail-safe: don't send C-c to unknown targets).
     """
-    # Lazy: tmux_manager pulls providers; resolved per-call
-    from ccgram.tmux_manager import tmux_manager
+    # Lazy: multiplexer proxy pulls providers; resolved per-call.
+    from ccgram.multiplexer import multiplexer
 
-    w = await tmux_manager.find_window_by_id(window_id)
-    if not w or not w.pane_tty:
+    fg = await multiplexer.foreground(window_id)
+    if fg is None or not fg.argv:
         return False
 
-    # Lazy: process_detection runs `ps` subprocesses; only loaded when an
-    # interactive-shell pane is being verified.
-    # Lazy: only needed when reading TTY foreground processes
-    from .process_detection import get_foreground_args
-
-    args, _ = await get_foreground_args(w.pane_tty)
-    if not args:
-        return False
-
-    first_token = args.split()[0]
+    first_token = fg.argv[0]
     basename = first_token.rsplit("/", 1)[-1].lstrip("-")
     if basename not in KNOWN_SHELLS:
         return False
 
-    tokens = args.split()
-    return len(tokens) == 1
+    return len(fg.argv) == 1
 
 
 async def setup_shell_prompt(
@@ -290,7 +289,7 @@ async def setup_shell_prompt(
     if send_keys_fn is None:
         # Lazy: tmux_manager imports providers; lazy fallback for the same
         # cycle-break reason as has_prompt_marker above.
-        from ccgram.tmux_manager import tmux_manager
+        from ccgram.multiplexer import multiplexer as tmux_manager
 
         send_keys_fn = tmux_manager.send_keys
 

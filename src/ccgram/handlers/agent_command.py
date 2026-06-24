@@ -172,13 +172,13 @@ async def _redetect_provider(window_id: str) -> str:
     from ..providers import detect_provider_from_pane
 
     # Lazy: tmux_manager imports providers; same cycle-break as above.
-    from ..tmux_manager import tmux_manager
+    from ..multiplexer import multiplexer as tmux_manager
 
     w = await tmux_manager.find_window_by_id(window_id)
     detected = ""
     if w and w.pane_current_command:
         detected = await detect_provider_from_pane(
-            w.pane_current_command, pane_tty=w.pane_tty, window_id=window_id
+            w.pane_current_command, window_id=window_id
         )
     return detected or "shell"
 

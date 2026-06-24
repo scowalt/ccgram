@@ -1011,7 +1011,7 @@ class TestResolveStaleIdsPreservesDeadBindings:
         mgr.window_states["@2"] = WindowState(cwd="/tmp/dead", provider_name="claude")
 
         alive = SimpleNamespace(window_id="@1", window_name="alive-proj")
-        from ccgram.tmux_manager import tmux_manager
+        from ccgram.multiplexer.tmux import tmux_manager
 
         with patch.object(
             tmux_manager, "list_windows", AsyncMock(return_value=[alive])
@@ -1025,7 +1025,7 @@ class TestResolveStaleIdsPreservesDeadBindings:
     async def test_alive_bindings_unchanged(self, mgr: SessionManager) -> None:
         thread_router.bind_thread(100, 1, "@1", window_name="proj")
         alive = SimpleNamespace(window_id="@1", window_name="proj")
-        from ccgram.tmux_manager import tmux_manager
+        from ccgram.multiplexer.tmux import tmux_manager
 
         with patch.object(
             tmux_manager, "list_windows", AsyncMock(return_value=[alive])
@@ -1040,7 +1040,7 @@ class TestResolveStaleIdsPreservesDeadBindings:
         thread_router.bind_thread(100, 514, "@97", window_name="majesty-ai")
         thread_router.bind_thread(100, 2433, "@10", window_name="majesty-ai")
         alive = SimpleNamespace(window_id="@97", window_name="majesty-ai")
-        from ccgram.tmux_manager import tmux_manager
+        from ccgram.multiplexer.tmux import tmux_manager
 
         with patch.object(
             tmux_manager, "list_windows", AsyncMock(return_value=[alive])
@@ -1053,7 +1053,7 @@ class TestResolveStaleIdsPreservesDeadBindings:
     async def test_dead_window_state_preserved(self, mgr: SessionManager) -> None:
         thread_router.bind_thread(100, 1, "@1", window_name="proj")
         mgr.window_states["@1"] = WindowState(cwd="/my/project", provider_name="codex")
-        from ccgram.tmux_manager import tmux_manager
+        from ccgram.multiplexer.tmux import tmux_manager
 
         with patch.object(tmux_manager, "list_windows", AsyncMock(return_value=[])):
             await mgr.resolve_stale_ids()
@@ -1061,3 +1061,69 @@ class TestResolveStaleIdsPreservesDeadBindings:
         assert "@1" in mgr.window_states
         assert mgr.window_states["@1"].cwd == "/my/project"
         assert mgr.window_states["@1"].provider_name == "codex"
+
+
+class _FakeMux:
+    """Minimal multiplexer stand-in: capability flag + live window list."""
+
+    def __init__(self, *, ids_stable: bool, windows: list) -> None:
+        self.capabilities = SimpleNamespace(ids_stable_across_restart=ids_stable)
+        self._windows = windows
+
+    async def list_windows(self) -> list:
+        return self._windows
+
+
+class TestResolveStaleIdsHerdrRestart:
+    """Session-level glue for non-stable-id backends: read the hook-written
+    session_map, join live pane id -> session id, re-resolve by session id."""
+
+    @pytest.fixture(autouse=True)
+    def _session_map(self, tmp_path, monkeypatch):
+        self.map_file = tmp_path / "session_map.json"
+        monkeypatch.setattr("ccgram.session.config.session_map_file", self.map_file)
+        monkeypatch.setattr("ccgram.session.config.tmux_session_name", "ccgram")
+
+    async def test_herdr_restart_reattaches_bound_topic(
+        self, mgr: SessionManager, monkeypatch
+    ) -> None:
+        # Persisted state from before the restart: pane w2:p1 ran session S1.
+        thread_router.bind_thread(100, 7, "w2:p1", window_name="ccgram")
+        mgr.window_states["w2:p1"] = WindowState(
+            session_id="S1", cwd="/repo", provider_name="claude"
+        )
+        # After a herdr server restart the agent is back as w3:p1; the hook
+        # re-wrote session_map with the new pane id and the same session id.
+        self.map_file.write_text(
+            json.dumps({"herdr:w3:p1": {"session_id": "S1", "cwd": "/repo"}})
+        )
+        live = [SimpleNamespace(window_id="w3:p1", window_name="ccgram")]
+        monkeypatch.setattr(
+            "ccgram.session.tmux_manager",
+            _FakeMux(ids_stable=False, windows=live),
+        )
+
+        await mgr.resolve_stale_ids()
+
+        assert "w3:p1" in mgr.window_states
+        assert "w2:p1" not in mgr.window_states
+        assert thread_router.get_window_for_thread(100, 7) == "w3:p1"
+
+    async def test_tmux_path_is_noop_for_stable_ids(
+        self, mgr: SessionManager, monkeypatch
+    ) -> None:
+        # Stable-id backend: even with a session_map present, re-resolution uses
+        # the display-name path and never touches live windows.
+        thread_router.bind_thread(100, 1, "@1", window_name="proj")
+        mgr.window_states["@1"] = WindowState(session_id="S1", cwd="/repo")
+        self.map_file.write_text("{}")
+        live = [SimpleNamespace(window_id="@1", window_name="proj")]
+        monkeypatch.setattr(
+            "ccgram.session.tmux_manager",
+            _FakeMux(ids_stable=True, windows=live),
+        )
+
+        await mgr.resolve_stale_ids()
+
+        assert thread_router.get_window_for_thread(100, 1) == "@1"
+        assert "@1" in mgr.window_states

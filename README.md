@@ -8,7 +8,7 @@
 [![License](https://img.shields.io/github/license/alexei-led/ccgram)](LICENSE)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
-**Control AI coding agents from your phone.** CCGram bridges Telegram to tmux — monitor output, respond to prompts, and manage multiple sessions without touching your computer. Supports [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex CLI](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Pi](https://pi.dev), and plain shell sessions.
+**Control AI coding agents from your phone.** CCGram bridges Telegram to your terminal multiplexer ([tmux](https://github.com/tmux/tmux) by default, or [herdr](https://github.com/ogulcancelik/herdr)) — monitor output, respond to prompts, and manage multiple sessions without touching your computer. Supports [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex CLI](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Pi](https://pi.dev), and plain shell sessions.
 
 ---
 
@@ -16,13 +16,13 @@
 
 AI coding agents run in your terminal. When you step away — commuting, on the couch, or just away from your desk — the session keeps working, but you lose visibility and control.
 
-CCGram fixes this. It operates on **tmux**, not any agent SDK. Your agent process stays exactly where it is, in a tmux window on your machine. CCGram reads its output and sends keystrokes to it. This means:
+CCGram fixes this. It operates on your terminal multiplexer, not any agent SDK. Your agent process stays exactly where it is, in a multiplexer window on your machine. CCGram reads its output and sends keystrokes to it. This means:
 
 - **Desktop to phone, mid-conversation** — walk away and keep monitoring from Telegram
-- **Phone back to desktop, anytime** — `tmux attach` and you're back with full scrollback
-- **Multiple sessions in parallel** — each Telegram topic maps to a separate tmux window, each running a different agent
+- **Phone back to desktop, anytime** — attach to your terminal session and you're back with full scrollback
+- **Multiple sessions in parallel** — each Telegram topic maps to a separate window, each running a different agent
 
-Other Telegram bots wrap agent SDKs into isolated API sessions that can't be resumed in your terminal. CCGram is a thin control layer over tmux — the terminal stays the source of truth.
+Other Telegram bots wrap agent SDKs into isolated API sessions that can't be resumed in your terminal. CCGram is a thin control layer over your terminal multiplexer — the terminal stays the source of truth.
 
 ---
 
@@ -42,11 +42,11 @@ graph LR
   subgraph bridge["⚡ CCGram"]
     direction TB
     B1["read output\n(transcripts + terminal)"]
-    B2["send keystrokes\n(tmux send-keys)"]
+    B2["send keystrokes\n(tmux / herdr)"]
     B3["instant notifications\n(Claude hooks)"]
   end
 
-  subgraph machine["🖥️ Your Machine — tmux session"]
+  subgraph machine["🖥️ Your Machine — tmux / herdr"]
     direction TB
     W1["window @0 · claude"]
     W2["window @1 · codex"]
@@ -64,7 +64,7 @@ graph LR
   style machine fill:#f0faf0,stroke:#2ea44f,stroke-width:2px,color:#333
 ```
 
-Each Telegram Forum topic binds to one tmux window. Messages you type are sent as keystrokes to the pane; responses are parsed from session transcripts and delivered back as Telegram messages.
+Each Telegram Forum topic binds to one multiplexer window. Messages you type are sent as keystrokes to the pane; responses are parsed from session transcripts and delivered back as Telegram messages.
 
 ---
 
@@ -72,7 +72,7 @@ Each Telegram Forum topic binds to one tmux window. Messages you type are sent a
 
 ### Session Control
 
-- **Topic-per-agent** — each Telegram Forum topic is one tmux window running one agent CLI
+- **Topic-per-agent** — each Telegram Forum topic is one multiplexer window running one agent CLI
 - **Git worktree topics** — when a new topic's directory is an eligible git repo, you can spin the agent up in a fresh worktree on a new branch (suggested `ccg/<topic-title>`, one-tap confirm or edit the name) instead of the current branch; non-git directories see the unchanged flow
 - **Interactive prompts** — AskUserQuestion, ExitPlanMode, and Permission dialogs rendered as inline keyboards
 - **Slash commands** — provider-aware menu (Claude `/cost`, Codex `/status`, Gemini `/chat`, Pi `/new`, `/compact`, `/scoped_models`, etc.); Pi also supports `/followup <message>` to queue Pi's Alt+Enter follow-up message; mismatched commands report errors
@@ -99,7 +99,7 @@ Each Telegram Forum topic binds to one tmux window. Messages you type are sent a
 ### Session Management
 
 - **Directory browser** — create sessions from Telegram by navigating your file system
-- **Auto-sync** — create a tmux window manually and the bot auto-creates a matching topic
+- **Auto-sync** — create a multiplexer window manually and the bot auto-creates a matching topic
 - **Recovery** — Fresh / Continue / Resume keyboard when a session dies (buttons adapt per provider)
 - **Message history** — paginated browsing via `/history`
 - **Sessions dashboard** — `/sessions` shows all active sessions with status and kill buttons
@@ -120,7 +120,7 @@ graph TB
 
   subgraph detection["Auto-Detection"]
     D1["process name\n(fast path)"]
-    D2["ps -t tty\n(JS runtime fallback)"]
+    D2["foreground process\n(JS runtime fallback,\nvia multiplexer seam)"]
     D3["pane title symbols\n(Gemini fallback)"]
   end
 
@@ -131,7 +131,7 @@ graph TB
 ```
 
 - **Per-topic provider** — different topics can use different agents simultaneously
-- **Auto-detect** — externally created tmux windows are detected via process name, with `ps -t` TTY fallback for JS runtime wrappers (node/bun)
+- **Auto-detect** — externally created windows are detected via process name; when the pane command is a JS runtime wrapper (node, bun), the foreground process is inspected via the multiplexer backend (tmux uses `ps -t <tty>`, herdr reads `pane process-info`)
 
 ### Shell Provider
 
@@ -148,7 +148,7 @@ graph TB
 ### Prerequisites
 
 - **Python 3.14+**
-- **tmux** — installed and in PATH
+- **tmux** — installed and in PATH (default backend; set `CCGRAM_MULTIPLEXER=herdr` to use herdr instead)
 - **At least one agent CLI** — `claude` (default), `codex`, `gemini`, or `pi` installed and authenticated (or use `shell` with no extra install)
 
 ### Install
@@ -200,33 +200,34 @@ Open your Telegram group, create a new topic, send a message — a directory bro
 
 ## Configuration Reference
 
-| Variable / Flag                | Default                        | Description                                                                                                 |
-| ------------------------------ | ------------------------------ | ----------------------------------------------------------------------------------------------------------- |
-| `TELEGRAM_BOT_TOKEN`           | _(required)_                   | Bot token from @BotFather (env only)                                                                        |
-| `ALLOWED_USERS`                | _(required)_                   | Comma-separated Telegram user IDs                                                                           |
-| `CCGRAM_DIR`                   | `~/.ccgram`                    | Config and state directory                                                                                  |
-| `CCGRAM_PROVIDER`              | `claude`                       | Default provider (`claude`, `codex`, `gemini`, `pi`, `shell`)                                               |
-| `CCGRAM_<NAME>_COMMAND`        | _(from provider)_              | Override launch command per provider                                                                        |
-| `CCGRAM_GROUP_ID`              | _(all groups)_                 | Restrict to one Telegram group                                                                              |
-| `CCGRAM_STATUS_MODE`           | `system`                       | Topic emoji color scheme: `system` (green=working) or `user` (green=ready)                                  |
-| `CCGRAM_HIDE_TOOL_CALLS`       | `false`                        | Set `true` to hide `tool_use`/`tool_result` messages globally (shown by default)                            |
-| `CCGRAM_LLM_PROVIDER`          | _(disabled)_                   | LLM for shell command generation + completion summaries                                                     |
-| `CCGRAM_LLM_API_KEY`           | _(empty)_                      | LLM API key (env only)                                                                                      |
-| `CCGRAM_WHISPER_PROVIDER`      | _(disabled)_                   | Whisper provider for voice transcription (`openai`, `groq`)                                                 |
-| `CCGRAM_TTS_PROVIDER`          | _(disabled)_                   | TTS backend for voice replies: `edge` (free, no key) or `openai`. `edge` requires `pip install ccgram[tts]` |
-| `CCGRAM_TTS_VOICE`             | `en-US-EmmaMultilingualNeural` | Voice name. For `edge`: any edge-tts voice. For `openai`: `alloy`, `nova`, `shimmer`, etc.                  |
-| `CCGRAM_TTS_MODEL`             | `gpt-4o-mini-tts`              | OpenAI TTS model. Only used when `CCGRAM_TTS_PROVIDER=openai`                                               |
-| `CCGRAM_TTS_API_KEY`           | _(empty)_                      | API key for OpenAI TTS. Falls back to `OPENAI_API_KEY` if unset                                             |
-| `CCGRAM_LIVE_VIEW_INTERVAL`    | `5`                            | Live view refresh interval in seconds                                                                       |
-| `CCGRAM_LIVE_VIEW_TIMEOUT`     | `300`                          | Live view auto-stop timeout in seconds                                                                      |
-| `CCGRAM_SEND_SEARCH_DEPTH`     | `5`                            | Max directory depth for `/send` file search                                                                 |
-| `CCGRAM_SEND_MAX_RESULTS`      | `50`                           | Max file results returned by `/send` search                                                                 |
-| `AUTOCLOSE_DONE_MINUTES`       | `30`                           | Auto-close completed topics after N minutes                                                                 |
-| `AUTOCLOSE_DEAD_MINUTES`       | `10`                           | Auto-close dead sessions after N minutes                                                                    |
-| `CCGRAM_PANE_LIFECYCLE_NOTIFY` | `false`                        | Default for per-window pane create/close notifications                                                      |
-| `CCGRAM_MINIAPP_BASE_URL`      | _(disabled)_                   | Externally reachable HTTPS URL for the Mini App dashboard                                                   |
-| `CCGRAM_MINIAPP_HOST`          | `127.0.0.1`                    | Local aiohttp bind host for the Mini App server                                                             |
-| `CCGRAM_MINIAPP_PORT`          | `8765`                         | Local aiohttp bind port for the Mini App server                                                             |
+| Variable / Flag                | Default                        | Description                                                                                                               |
+| ------------------------------ | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `TELEGRAM_BOT_TOKEN`           | _(required)_                   | Bot token from @BotFather (env only)                                                                                      |
+| `ALLOWED_USERS`                | _(required)_                   | Comma-separated Telegram user IDs                                                                                         |
+| `CCGRAM_DIR`                   | `~/.ccgram`                    | Config and state directory                                                                                                |
+| `CCGRAM_PROVIDER`              | `claude`                       | Default provider (`claude`, `codex`, `gemini`, `pi`, `shell`)                                                             |
+| `CCGRAM_<NAME>_COMMAND`        | _(from provider)_              | Override launch command per provider                                                                                      |
+| `CCGRAM_MULTIPLEXER`           | `tmux`                         | Terminal multiplexer backend: `tmux` (default) or `herdr` ([setup](docs/guides.md#herdr-backend-alternative-multiplexer)) |
+| `CCGRAM_GROUP_ID`              | _(all groups)_                 | Restrict to one Telegram group                                                                                            |
+| `CCGRAM_STATUS_MODE`           | `system`                       | Topic emoji color scheme: `system` (green=working) or `user` (green=ready)                                                |
+| `CCGRAM_HIDE_TOOL_CALLS`       | `false`                        | Set `true` to hide `tool_use`/`tool_result` messages globally (shown by default)                                          |
+| `CCGRAM_LLM_PROVIDER`          | _(disabled)_                   | LLM for shell command generation + completion summaries                                                                   |
+| `CCGRAM_LLM_API_KEY`           | _(empty)_                      | LLM API key (env only)                                                                                                    |
+| `CCGRAM_WHISPER_PROVIDER`      | _(disabled)_                   | Whisper provider for voice transcription (`openai`, `groq`)                                                               |
+| `CCGRAM_TTS_PROVIDER`          | _(disabled)_                   | TTS backend for voice replies: `edge` (free, no key) or `openai`. `edge` requires `pip install ccgram[tts]`               |
+| `CCGRAM_TTS_VOICE`             | `en-US-EmmaMultilingualNeural` | Voice name. For `edge`: any edge-tts voice. For `openai`: `alloy`, `nova`, `shimmer`, etc.                                |
+| `CCGRAM_TTS_MODEL`             | `gpt-4o-mini-tts`              | OpenAI TTS model. Only used when `CCGRAM_TTS_PROVIDER=openai`                                                             |
+| `CCGRAM_TTS_API_KEY`           | _(empty)_                      | API key for OpenAI TTS. Falls back to `OPENAI_API_KEY` if unset                                                           |
+| `CCGRAM_LIVE_VIEW_INTERVAL`    | `5`                            | Live view refresh interval in seconds                                                                                     |
+| `CCGRAM_LIVE_VIEW_TIMEOUT`     | `300`                          | Live view auto-stop timeout in seconds                                                                                    |
+| `CCGRAM_SEND_SEARCH_DEPTH`     | `5`                            | Max directory depth for `/send` file search                                                                               |
+| `CCGRAM_SEND_MAX_RESULTS`      | `50`                           | Max file results returned by `/send` search                                                                               |
+| `AUTOCLOSE_DONE_MINUTES`       | `30`                           | Auto-close completed topics after N minutes                                                                               |
+| `AUTOCLOSE_DEAD_MINUTES`       | `10`                           | Auto-close dead sessions after N minutes                                                                                  |
+| `CCGRAM_PANE_LIFECYCLE_NOTIFY` | `false`                        | Default for per-window pane create/close notifications                                                                    |
+| `CCGRAM_MINIAPP_BASE_URL`      | _(disabled)_                   | Externally reachable HTTPS URL for the Mini App dashboard                                                                 |
+| `CCGRAM_MINIAPP_HOST`          | `127.0.0.1`                    | Local aiohttp bind host for the Mini App server                                                                           |
+| `CCGRAM_MINIAPP_PORT`          | `8765`                         | Local aiohttp bind port for the Mini App server                                                                           |
 
 Full reference: **[docs/guides.md](docs/guides.md#configuration)**
 
@@ -236,7 +237,7 @@ Full reference: **[docs/guides.md](docs/guides.md#configuration)**
 
 CCGram ships an optional web dashboard that opens from a Telegram inline button and runs inside Telegram's WebApp container. Three surfaces are available in v3.0:
 
-- **Live terminal** — xterm.js stream of the bound tmux pane (read-only)
+- **Live terminal** — xterm.js stream of the bound multiplexer pane (read-only)
 - **Transcript** — paginated session history with full-text search
 - **Multi-pane grid** — every pane in the window in one view; click to focus
 

@@ -27,7 +27,7 @@ from ...providers import get_provider_for_window
 from ...telegram_client import TelegramClient
 from ...window_query import get_window_provider
 from ...thread_router import thread_router
-from ...tmux_manager import tmux_manager
+from ...multiplexer import multiplexer as tmux_manager
 from ...topic_state_registry import topic_state
 from ..callback_data import (
     CB_ASK_DOWN,
@@ -162,9 +162,12 @@ def _build_interactive_keyboard(
     When ``pane_id`` is set, it is appended to each callback data so
     responses route to a specific pane instead of the window's active pane.
     """
+    # Lazy: pane delimiter constant
+    from ..callback_data import CB_PANE_DELIMITER
+
     vertical_only = ui_name == "RestoreCheckpoint"
-    # Target suffix: "@12" or "@12:%5" when pane-targeted
-    target = f"{window_id}:{pane_id}" if pane_id else window_id
+    # Target suffix: "@12" or "@12|%5" (tmux) / "w2:t1|w2:p1" (herdr) when pane-targeted
+    target = f"{window_id}{CB_PANE_DELIMITER}{pane_id}" if pane_id else window_id
 
     rows: list[list[InlineKeyboardButton]] = []
     # Row 1: directional keys

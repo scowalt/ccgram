@@ -26,6 +26,7 @@ import structlog
 from telegram.error import TelegramError
 
 from .cc_commands import register_commands
+from .config import config
 from .handlers.commands import setup_menu_refresh_job
 from .handlers.hook_events import dispatch_hook_event
 from .handlers.messaging_pipeline.message_queue import shutdown_workers
@@ -38,6 +39,7 @@ from .handlers.topics.topic_orchestration import (
 from .handlers.topics.topic_orchestration import (
     handle_new_window as _handle_new_window,
 )
+from .multiplexer import get_multiplexer, install_multiplexer, multiplexer
 from .providers import get_provider
 from .session import session_manager
 from .telegram_client import PTBTelegramClient
@@ -141,6 +143,30 @@ def verify_hooks_installed() -> None:
         )
 
 
+def wire_multiplexer() -> None:
+    """Install the configured multiplexer backend as the module-level proxy.
+
+    Selects the backend from ``config.multiplexer_name`` (``CCGRAM_MULTIPLEXER``,
+    default tmux). Must run before the session monitor / status polling start so
+    callers that use the ``multiplexer`` proxy forward to a wired backend.
+    Idempotent — re-installs the same cached backend on repeat calls.
+    """
+    backend = get_multiplexer(config.multiplexer_name)
+    install_multiplexer(backend)
+    logger.info("Multiplexer backend wired: %s", backend.capabilities.name)
+
+
+async def ensure_multiplexer_session() -> None:
+    """Ensure the active backend's session/server is reachable before polling.
+
+    tmux creates/finds the session; herdr verifies the socket is alive and the
+    pinned protocol version matches (raising on mismatch). Runs once at startup
+    via the seam so a misconfigured backend fails loudly here rather than later
+    as silent ``None`` returns in the polling loop.
+    """
+    await multiplexer.ensure_session()
+
+
 def wire_runtime_callbacks() -> None:
     """Wire module-level callbacks that break cross-subsystem direct imports.
 
@@ -212,6 +238,8 @@ def start_status_polling(application: Application) -> asyncio.Task[None]:
 async def bootstrap_application(application: Application) -> None:
     """Run the full post_init sequence in the prescribed order."""
     install_global_exception_handler()
+    wire_multiplexer()
+    await ensure_multiplexer_session()
     await register_provider_commands(application)
     await session_manager.resolve_stale_ids()
     await _adopt_unbound_windows(PTBTelegramClient(application.bot))
