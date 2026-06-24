@@ -29,11 +29,11 @@ macOS), ``native_agent_status`` and ``supports_event_stream`` are True,
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import re
 import shutil
-import subprocess
 from collections.abc import (
     AsyncGenerator,
     AsyncIterator,
@@ -175,6 +175,8 @@ class HerdrManager:
         self._binary = shutil.which(binary) or binary
         self._run: HerdrRunner = runner or self._subprocess_run
         self._open_stream: HerdrStreamOpener = stream_opener or self._default_stream
+        self._last_window_refs: list[WindowRef] | None = None
+        self.last_window_scan_failed = False
 
     def _default_stream(
         self, subscriptions: Sequence[Mapping[str, object]]
@@ -184,11 +186,20 @@ class HerdrManager:
 
     # ── CLI plumbing (private) ─────────────────────────────────────────
 
+    @staticmethod
+    async def _kill_process(proc: asyncio.subprocess.Process) -> None:
+        """Best-effort child cleanup with a bounded wait."""
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+        with contextlib.suppress(ProcessLookupError, TimeoutError):
+            await asyncio.wait_for(proc.wait(), timeout=1.0)
+
     async def _subprocess_run(self, args: Sequence[str]) -> tuple[int, str, str]:
         """Default runner: exec ``herdr <args>`` with the socket env, time-boxed."""
         env = dict(os.environ)
         if self._socket_path:
             env["HERDR_SOCKET_PATH"] = self._socket_path
+        proc: asyncio.subprocess.Process | None = None
         try:
             # Force CPython's fork-free ``posix_spawn`` path: it requires an
             # absolute executable (resolved in ``__init__``) and, on macOS
@@ -197,21 +208,32 @@ class HerdrManager:
             # makes every child print macOS ``MallocStackLogging`` warnings.
             # fd inheritance is acceptable: herdr is a trusted, short-lived
             # CLI that only talks to its socket.
-            completed = await asyncio.to_thread(
-                subprocess.run,
-                [self._binary, *args],
-                capture_output=True,
-                text=True,
+            proc = await asyncio.create_subprocess_exec(
+                self._binary,
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
                 env=env,
-                timeout=_CALL_TIMEOUT_SECONDS,
-                check=False,
                 close_fds=False,
             )
-        except subprocess.TimeoutExpired:
+            out, err = await asyncio.wait_for(
+                proc.communicate(), timeout=_CALL_TIMEOUT_SECONDS
+            )
+        except TimeoutError:
+            if proc is not None:
+                await self._kill_process(proc)
             return (_RC_TIMEOUT, "", "herdr call timed out")
+        except asyncio.CancelledError:
+            if proc is not None:
+                await self._kill_process(proc)
+            raise
         except OSError as exc:
             return (_RC_NO_BINARY, "", str(exc))
-        return (completed.returncode, completed.stdout, completed.stderr)
+
+        assert proc is not None
+        stdout = out if isinstance(out, str) else out.decode(errors="replace")
+        stderr = err if isinstance(err, str) else err.decode(errors="replace")
+        return (proc.returncode or 0, stdout, stderr)
 
     async def _call_json(self, args: Sequence[str]) -> dict | None:
         """Run ``herdr <args>`` and return the JSON ``result`` dict, or None.
@@ -295,8 +317,25 @@ class HerdrManager:
         chosen = focused or panes[0]
         return chosen.get("pane_id") or None
 
+    async def _pane_belongs_to_tab(self, pane_id: str, tab_id: str) -> bool:
+        """True when a direct pane id is currently inside *tab_id*."""
+        panes = await self._panes_for_tab(tab_id)
+        return any(p.get("pane_id") == pane_id for p in panes)
+
+    def _window_refs_after_failed_scan(self) -> list[WindowRef] | None:
+        """Return cached refs after a non-authoritative scan failure."""
+        already_failed = self.last_window_scan_failed
+        self.last_window_scan_failed = True
+        if self._last_window_refs is not None:
+            if not already_failed:
+                logger.debug("herdr window scan failed; returning cached window refs")
+            return list(self._last_window_refs)
+        if not already_failed:
+            logger.debug("herdr window scan failed with no cached window refs")
+        return None
+
     async def _tab_list(self) -> list[dict] | None:
-        """Return raw tab dicts, or None when ``tab list`` is unavailable."""
+        """Return raw tab dicts from ``tab list``; None on transient failure."""
         result = await self._call_json(["tab", "list"])
         if result is None:
             return None
@@ -312,20 +351,25 @@ class HerdrManager:
         tab = result.get("tab")
         return tab if isinstance(tab, dict) else None
 
-    async def _workspace_labels(self) -> dict[str, str]:
-        """Map every ``workspace_id`` → its label (one ``workspace list`` call).
-
-        Empty when herdr exposes no workspace addressing (older server) — the
-        adaptive label then degrades to the agent name alone.
-        """
+    async def _workspace_labels(self) -> dict[str, str] | None:
+        """Map every ``workspace_id`` → its label; None on transient failure."""
         result = await self._call_json(["workspace", "list"])
-        if not result:
-            return {}
+        if result is None:
+            return None
         return {
             w.get("workspace_id", ""): w.get("label", "")
             for w in result.get("workspaces", [])
             if w.get("workspace_id")
         }
+
+    async def _workspace_labels_for_window_scan(self) -> dict[str, str] | None:
+        """Return labels for list_windows; None means keep cached scan refs."""
+        labels = await self._workspace_labels()
+        if labels is not None:
+            return labels
+        if self._last_window_refs is not None:
+            return None
+        return {}
 
     @staticmethod
     def _to_window_ref(
@@ -431,13 +475,20 @@ class HerdrManager:
         """
         tabs = await self._tab_list()
         if tabs is None:
-            return None
+            return self._window_refs_after_failed_scan()
         if not tabs:
+            self.last_window_scan_failed = False
+            self._last_window_refs = []
             return []
-        workspace_labels = await self._workspace_labels()
+        workspace_labels = await self._workspace_labels_for_window_scan()
+        if workspace_labels is None:
+            return self._window_refs_after_failed_scan()
 
         # Build per-tab pane index from pane list (tab_id → list[pane]).
         pane_result = await self._call_json(["pane", "list"])
+        if pane_result is None:
+            return self._window_refs_after_failed_scan()
+        self.last_window_scan_failed = False
         panes_by_tab: dict[str, list[dict]] = {}
         if pane_result:
             for pane in pane_result.get("panes", []):
@@ -463,6 +514,7 @@ class HerdrManager:
             )
             window_name = format_agent_topic_prefix(workspace_label, tab_label)
             refs.append(self._to_window_ref(tab_id, window_name, rep_cwd, rep_agent))
+        self._last_window_refs = list(refs)
         return refs
 
     async def find_window_by_id(self, window_id: str) -> WindowRef | None:
@@ -480,7 +532,7 @@ class HerdrManager:
         tab_label = tab.get("label", "")
 
         # Resolve workspace label for the full adaptive topic label.
-        workspace_labels = await self._workspace_labels()
+        workspace_labels = await self._workspace_labels() or {}
         workspace_label = workspace_labels.get(tab.get("workspace_id", ""), "")
         window_name = format_agent_topic_prefix(workspace_label, tab_label)
 
@@ -641,14 +693,20 @@ class HerdrManager:
         *,
         enter: bool = True,
         literal: bool = True,
-        window_id: str | None = None,  # noqa: ARG002 — protocol signature
+        window_id: str | None = None,
     ) -> bool:
-        """Send to a specific pane id directly (no tab resolution).
+        """Send to a specific pane id directly (optionally scoped to a tab).
 
         Unlike ``send``, *pane_id* here is a real herdr pane id (e.g.
         ``"w2:p1"``), not a tab id — callers that target a specific pane in a
-        split tab pass the pane id directly.
+        split tab pass the pane id directly. When *window_id* is supplied, the
+        pane must belong to that tab; this preserves the multiplexer contract's
+        authorization boundary for pane-specific callbacks.
         """
+        if window_id is not None and not await self._pane_belongs_to_tab(
+            pane_id, window_id
+        ):
+            return False
         return await self._send_to(pane_id, text, enter=enter, literal=literal)
 
     async def _send_to(
@@ -784,6 +842,25 @@ class HerdrManager:
         except OSError:
             return a == b
 
+    async def _launch_agent_in_pane(
+        self,
+        *,
+        tab_id: str,
+        label: str,
+        pane_id: str,
+        launch_command: str,
+        agent_args: str,
+    ) -> tuple[bool, str]:
+        """Run the launch command in a new tab's root pane, closing on failure."""
+        if not pane_id:
+            await self.kill_window(tab_id)
+            return False, "herdr tab created without a root pane"
+        cmd = f"{launch_command} {agent_args}".strip() if agent_args else launch_command
+        if not await self._call_ok(["pane", "run", pane_id, cmd]):
+            await self.kill_window(tab_id)
+            return False, f"Failed to launch agent in herdr tab '{label}'"
+        return True, ""
+
     async def create_window(
         self,
         work_dir: str,
@@ -836,14 +913,15 @@ class HerdrManager:
 
         if start_agent and launch_command:
             root_pane = result.get("root_pane") or {}
-            pane_id = root_pane.get("pane_id", "")
-            if pane_id:
-                cmd = (
-                    f"{launch_command} {agent_args}".strip()
-                    if agent_args
-                    else launch_command
-                )
-                await self._call_ok(["pane", "run", pane_id, cmd])
+            launch_ok, launch_error = await self._launch_agent_in_pane(
+                tab_id=tab_id,
+                label=label,
+                pane_id=root_pane.get("pane_id", ""),
+                launch_command=launch_command,
+                agent_args=agent_args,
+            )
+            if not launch_ok:
+                return False, launch_error, "", ""
 
         logger.info("Created herdr tab %r (id=%s) at %s", label, tab_id, path)
         return True, f"Created herdr tab '{label}' at {path}", label, tab_id
@@ -1063,14 +1141,19 @@ class HerdrManager:
         pane_id: str,
         *,
         with_ansi: bool = False,
-        window_id: str | None = None,  # noqa: ARG002 — protocol signature
+        window_id: str | None = None,
     ) -> str | None:
-        """Capture a specific pane's visible text by pane id (no tab resolution).
+        """Capture a specific pane's visible text by pane id.
 
         *pane_id* is a real herdr pane id (e.g. ``"w2:p1"``). Reads directly
         without resolving through a tab so callers that target a specific pane
-        in a split tab get the right pane, not the active one.
+        in a split tab get the right pane, not the active one. When *window_id*
+        is supplied, the pane must belong to that tab before it can be read.
         """
+        if window_id is not None and not await self._pane_belongs_to_tab(
+            pane_id, window_id
+        ):
+            return None
         return await self._read_visible_pane(pane_id, ansi=with_ansi)
 
     async def capture_pane_scrollback(

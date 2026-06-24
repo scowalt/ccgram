@@ -305,6 +305,20 @@ class TestCheckMultiplexer:
         assert status == "pass"
         assert "tmux" in msg
 
+    def test_tmux_check_does_not_instantiate_backend(self, monkeypatch) -> None:
+        from ccgram.multiplexer import registry
+
+        def fail_factory():
+            raise AssertionError("tmux backend must not be instantiated")
+
+        monkeypatch.delenv("CCGRAM_MULTIPLEXER", raising=False)
+        monkeypatch.setitem(registry._FACTORIES, "tmux", fail_factory)
+
+        status, msg = _check_multiplexer()
+
+        assert status == "pass"
+        assert "tmux" in msg
+
     def test_herdr_selected(self, monkeypatch) -> None:
         monkeypatch.setenv("CCGRAM_MULTIPLEXER", "herdr")
         status, msg = _check_multiplexer()

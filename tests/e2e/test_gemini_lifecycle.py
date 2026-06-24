@@ -57,7 +57,11 @@ async def test_command_forwarding(e2e_app, work_dir):
     u = make_text_update("/help", bot=app.bot)
     await app.process_update(u)
 
-    await wait_for_pane(tmux, window_id, pattern="help", timeout=15)
+    await wait_for_send(
+        calls,
+        predicate=lambda d: "Sent: /help" in d.get("text", ""),
+        timeout=10,
+    )
 
 
 @pytest.mark.xfail(

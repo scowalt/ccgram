@@ -76,9 +76,9 @@ class TestClearTopicStateQualifiedId:
     ) -> None:
         monkeypatch.setattr(config, "multiplexer_name", "herdr")
         mock_ts = _common_patches
-        await clear_topic_state(1, 42, client=None, window_id="w1:p0", window_dead=True)
+        await clear_topic_state(1, 42, client=None, window_id="w1:t0", window_dead=True)
         kwargs = mock_ts.clear_all.call_args[1]
-        assert kwargs["qualified_id"] == "herdr:w1:p0"
+        assert kwargs["qualified_id"] == "herdr:w1:t0"
 
     async def test_qualified_id_none_when_window_alive(
         self, monkeypatch, _common_patches
@@ -87,7 +87,7 @@ class TestClearTopicStateQualifiedId:
         mock_ts = _common_patches
         # window_dead defaults to True; pass False to suppress qualified_id
         await clear_topic_state(
-            1, 42, client=None, window_id="w1:p0", window_dead=False
+            1, 42, client=None, window_id="w1:t0", window_dead=False
         )
         kwargs = mock_ts.clear_all.call_args[1]
         assert kwargs["qualified_id"] is None

@@ -56,6 +56,24 @@ def test_parse_session_map_preserves_existing_primary_when_newer_than_candidate(
     assert parsed["@7"]["session_id"] == "parent"
 
 
+def test_parse_session_map_herdr_does_not_preserve_reused_tab_primary(
+    tmp_path: Path, monkeypatch
+) -> None:
+    parent = tmp_path / "parent.jsonl"
+    child = tmp_path / "child.jsonl"
+    _write_transcript(parent, 2)
+    _write_transcript(child, 0)
+    monkeypatch.setattr("ccgram.session_map.config.multiplexer_name", "herdr")
+    window_store.window_states["w2:t1"] = WindowState(
+        session_id="parent", cwd="/repo", transcript_path=str(parent)
+    )
+
+    parsed = parse_session_map({"herdr:w2:t1": _info("child", child)}, "herdr:")
+
+    assert parsed["w2:t1"]["session_id"] == "child"
+    assert parsed["w2:t1"]["transcript_path"] == str(child)
+
+
 def test_parse_session_map_adopts_newer_stale_candidate(tmp_path: Path) -> None:
     parent = tmp_path / "parent.jsonl"
     new = tmp_path / "new.jsonl"

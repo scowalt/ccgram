@@ -63,7 +63,10 @@ async def handle_new_message(msg: NewMessage, client: TelegramClient) -> None:  
         structlog.contextvars.bind_contextvars(
             window_id=window_id, session_id=msg.session_id
         )
-        notif_mode = window_query.get_notification_mode(window_id)
+        get_notification_mode = getattr(
+            window_query, "get_notification_mode", lambda _window_id: "all"
+        )
+        notif_mode = get_notification_mode(window_id)
         is_tool_flow = msg.tool_name in INTERACTIVE_TOOL_NAMES or msg.content_type in (
             "tool_use",
             "tool_result",

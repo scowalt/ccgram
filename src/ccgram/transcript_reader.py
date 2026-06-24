@@ -172,6 +172,49 @@ class TranscriptReader:
             logger.debug("Error scanning transcript for catch-up: %s", file_path)
         return offset_after_last_user
 
+    async def _start_tracking_session(
+        self,
+        session_id: str,
+        file_path: Path,
+        provider: Any,
+        window_id: str,
+    ) -> tuple[TrackedSession, int, bool]:
+        """Create tracking state for a newly seen transcript file."""
+        try:
+            st = file_path.stat()
+            file_size, current_mtime = st.st_size, st.st_mtime
+        except OSError:
+            file_size = 0
+            current_mtime = 0.0
+
+        should_catch_up = session_id in self._catch_up_sessions
+        if provider.capabilities.supports_incremental_read:
+            if should_catch_up:
+                initial_offset = await self._offset_after_last_user_entry(
+                    file_path, provider
+                )
+                if initial_offset is None:
+                    initial_offset = file_size
+            else:
+                initial_offset = file_size
+        else:
+            _, initial_offset = await asyncio.to_thread(
+                provider.read_transcript_file, str(file_path), 0
+            )
+
+        tracked = TrackedSession(
+            session_id=session_id,
+            file_path=str(file_path),
+            last_byte_offset=initial_offset,
+        )
+        self._state.update_session(tracked)
+        self._file_mtimes[session_id] = current_mtime
+        self._catch_up_sessions.discard(session_id)
+        if provider.capabilities.supports_task_tracking and window_id:
+            await provider.seed_task_state(window_id, session_id, str(file_path))
+        logger.debug("Started tracking session: %s", session_id)
+        return tracked, file_size, should_catch_up
+
     async def _process_session_file(
         self,
         session_id: str,
@@ -189,42 +232,10 @@ class TranscriptReader:
             tracked = self._adopt_tracking_for_file(session_id, file_path)
 
         if tracked is None:
-            try:
-                st = file_path.stat()
-                file_size, current_mtime = st.st_size, st.st_mtime
-            except OSError:
-                file_size = 0
-                current_mtime = 0.0
-
-            should_catch_up = session_id in self._catch_up_sessions
-
-            if provider.capabilities.supports_incremental_read:
-                if should_catch_up:
-                    initial_offset = await self._offset_after_last_user_entry(
-                        file_path, provider
-                    )
-                    if initial_offset is None:
-                        initial_offset = file_size
-                else:
-                    initial_offset = file_size
-            else:
-                _, initial_offset = await asyncio.to_thread(
-                    provider.read_transcript_file, str(file_path), 0
-                )
-
-            tracked = TrackedSession(
-                session_id=session_id,
-                file_path=str(file_path),
-                last_byte_offset=initial_offset,
+            tracked, file_size, should_catch_up = await self._start_tracking_session(
+                session_id, file_path, provider, window_id
             )
-            self._state.update_session(tracked)
-            self._file_mtimes[session_id] = current_mtime
-            self._catch_up_sessions.discard(session_id)
-            if provider.capabilities.supports_task_tracking and window_id:
-                await provider.seed_task_state(window_id, session_id, str(file_path))
-            logger.debug("Started tracking session: %s", session_id)
-
-            if not should_catch_up or initial_offset >= file_size:
+            if not should_catch_up or tracked.last_byte_offset >= file_size:
                 return
 
         try:

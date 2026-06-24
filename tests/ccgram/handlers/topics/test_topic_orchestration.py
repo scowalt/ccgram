@@ -4,7 +4,7 @@ import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from telegram.error import BadRequest, RetryAfter, TelegramError, TimedOut
+from telegram.error import BadRequest, NetworkError, RetryAfter, TelegramError, TimedOut
 
 from ccgram.handlers.topics.topic_orchestration import (
     collect_target_chats,
@@ -578,11 +578,24 @@ class TestCreateForumTopicTransientRetry:
             await handle_new_window(event, bot)
 
         assert bot.create_forum_topic.call_count == 2
+        assert _topic_create_failed_windows == set()
 
     async def test_timed_out_exhausts_retries_then_logs(self) -> None:
+        await self._assert_transient_exhausts_without_permanent_window_failure(
+            TimedOut("persistent")
+        )
+
+    async def test_network_error_exhausts_retries_then_logs(self) -> None:
+        await self._assert_transient_exhausts_without_permanent_window_failure(
+            NetworkError("persistent")
+        )
+
+    async def _assert_transient_exhausts_without_permanent_window_failure(
+        self, error: TelegramError
+    ) -> None:
         event = _make_event()
         bot = AsyncMock()
-        bot.create_forum_topic = AsyncMock(side_effect=TimedOut("persistent"))
+        bot.create_forum_topic = AsyncMock(side_effect=error)
 
         with (
             patch("ccgram.handlers.topics.topic_orchestration.session_manager"),
@@ -602,8 +615,9 @@ class TestCreateForumTopicTransientRetry:
 
             await handle_new_window(event, bot)
 
-        # Original attempt + 1 retry = 2 calls
         assert bot.create_forum_topic.call_count == 2
+        assert event.window_id not in _topic_create_failed_windows
+        assert -100500 in _topic_create_retry_until
 
 
 class TestAdoptUnboundWindows:

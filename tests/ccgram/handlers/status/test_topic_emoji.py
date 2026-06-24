@@ -379,7 +379,7 @@ class TestHerdrToTelegramRename:
         bot.edit_forum_topic.assert_called_once_with(
             chat_id=-100,
             message_thread_id=42,
-            name=f"{EMOJI_IDLE} workspace ▸ new-agent",
+            name="workspace ▸ new-agent",
         )
 
     async def test_same_display_name_after_sync_does_not_relabel(self) -> None:

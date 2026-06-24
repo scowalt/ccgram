@@ -41,11 +41,11 @@ def _resolve_users_for_window_key(
     """Resolve window_key to list of (user_id, thread_id, window_id).
 
     The window_key format is "<prefix>:<window_id>" (e.g. "ccgram:@0" for tmux,
-    "herdr:w2:p1" for herdr, whose window_id itself contains a colon). The prefix
+    "herdr:w2:t1" for herdr, whose window_id itself contains a colon). The prefix
     is a single colon-free token, so we split on the FIRST colon to recover the
     full window_id and look up thread bindings.
     """
-    # Extract window_id from key ("ccgram:@0" -> "@0", "herdr:w2:p1" -> "w2:p1")
+    # Extract window_id from key ("ccgram:@0" -> "@0", "herdr:w2:t1" -> "w2:t1")
     parts = window_key.split(":", 1)
     if len(parts) < _WINDOW_KEY_PARTS:
         return []
@@ -127,11 +127,19 @@ async def _is_agent_still_active(window_id: str) -> bool:
     Used by Stop handler to avoid false "Ready" on intermediate turns
     (e.g. agent finishing a tool_use turn but about to continue).
     """
-    # Lazy: providers/multiplexer imports reach monitor and handler wiring during startup.
+    # Lazy: multiplexer imports reach monitor and handler wiring during startup.
     from ..multiplexer import multiplexer as tmux_manager
+
+    # Lazy: provider registry imports reach transcript discovery during startup.
     from ..providers import get_provider_for_window
 
-    pane_text = await tmux_manager.capture_pane(window_id)
+    capture = getattr(tmux_manager, "capture", None)
+
+    if capture is not None:
+        result = await capture(window_id)
+        pane_text = result.text if result is not None else ""
+    else:
+        pane_text = await tmux_manager.capture_pane(window_id)
     if not pane_text:
         return False
     provider = get_provider_for_window(window_id)

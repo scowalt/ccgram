@@ -350,6 +350,44 @@ class TmuxManager:
             session.windows[0].rename_window(config.tmux_main_window_name)
         return session
 
+    @staticmethod
+    def _window_ref_for_reconciliation(window: libtmux.Window) -> TmuxWindow | None:
+        """Build a window ref while treating pane metadata as optional."""
+        name = window.window_name or ""
+        window_id = window.window_id or ""
+        if name == config.tmux_main_window_name:
+            return None
+        if config.own_window_id and window_id == config.own_window_id:
+            return None
+        if name.startswith("_"):
+            return None
+
+        cwd = ""
+        pane_cmd = ""
+        pane_tty = ""
+        pane_width = 0
+        pane_height = 0
+        try:
+            pane = window.active_pane
+            if pane:
+                cwd = pane.pane_current_path or ""
+                pane_cmd = pane.pane_current_command or ""
+                pane_tty = getattr(pane, "pane_tty", "") or ""
+                pane_width = int(pane.pane_width or 0)
+                pane_height = int(pane.pane_height or 0)
+        except _TmuxError as exc:
+            logger.debug("Error getting window info: %s", exc)
+
+        return TmuxWindow(
+            window_id=window_id,
+            window_name=name,
+            cwd=cwd,
+            pane_current_command=pane_cmd,
+            pane_tty=pane_tty,
+            pane_width=pane_width,
+            pane_height=pane_height,
+        )
+
     def _ensure_window_scan_state(self) -> None:
         """Initialize scan caches for tests that construct via ``__new__``."""
         if not hasattr(self, "_windows_cache"):
@@ -404,13 +442,29 @@ class TmuxManager:
 
     async def list_windows_for_reconciliation(self) -> list[TmuxWindow] | None:
         """List windows, or return None when tmux cannot confirm the session."""
-        self._ensure_window_scan_state()
-        loop = asyncio.get_running_loop()
-        async with self._windows_query_lock:
-            ok = await self._refresh_window_cache(loop, none_on_failure=True)
-            if ok is None:
+
+        def _sync_list_windows() -> list[TmuxWindow] | None:
+            try:
+                session = self.server.sessions.get(
+                    session_name=self.session_name, default=None
+                )
+                if session is None:
+                    return []
+                windows = [
+                    ref
+                    for window in session.windows
+                    if (ref := self._window_ref_for_reconciliation(window)) is not None
+                ]
+            except _TmuxError:
+                self._reset_server()
                 return None
-            return list(self._windows_cache)
+            return windows
+
+        return await _run_libtmux_operation(
+            "list_windows_for_reconciliation",
+            _sync_list_windows,
+            session_name=self.session_name,
+        )
 
     async def _refresh_window_cache(
         self, loop: asyncio.AbstractEventLoop, *, none_on_failure: bool = False
@@ -647,6 +701,13 @@ class TmuxManager:
             logger.exception("Unexpected error capturing pane raw %s", window_id)
             return None
 
+    def _ensure_capture_state(self) -> None:
+        """Initialize capture backoff state for tests that construct via ``__new__``."""
+        if not hasattr(self, "_capture_backoff_expires"):
+            self._capture_backoff_expires = {}
+        if not hasattr(self, "_capture_locks"):
+            self._capture_locks = {}
+
     async def _capture_pane_ansi(self, window_id: str) -> str | None:
         """Capture pane with ANSI colors via tmux subprocess."""
         return await self._capture_pane_subprocess(window_id, with_ansi=True)
@@ -679,12 +740,7 @@ class TmuxManager:
         cmd.extend(["-p", "-t", window_id])
         try:
             proc = await asyncio.create_subprocess_exec(
-                "tmux",
-                "capture-pane",
-                "-e",
-                "-p",
-                "-t",
-                window_id,
+                *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )

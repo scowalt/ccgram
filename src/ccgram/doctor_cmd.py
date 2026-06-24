@@ -48,23 +48,23 @@ def _active_multiplexer_name() -> str:
 
 
 def _check_multiplexer() -> tuple[str, str]:
-    """Report the active multiplexer backend and confirm it resolves.
+    """Report the configured multiplexer backend without instantiating it.
 
-    Reads ``capabilities`` through the neutral seam (``get_multiplexer``), never
-    a concrete backend, so doctor stays on the right side of the F1 boundary.
-    The backend *name* is sanctioned here — it is for logging and doctor only
-    (see ``MultiplexerCapabilities.name``), not for control flow in callers.
+    ``ccgram doctor`` must be able to report missing bot config; importing the
+    tmux backend instantiates Config and can fail before those checks run. Name
+    validation through the registry keeps doctor lightweight and leaves backend
+    reachability to the tmux/herdr-specific checks below.
     """
     name = _active_multiplexer_name()
-    # Lazy: the registry lazy-imports a backend; defer so `ccgram doctor`
-    # startup stays light and doctor touches only the neutral seam (F1).
-    from .multiplexer import UnknownMultiplexerError, get_multiplexer
+    # Lazy: import the registry names only when doctor runs, and avoid backend
+    # factories so missing bot config can still be reported by later checks.
+    from .multiplexer import multiplexer_names
 
-    try:
-        caps = get_multiplexer(name).capabilities
-    except UnknownMultiplexerError as exc:
-        return _FAIL, str(exc)
-    return _PASS, f"multiplexer backend: {caps.name}"
+    names = multiplexer_names()
+    if name not in names:
+        available = ", ".join(sorted(names)) or "(none)"
+        return _FAIL, f"Unknown multiplexer {name!r}. Available: {available}"
+    return _PASS, f"multiplexer backend: {name}"
 
 
 def _check_herdr() -> tuple[str, str]:

@@ -133,28 +133,25 @@ class TestStatusMainHerdr:
     def test_herdr_counts_keys_and_lists_panes(
         self, tmp_path, monkeypatch, capsys
     ) -> None:
-        # In herdr mode, session_map keys are "herdr:wN:pM" — the tmux session
-        # prefix would never match them. Status must use the herdr prefix and
-        # the herdr pane listing, not shell out to tmux.
         monkeypatch.setenv("CCGRAM_DIR", str(tmp_path))
         monkeypatch.setenv("CCGRAM_MULTIPLEXER", "herdr")
         monkeypatch.setenv("TMUX_SESSION_NAME", "ccgram")
 
         state = {
-            "thread_bindings": {"12345": {"42": "w2:p1"}},
-            "window_display_names": {"w2:p1": "ws ▸ claude"},
+            "thread_bindings": {"12345": {"42": "w2:t1"}},
+            "window_display_names": {"w2:t1": "ws ▸ claude"},
         }
         (tmp_path / "state.json").write_text(json.dumps(state))
 
         session_map = {
-            "herdr:w2:p1": {"session_id": "abc-123", "cwd": "/tmp"},
+            "herdr:w2:t1": {"session_id": "abc-123", "cwd": "/tmp"},
             "ccgram:@5": {"session_id": "stale", "cwd": "/old"},
         }
         (tmp_path / "session_map.json").write_text(json.dumps(session_map))
 
         monkeypatch.setattr(
             "ccgram.status_cmd._list_herdr_windows",
-            lambda: [{"id": "w2:p1", "name": "ws ▸ claude"}],
+            lambda: [{"id": "w2:t1", "name": "ws ▸ claude"}],
         )
 
         with contextlib.suppress(SystemExit):
@@ -165,7 +162,7 @@ class TestStatusMainHerdr:
         assert "Monitored sessions: 1" in captured.out
         assert "Herdr: 1 pane(s)" in captured.out
         assert "Tmux session" not in captured.out
-        assert "w2:p1" in captured.out
+        assert "w2:t1" in captured.out
         assert "topic 42" in captured.out
         assert "alive" in captured.out
 
@@ -181,12 +178,12 @@ class TestStatusMainHerdr:
         monkeypatch.delenv("CCGRAM_MULTIPLEXER", raising=False)
         (tmp_path / ".env").write_text("CCGRAM_MULTIPLEXER=herdr\n")
 
-        session_map = {"herdr:w2:p1": {"session_id": "abc-123", "cwd": "/tmp"}}
+        session_map = {"herdr:w2:t1": {"session_id": "abc-123", "cwd": "/tmp"}}
         (tmp_path / "session_map.json").write_text(json.dumps(session_map))
 
         monkeypatch.setattr(
             "ccgram.status_cmd._list_herdr_windows",
-            lambda: [{"id": "w2:p1", "name": "ws ▸ claude"}],
+            lambda: [{"id": "w2:t1", "name": "ws ▸ claude"}],
         )
 
         with contextlib.suppress(SystemExit):

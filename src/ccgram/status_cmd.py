@@ -7,8 +7,8 @@ Reads state files and the active multiplexer backend to display:
 
 Multiplexer-aware: ``CCGRAM_MULTIPLEXER`` (default ``tmux``) selects the
 backend, mirroring ``doctor_cmd``. The session_map key prefix and the live
-window listing both follow that choice so herdr keys (``herdr:wN:pM``) are
-counted and herdr panes are listed.
+window listing both follow that choice so herdr keys (``herdr:wN:tM``) are
+counted and herdr tabs are listed.
 
 No Config import needed — loads ``~/.ccgram/.env`` (and a local ``.env``) via
 ``utils.load_ccgram_env`` so ``CCGRAM_MULTIPLEXER`` set only in the config-dir

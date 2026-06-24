@@ -18,6 +18,7 @@ from ..messaging_pipeline.message_sender import safe_edit
 from .directory_browser import (
     build_provider_picker,
     build_workspace_picker,
+    clear_workspace_state,
 )
 from .topic_creation_draft import (
     PENDING_WORKSPACE_ID,
@@ -66,7 +67,9 @@ async def _show_workspace_picker_or_provider(
             text, keyboard = build_workspace_picker(selected_path, ws_triples)
             await safe_edit(query, text, reply_markup=keyboard)
             return
-        # No workspaces returned (older herdr) — fall through to provider pick
+        # No workspaces returned (older herdr) — clear stale choices and fall through.
+        if context is not None:
+            clear_workspace_state(context.user_data)
     await _show_provider_picker(query, selected_path)
 
 
@@ -90,8 +93,7 @@ async def _handle_workspace_callback(
 
     if data == CB_WS_SKIP:
         # User chose auto-resolve: clear any cached selection, go to provider pick
-        if context.user_data is not None:
-            context.user_data.pop(PENDING_WORKSPACE_ID, None)
+        clear_workspace_state(context.user_data)
         await _show_provider_picker(query, selected_path)
         return
 
@@ -112,4 +114,5 @@ async def _handle_workspace_callback(
     chosen_ws_id = workspaces[idx][0]
     if context.user_data is not None:
         context.user_data[PENDING_WORKSPACE_ID] = chosen_ws_id
+        context.user_data.pop(PENDING_WORKSPACES, None)
     await _show_provider_picker(query, selected_path)

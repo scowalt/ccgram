@@ -244,6 +244,7 @@ async def launch_window(  # noqa: PLR0915, C901
     if not success:
         await _abort_topic_creation(query, message, context)
         return WindowLaunchResult(success=False, error_message=message)
+    clear_workspace_state(context.user_data)
 
     # Race-guard: tag this window as "directory flow in progress" BEFORE any
     # subsequent await. The provider's SessionStart hook fires inside the new

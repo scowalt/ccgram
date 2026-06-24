@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 from telegram import Bot
@@ -13,9 +14,11 @@ from ccgram.claude_task_state import (
 )
 from ccgram.handlers.hook_events import (
     HookEvent,
+    _is_agent_still_active,
     _resolve_users_for_window_key,
     dispatch_hook_event,
 )
+from ccgram.multiplexer.base import CaptureResult
 
 
 def _make_event(
@@ -48,16 +51,13 @@ class TestResolveUsersForWindowKey:
         assert result == [(111, 42, "@0")]
 
     def test_extracts_herdr_window_id_with_colon(self, monkeypatch) -> None:
-        # herdr keys are "herdr:<pane_id>" where the pane id itself contains a
-        # colon (w2:p1). Splitting on the FIRST colon must recover "w2:p1", not
-        # "p1" — the latter (rsplit) never matches the bound window id.
-        bindings = [(111, 42, "w2:p1")]
+        bindings = [(111, 42, "w2:t1")]
         monkeypatch.setattr(
             "ccgram.handlers.hook_events.thread_router.iter_thread_bindings",
             lambda: iter(bindings),
         )
-        result = _resolve_users_for_window_key("herdr:w2:p1")
-        assert result == [(111, 42, "w2:p1")]
+        result = _resolve_users_for_window_key("herdr:w2:t1")
+        assert result == [(111, 42, "w2:t1")]
 
     def test_no_match(self, monkeypatch) -> None:
         monkeypatch.setattr(
@@ -142,6 +142,87 @@ class TestDispatchHookEvent:
 
 
 class TestHandleStop:
+    async def test_is_agent_still_active_uses_multiplexer_capture(self) -> None:
+        provider = MagicMock()
+        provider.parse_terminal_status.return_value = SimpleNamespace(
+            is_interactive=False
+        )
+        capture = AsyncMock(return_value=CaptureResult(text="working", truncated=False))
+        from ccgram.multiplexer import (
+            _reset_multiplexer_for_testing,
+            install_multiplexer,
+        )
+
+        fake_multiplexer = MagicMock()
+        fake_multiplexer.capture = capture
+        try:
+            install_multiplexer(fake_multiplexer)
+            with patch(
+                "ccgram.providers.get_provider_for_window", return_value=provider
+            ):
+                assert await _is_agent_still_active("@0") is True
+        finally:
+            _reset_multiplexer_for_testing()
+
+        capture.assert_awaited_once_with("@0")
+        provider.parse_terminal_status.assert_called_once_with("working", pane_title="")
+
+    async def test_stop_skips_ready_when_terminal_still_active(
+        self, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(
+            "ccgram.handlers.hook_events.thread_router.iter_thread_bindings",
+            lambda: iter([(100, 42, "@0")]),
+        )
+        provider = MagicMock()
+        provider.parse_terminal_status.return_value = SimpleNamespace(
+            is_interactive=False
+        )
+        capture = AsyncMock(return_value=CaptureResult(text="working", truncated=False))
+        bot = AsyncMock(spec=Bot)
+        from ccgram.multiplexer import (
+            _reset_multiplexer_for_testing,
+            install_multiplexer,
+        )
+
+        fake_multiplexer = MagicMock()
+        fake_multiplexer.capture = capture
+        try:
+            install_multiplexer(fake_multiplexer)
+            with (
+                patch(
+                    "ccgram.providers.get_provider_for_window", return_value=provider
+                ),
+                patch("ccgram.handlers.hook_events.view_window", return_value=None),
+                patch(
+                    "ccgram.handlers.hook_events.enqueue_status_update"
+                ) as mock_enqueue,
+            ):
+                event = _make_event(event_type="Stop", data={"stop_reason": "done"})
+                await dispatch_hook_event(event, bot)
+        finally:
+            _reset_multiplexer_for_testing()
+
+        capture.assert_awaited_once_with("@0")
+        mock_enqueue.assert_not_called()
+
+    async def test_is_agent_still_active_false_without_capture_text(self) -> None:
+        capture = AsyncMock(return_value=CaptureResult(text="", truncated=False))
+        from ccgram.multiplexer import (
+            _reset_multiplexer_for_testing,
+            install_multiplexer,
+        )
+
+        fake_multiplexer = MagicMock()
+        fake_multiplexer.capture = capture
+        try:
+            install_multiplexer(fake_multiplexer)
+            assert await _is_agent_still_active("@0") is False
+        finally:
+            _reset_multiplexer_for_testing()
+
+        capture.assert_awaited_once_with("@0")
+
     async def test_updates_status_without_touching_topic_emoji(
         self, monkeypatch
     ) -> None:

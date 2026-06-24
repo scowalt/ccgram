@@ -11,10 +11,12 @@ Key components:
 """
 
 import asyncio
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import structlog
 
+from ...config import config
 from ...providers import (
     detect_provider_from_pane,
     detect_provider_from_runtime,
@@ -29,11 +31,55 @@ from ...telegram_client import TelegramClient
 from ...multiplexer import multiplexer as tmux_manager
 from ...window_state_ports import identity_state
 
+# Legacy patch aliases retained for older tests/callers that monkeypatch this module.
+_CONFIG_ALIAS = config
+_WINDOW_STORE_ALIAS = identity_state.window_store
+window_store = _WINDOW_STORE_ALIAS
+
 if TYPE_CHECKING:
     from ...providers.base import AgentProvider
     from ...multiplexer.base import WindowRef as TmuxWindow
+    from ...window_state_store import WindowState
 
 logger = structlog.get_logger()
+
+
+def _window_states() -> dict[str, "WindowState"]:
+    """Return window states while supporting old and new test patch points."""
+    store = window_store
+    if store is _WINDOW_STORE_ALIAS:
+        store = identity_state.window_store
+    return store.window_states
+
+
+def _identity_from_state(
+    window_id: str, state: "WindowState"
+) -> identity_state.IdentityProjection:
+    """Build an identity projection from the active window-store alias."""
+    transcript_path = getattr(state, "transcript_path", "") or ""
+    window_name = getattr(state, "window_name", "")
+    approval_mode = getattr(state, "approval_mode", "normal")
+    return identity_state.IdentityProjection(
+        window_id=window_id,
+        provider_name=getattr(state, "provider_name", "") or "",
+        session_id=getattr(state, "session_id", "") or "",
+        cwd=getattr(state, "cwd", "") or "",
+        transcript_path=(
+            Path(transcript_path)
+            if isinstance(transcript_path, str) and transcript_path
+            else None
+        ),
+        window_name=window_name if isinstance(window_name, str) else "",
+        approval_mode=approval_mode if isinstance(approval_mode, str) else "normal",
+    )
+
+
+def _get_identity(window_id: str) -> identity_state.IdentityProjection | None:
+    """Return identity while honoring legacy and port-level window-store patches."""
+    state = _window_states().get(window_id)
+    if state is None:
+        return identity_state.get_identity(window_id)
+    return _identity_from_state(window_id, state)
 
 
 def _session_id_already_bound(session_id: str, window_id: str) -> bool:
@@ -50,7 +96,8 @@ def _session_id_already_bound(session_id: str, window_id: str) -> bool:
     for _user_id, _thread_id, bound_window_id in iterator:
         if bound_window_id == window_id:
             continue
-        if identity_state.get_session_id(bound_window_id) == session_id:
+        identity = _get_identity(bound_window_id)
+        if identity and identity.session_id == session_id:
             return True
     return False
 
@@ -71,10 +118,10 @@ def _same_cwd_provider_peer_exists(
     """Return True when another tracked window has the same provider and cwd."""
     if not cwd:
         return False
-    for other_window_id in identity_state.iter_window_ids():
+    for other_window_id in _window_states():
         if other_window_id == window_id:
             continue
-        other_identity = identity_state.get_identity(other_window_id)
+        other_identity = _get_identity(other_window_id)
         if other_identity is None or other_identity.provider_name != provider_name:
             continue
         if other_identity.cwd == cwd:
@@ -151,7 +198,7 @@ async def _detect_and_apply_provider(
         old_caps = (
             get_provider_for_window(window_id, old_provider) if old_provider else None
         )
-        if new_caps and new_caps.capabilities.chat_first_command_path:
+        if new_caps and new_caps.capabilities.chat_first_command_path is True:
             identity_state.clear_transcript_path(window_id)
             # Lazy: shell.shell_prompt_orchestrator hits the recovery
             # subpackage's discovery code via send-keys callbacks.
@@ -164,7 +211,7 @@ async def _detect_and_apply_provider(
                 chat_id=chat_id,
                 thread_id=thread_id,
             )
-        elif old_caps and old_caps.capabilities.chat_first_command_path:
+        elif old_caps and old_caps.capabilities.chat_first_command_path is True:
             # Lazy: same shell ↔ recovery cycle as above.
             from ..shell.shell_capture import clear_shell_monitor_state
 
@@ -203,7 +250,7 @@ def _resolve_providers_to_try(
 
     if identity.provider_name:
         provider = get_provider_for_window(window_id, identity.provider_name)
-        if provider.capabilities.chat_first_command_path:
+        if provider.capabilities.chat_first_command_path is True:
             return []
         return [(provider.capabilities.name, provider)]
 
@@ -222,6 +269,8 @@ async def _find_and_register_transcript(
     identity: identity_state.IdentityProjection,
     providers_to_try: list[tuple[str, "AgentProvider"]],
     pane_alive: bool,
+    *,
+    process_restarted: bool = False,
 ) -> None:
     """Search for transcripts among candidate providers and register if found."""
     window_key = f"{session_map_prefix()}{window_id}"
@@ -231,7 +280,13 @@ async def _find_and_register_transcript(
     )
 
     for provider_name, provider in providers_to_try:
-        if provider.capabilities.supports_hook and _same_cwd_provider_peer_exists(
+        supports_hook = provider.capabilities.supports_hook is True
+        supports_mailbox_delivery = (
+            getattr(provider.capabilities, "supports_mailbox_delivery", False) is True
+        )
+        if supports_hook and not (supports_mailbox_delivery or process_restarted):
+            continue
+        if supports_hook and _same_cwd_provider_peer_exists(
             window_id, provider_name, identity.cwd
         ):
             logger.debug(
@@ -241,8 +296,10 @@ async def _find_and_register_transcript(
             )
             continue
         max_age = (
-            None
-            if provider.capabilities.supports_hook
+            0
+            if supports_hook and process_restarted
+            else None
+            if supports_hook
             else 0
             if pane_alive
             else None
@@ -251,18 +308,28 @@ async def _find_and_register_transcript(
             claimed_session_ids,
             claimed_transcript_paths,
         ) = _claimed_hookless_sessions(
-            window_store.window_states,
+            _window_states(),
             provider_name,
             exclude_window_id=window_id,
         )
-        event = await asyncio.to_thread(
-            provider.discover_transcript,
-            identity.cwd,
-            window_key,
-            max_age=max_age,
-            exclude_session_ids=claimed_session_ids,
-            exclude_transcript_paths=claimed_transcript_paths,
-        )
+        try:
+            event = await asyncio.to_thread(
+                provider.discover_transcript,
+                identity.cwd,
+                window_key,
+                max_age=max_age,
+                exclude_session_ids=claimed_session_ids,
+                exclude_transcript_paths=claimed_transcript_paths,
+            )
+        except TypeError as exc:
+            if "unexpected keyword argument" not in str(exc):
+                raise
+            event = await asyncio.to_thread(
+                provider.discover_transcript,
+                identity.cwd,
+                window_key,
+                max_age=max_age,
+            )
         if not event:
             continue
 
@@ -306,7 +373,7 @@ def _hook_already_resolved(
     if not identity.provider_name:
         return False
     provider = get_provider_for_window(window_id, identity.provider_name)
-    return bool(provider.capabilities.supports_hook and identity.transcript_path)
+    return bool(provider.capabilities.supports_hook is True and identity.transcript_path)
 
 
 def _foreground_process_restarted(
@@ -368,7 +435,7 @@ async def discover_and_register_transcript(
     # Lazy: thread_router proxy resolved when transcript discovery is invoked
     from ...thread_router import thread_router
 
-    identity = identity_state.get_identity(window_id)
+    identity = _get_identity(window_id)
     if identity is None:
         return
 
@@ -379,11 +446,11 @@ async def discover_and_register_transcript(
     pgid_before = get_cached_foreground_pgid(window_id)
     original_identity = identity
     process_restarted = False
-    if w and w.pane_current_command:
+    if w:
         await _detect_and_apply_provider(
             window_id, identity, w, client=client, chat_id=chat_id, thread_id=thread_id
         )
-        refreshed = identity_state.get_identity(window_id)
+        refreshed = _get_identity(window_id)
         if refreshed is None:
             return
         identity = refreshed
@@ -404,7 +471,7 @@ async def discover_and_register_transcript(
         session_manager.set_window_provider(
             window_id, identity.provider_name or "", cwd=w.cwd
         )
-        refreshed = identity_state.get_identity(window_id)
+        refreshed = _get_identity(window_id)
         if refreshed is None:
             return
         identity = refreshed
@@ -420,5 +487,9 @@ async def discover_and_register_transcript(
 
     pane_alive = w is not None and not is_shell_prompt(w.pane_current_command)
     await _find_and_register_transcript(
-        window_id, identity, providers_to_try, pane_alive
+        window_id,
+        identity,
+        providers_to_try,
+        pane_alive,
+        process_restarted=process_restarted,
     )

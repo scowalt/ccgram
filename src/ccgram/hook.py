@@ -22,6 +22,7 @@ import shlex
 import subprocess
 import structlog
 import sys
+import time
 from pathlib import Path
 from collections.abc import Callable
 from typing import Any
@@ -38,6 +39,7 @@ logger = structlog.get_logger()
 # Seconds within which an existing transcript is considered "active" — used
 # to guard against stale SessionStart events overwriting live session_map entries.
 _TRANSCRIPT_ACTIVE_SECS = 30
+_NON_STABLE_SESSION_MAP_PREFIXES = ("herdr:",)
 
 # Validate session_id looks like a UUID
 
@@ -657,7 +659,7 @@ def _resolve_herdr_tab_id(pane_id: str) -> str | None:
     automatically (same as the multiplexer backend's subprocess runner).
 
     Returns None on any failure (herdr not installed, socket down, pane gone)
-    so the caller degrades gracefully to the pane id.
+    so the caller skips the session_map write rather than binding a phantom id.
     """
     try:
         result = subprocess.run(
@@ -936,15 +938,17 @@ def _update_session_map(
                     except OSError:
                         logger.warning("Failed to read session_map.json")
 
-                # Guard against stale SessionStart overwriting a live entry:
-                # if the existing entry's transcript was written to recently
-                # (within 30s), it's likely still live — keep it.  We check
-                # mtime instead of mere file existence because Claude Code
-                # creates the transcript file *after* the SessionStart hook
-                # fires, causing a race where a valid new session would be
-                # rejected.
+                # Guard against stale SessionStart overwriting a live entry for
+                # stable-ID backends: if the existing entry's transcript was
+                # written recently (within 30s), it's likely still live — keep
+                # it. Non-stable backends (herdr) can reuse the same opaque id
+                # for a different tab after restart, so a different session_id
+                # must win even when the old transcript is fresh.
+                preserve_fresh_existing = not session_window_key.startswith(
+                    _NON_STABLE_SESSION_MAP_PREFIXES
+                )
                 existing = session_map.get(session_window_key)
-                if existing and transcript_path:
+                if existing and transcript_path and preserve_fresh_existing:
                     existing_tp = existing.get("transcript_path", "")
                     if existing_tp and existing.get("session_id") != session_id:
                         try:
@@ -1295,6 +1299,8 @@ def _process_hook_stdin(
         )
     detected_provider = provider_name or payload_provider
     if detected_provider is None:
+        # Provider fallback only uses tmux pane_tty. Herdr exposes no tty, so do
+        # not pay a blocking herdr pane→tab subprocess before _locate_primary_window.
         identity = resolve_self_identity(os.environ, tmux_query=_resolve_window_id)
         if identity:
             detected_provider = _provider_from_pane_tty(identity.pane_tty)
@@ -1399,6 +1405,12 @@ def hook_main(
 ) -> None:
     """Process a Claude Code hook event from stdin, or manage hook installation."""
     _configure_hook_logging()
+
+    # Lazy: hook.py must not import config.py, but hook identity needs .env-backed
+    # backend selection (CCGRAM_MULTIPLEXER) before stdin processing.
+    from .utils import load_ccgram_env
+
+    load_ccgram_env()
 
     if install:
         logger.info("Hook install requested")

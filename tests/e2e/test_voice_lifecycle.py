@@ -21,6 +21,7 @@ from ._helpers import (
     make_callback_update,
     setup_bound_topic,
     wait_for_pane,
+    wait_for_pane_scrollback,
     wait_for_send,
 )
 
@@ -216,7 +217,12 @@ async def test_voice_confirm_sends_to_agent(e2e_app, work_dir):
     await app.process_update(cb)
 
     # Agent window should receive the transcribed text
-    await wait_for_pane(tmux, window_id, pattern=transcribed[:20], timeout=15)
+    await wait_for_pane_scrollback(
+        tmux,
+        window_id,
+        pattern=transcribed[:20],
+        timeout=15,
+    )
 
     # Pending state must be cleared
     assert pending_key not in user_data.get(VOICE_PENDING, {})
