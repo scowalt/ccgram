@@ -1,10 +1,3 @@
-"""Tests for LLM HTTP completers — request/response and error handling.
-
-Covers the HTTP layer that test_llm_completer.py does not: actual request
-payload construction, response parsing from mock HTTP, error propagation,
-header verification, and temperature passthrough.
-"""
-
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -47,7 +40,6 @@ def _mock_http_response(json_data: dict) -> MagicMock:
 
 
 def _patch_httpx_client(mock_post: AsyncMock):
-    """Create a patch for httpx.AsyncClient that returns a mock with given post."""
     mock_client = AsyncMock()
     mock_client.post = mock_post
     mock_ctx = MagicMock()

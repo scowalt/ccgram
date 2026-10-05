@@ -1,10 +1,3 @@
-"""Edge TTS synthesis backend.
-
-Uses the community-maintained edge-tts package (optional dep).
-Module-level conditional import: edge-tts is imported at module load time inside a
-try/except ImportError block; the package is only required when CCGRAM_TTS_PROVIDER=edge.
-"""
-
 from __future__ import annotations
 
 from typing import Any
@@ -19,8 +12,8 @@ _edge_tts_available = False
 Communicate: Any = None
 
 try:
-    from edge_tts import Communicate  # type: ignore[reportMissingImports]
-    from edge_tts.exceptions import (  # type: ignore[reportMissingImports]
+    from edge_tts import Communicate
+    from edge_tts.exceptions import (
         NoAudioReceived,
         UnexpectedResponse,
         UnknownResponse,
@@ -41,18 +34,10 @@ _EDGE_TTS_ERRORS = (
 
 
 class EdgeTtsSynthesizer:
-    """Speech synthesizer backed by edge-tts."""
-
     def __init__(self, voice: str) -> None:
         self._voice = voice
 
     async def synthesize(self, text: str) -> TtsAudio:
-        """Synthesize speech from plain text.
-
-        Raises:
-            ValueError: if text is empty.
-            TtsSynthesisError: on any edge-tts backend failure.
-        """
         if not text.strip():
             msg = "Cannot synthesize empty text"
             raise ValueError(msg)

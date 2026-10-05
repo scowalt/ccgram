@@ -1,5 +1,3 @@
-"""Shared test helpers for Mini App tests."""
-
 from __future__ import annotations
 
 import hashlib
@@ -15,7 +13,6 @@ def make_init_data(
     auth_date: int | None = None,
     extras: dict[str, str] | None = None,
 ) -> str:
-    """Build a signed Telegram WebApp ``initData`` string for the user."""
     params: dict[str, str] = {
         "auth_date": str(int(auth_date if auth_date is not None else time.time())),
         "user": f'{{"id":{int(user_id)},"first_name":"Test"}}',

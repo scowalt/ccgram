@@ -1,5 +1,3 @@
-"""Tests for transcript reader offset handling."""
-
 from ccgram.idle_tracker import IdleTracker
 from ccgram.monitor_state import MonitorState, TrackedSession
 from ccgram.transcript_reader import TranscriptReader
@@ -8,7 +6,6 @@ from ccgram.transcript_reader import TranscriptReader
 async def test_same_transcript_reuses_offset_after_session_map_refresh(
     tmp_path,
 ) -> None:
-    """A tmux rename/session-map refresh must not replay an existing transcript."""
     first = (
         '{"type":"assistant","message":{"content":[{"type":"text","text":"old"}]}}\n'
     )

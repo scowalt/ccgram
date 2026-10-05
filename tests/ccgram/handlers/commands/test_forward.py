@@ -309,9 +309,9 @@ class TestForwardCommandResolution:
 
             mock_enqueue.assert_called_once()
             call_args = mock_enqueue.call_args
-            assert call_args[0][1] == 100  # user_id
-            assert call_args[0][2] == "@1"  # window_id
-            assert call_args[0][3] is None  # status_text (clear)
+            assert call_args[0][1] == 100
+            assert call_args[0][2] == "@1"
+            assert call_args[0][3] is None
             assert call_args[1]["thread_id"] == 42
             assert not (
                 _window_poll_state.get("@1")
@@ -655,11 +655,6 @@ class TestForwardWithRealProvider:
         assert "drive the picker" in reply_text
 
     async def test_claude_hyphenated_picker_reachable_via_telegram_form(self) -> None:
-        """`/release-notes` is hyphenated; Telegram bots only accept underscores.
-
-        The user types `/release_notes`; the provider_map reverses it to the
-        original `release-notes`. Verify the picker hint still fires.
-        """
         from ccgram.providers.claude import ClaudeProvider
 
         claude = ClaudeProvider()
@@ -676,7 +671,6 @@ class TestForwardWithRealProvider:
         assert "drive the picker" in reply_text
 
     async def test_degraded_hint_when_toolbar_lacks_nav_keys(self) -> None:
-        """Custom toolbar that drops up/down must not be promised in the hint."""
         from ccgram.providers.claude import ClaudeProvider
         from ccgram.toolbar_config import (
             BUILTIN_ACTIONS,
@@ -702,7 +696,6 @@ class TestForwardWithRealProvider:
             await forward_command_handler(update, _make_context())
 
         reply_text = update.message.reply_text.call_args[0][0]
-        # Degraded copy: points at /toolbar but does not promise specific buttons.
         assert "/toolbar" in reply_text
         assert "drive the picker" in reply_text
         assert "🔼" not in reply_text
@@ -710,7 +703,6 @@ class TestForwardWithRealProvider:
         assert "Enter Esc" not in reply_text
 
     async def test_full_hint_when_toolbar_has_nav_keys(self) -> None:
-        """Default toolbar has up/down/enter/esc — full hint with glyphs fires."""
         from ccgram.providers.claude import ClaudeProvider
 
         self._mock_get_provider.return_value = ClaudeProvider()

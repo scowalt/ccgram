@@ -37,8 +37,6 @@ def _fake_message() -> Message:
 class TestRateLimitSend:
     @pytest.fixture(autouse=True)
     def _real_send_interval(self, monkeypatch):
-        # Conftest zeroes MESSAGE_SEND_INTERVAL for speed; restore the real
-        # value here so wait-time assertions hold.
         monkeypatch.setattr(
             "ccgram.handlers.messaging_pipeline.message_sender.MESSAGE_SEND_INTERVAL",
             0.5,
@@ -236,12 +234,6 @@ class TestEditWithFallback:
     async def test_not_modified_returns_true_no_plain_fallback(
         self, client: FakeTelegramClient
     ) -> None:
-        """Telegram's 'not modified' error must not strip entities via fallback.
-
-        Re-editing with identical text triggers BadRequest("Message is not
-        modified"); falling back to plain text would clear the entities
-        Telegram already has, leaving the message visibly unformatted.
-        """
         client.set_side_effect(
             "edit_message_text", [BadRequest("Message is not modified")]
         )

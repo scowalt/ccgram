@@ -1,14 +1,3 @@
-"""Central handler registration for the Telegram bot Application.
-
-Owns the command/message/callback/inline handler registration that used
-to live inline in ``bot.py``. ``register_all()`` is the single entry
-point; ``bot.py`` is a factory + lifecycle hooks only.
-
-Every handler called below lives in a feature subpackage under
-``handlers/`` — this module only assembles them in the order PTB
-requires.
-"""
-
 from dataclasses import dataclass
 from typing import TypeAlias
 
@@ -54,8 +43,6 @@ HandlerFn: TypeAlias = HandlerCallback
 
 @dataclass(frozen=True)
 class CommandSpec:
-    """Specification for a single PTB CommandHandler registration."""
-
     name: str
     handler: HandlerFn
 
@@ -64,12 +51,6 @@ def register_all(
     application: Application,
     group_filter: filters.BaseFilter,
 ) -> None:
-    """Register every command, callback, message and inline-query handler.
-
-    Order is significant: PTB dispatches the first matching handler, so
-    explicit CommandHandlers must precede the COMMAND-fallback
-    MessageHandler, which must precede the TEXT MessageHandler.
-    """
     command_specs: list[CommandSpec] = [
         CommandSpec("start", new_command),
         CommandSpec("history", history_command),
@@ -91,7 +72,7 @@ def register_all(
         CommandSpec("restore", restore_command),
         CommandSpec("last", last_command),
         CommandSpec("agent", agent_command),
-        CommandSpec("provider", agent_command),  # alias
+        CommandSpec("provider", agent_command),
     ]
 
     for spec in command_specs:

@@ -502,7 +502,7 @@ class TestHandleGeneralTopicMessage:
         bot = AsyncMock()
         bot.id = 999
         pinned = MagicMock()
-        pinned.from_user.id = 888  # different bot
+        pinned.from_user.id = 888
         chat_info = MagicMock()
         chat_info.pinned_message = pinned
         bot.get_chat = AsyncMock(return_value=chat_info)

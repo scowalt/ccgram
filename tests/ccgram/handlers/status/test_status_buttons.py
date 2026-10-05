@@ -1,5 +1,3 @@
-"""Tests for status message inline action buttons (Esc, Screenshot, Last, Get File)."""
-
 from unittest.mock import patch
 
 import pytest
@@ -131,8 +129,6 @@ class TestBuildStatusKeyboard:
 
 
 class TestDashboardButtonRow:
-    """Dashboard WebApp button is appended only when Mini App is enabled."""
-
     def test_no_dashboard_when_user_id_omitted(self) -> None:
         with patch("ccgram.handlers.status.status_bar_actions.config") as cfg:
             cfg.miniapp_base_url = "https://example.com"

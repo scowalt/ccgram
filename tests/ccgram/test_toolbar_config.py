@@ -1,5 +1,3 @@
-"""Tests for ccgram.toolbar_config — TOML loader, validation, defaults."""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -13,9 +11,6 @@ from ccgram.toolbar_config import (
     ToolbarConfig,
     load_toolbar_config,
 )
-
-
-# ── render() ──────────────────────────────────────────────────────────
 
 
 class TestRender:
@@ -39,9 +34,6 @@ class TestRender:
         assert action.render("emoji_text") == "\U0001f4f7 Screen"
 
 
-# ── for_provider() ────────────────────────────────────────────────────
-
-
 class TestForProvider:
     def test_known_provider_returns_its_layout(self) -> None:
         cfg = ToolbarConfig(layouts=dict(DEFAULT_LAYOUTS))
@@ -50,9 +42,6 @@ class TestForProvider:
     def test_unknown_provider_falls_back_to_claude(self) -> None:
         cfg = ToolbarConfig(layouts=dict(DEFAULT_LAYOUTS))
         assert cfg.for_provider("aider") is DEFAULT_LAYOUTS["claude"]
-
-
-# ── load_toolbar_config — defaults ────────────────────────────────────
 
 
 class TestLoadDefaults:
@@ -79,16 +68,11 @@ class TestLoadDefaults:
         assert cfg.layouts == DEFAULT_LAYOUTS
 
     def test_root_not_a_table_returns_defaults(self, tmp_path: Path) -> None:
-        # TOML can't actually have a non-table root, but we test the guard.
-        # An empty file parses to {} which is fine; use a comment-only file.
         comment_only = tmp_path / "empty.toml"
         comment_only.write_text("# nothing here\n")
         cfg = load_toolbar_config(comment_only)
         assert cfg.actions == BUILTIN_ACTIONS
         assert cfg.layouts == DEFAULT_LAYOUTS
-
-
-# ── load_toolbar_config — user actions ────────────────────────────────
 
 
 class TestLoadUserActions:
@@ -102,7 +86,6 @@ class TestLoadUserActions:
         assert cfg.actions["foo"].emoji == "🦊"
         assert cfg.actions["foo"].action_type == "text"
         assert cfg.actions["foo"].payload == "/foo"
-        # builtins are still present
         assert "screen" in cfg.actions
 
     def test_user_action_overrides_builtin(self, tmp_path: Path) -> None:
@@ -143,7 +126,7 @@ class TestLoadUserActions:
         assert "np" not in cfg.actions
 
     def test_action_name_too_long_skipped(self, tmp_path: Path) -> None:
-        long_name = "x" * 25  # _MAX_NAME_LEN is 24
+        long_name = "x" * 25
         f = tmp_path / "t.toml"
         f.write_text(
             f'[actions.{long_name}]\nemoji = "?"\ntext = "Hi"\ntype = "key"\npayload = "Tab"\n'
@@ -173,9 +156,6 @@ class TestLoadUserActions:
         assert cfg.actions["tx"].text == "tx"
 
 
-# ── load_toolbar_config — user layouts ────────────────────────────────
-
-
 class TestLoadUserLayouts:
     def test_user_layout_overrides_default(self, tmp_path: Path) -> None:
         f = tmp_path / "t.toml"
@@ -196,7 +176,6 @@ class TestLoadUserLayouts:
         f = tmp_path / "t.toml"
         f.write_text('[providers.claude]\nstyle = "text"\nbuttons = [["close"]]\n')
         cfg = load_toolbar_config(f)
-        # codex/gemini/shell are unchanged
         assert cfg.layouts["codex"] == DEFAULT_LAYOUTS["codex"]
         assert cfg.layouts["gemini"] == DEFAULT_LAYOUTS["gemini"]
         assert cfg.layouts["shell"] == DEFAULT_LAYOUTS["shell"]
@@ -215,22 +194,19 @@ class TestLoadUserLayouts:
             'buttons = [["close", "nonexistent", "screen"]]\n'
         )
         cfg = load_toolbar_config(f)
-        # The unknown name is dropped; valid names remain
         assert cfg.layouts["claude"].buttons == (("close", "screen"),)
 
     def test_row_with_too_many_buttons_trimmed(self, tmp_path: Path) -> None:
-        names = ", ".join('"close"' for _ in range(10))  # 10 cells
+        names = ", ".join('"close"' for _ in range(10))
         f = tmp_path / "t.toml"
         f.write_text(f'[providers.claude]\nstyle = "text"\nbuttons = [[{names}]]\n')
         cfg = load_toolbar_config(f)
-        # _MAX_ROW_WIDTH is 8
         assert len(cfg.layouts["claude"].buttons[0]) == 8
 
     def test_empty_buttons_skipped(self, tmp_path: Path) -> None:
         f = tmp_path / "t.toml"
         f.write_text('[providers.claude]\nstyle = "text"\nbuttons = []\n')
         cfg = load_toolbar_config(f)
-        # Falls back to default since the layout was rejected
         assert cfg.layouts["claude"] == DEFAULT_LAYOUTS["claude"]
 
     def test_row_of_only_unknown_actions_skipped(self, tmp_path: Path) -> None:
@@ -239,7 +215,6 @@ class TestLoadUserLayouts:
             '[providers.claude]\nstyle = "text"\nbuttons = [["nope"], ["close"]]\n'
         )
         cfg = load_toolbar_config(f)
-        # First row dropped entirely (no valid cells); second row remains
         assert cfg.layouts["claude"].buttons == (("close",),)
 
     def test_layout_with_only_unknown_rows_falls_back(self, tmp_path: Path) -> None:
@@ -248,11 +223,7 @@ class TestLoadUserLayouts:
             '[providers.claude]\nstyle = "text"\nbuttons = [["nope1"], ["nope2"]]\n'
         )
         cfg = load_toolbar_config(f)
-        # No usable rows → fall back to default
         assert cfg.layouts["claude"] == DEFAULT_LAYOUTS["claude"]
-
-
-# ── Built-ins are intact ──────────────────────────────────────────────
 
 
 class TestBuiltins:
@@ -302,8 +273,6 @@ class TestBuiltins:
         assert mode.payload == "\x1b[Z"
 
     def test_yolo_has_read_state(self) -> None:
-        # Think was changed to read_state=False because Claude Code has no
-        # persistent chrome indicator for extended-thinking state.
         assert BUILTIN_ACTIONS["think"].read_state is False
         assert BUILTIN_ACTIONS["yolo"].read_state is True
 
@@ -335,9 +304,6 @@ class TestBuiltins:
             assert layout.style == "emoji_text"
 
 
-# ── End-to-end ────────────────────────────────────────────────────────
-
-
 class TestRoundTrip:
     def test_combined_actions_and_layout(self, tmp_path: Path) -> None:
         f = tmp_path / "t.toml"
@@ -362,20 +328,13 @@ class TestRoundTrip:
         assert layout.style == "emoji_text"
 
 
-# ──────────────────────────────────────────────────────────────────────
-# Permutation tests — every style × grid shape × provider combo
-# ──────────────────────────────────────────────────────────────────────
-
-
 class TestStylePermutations:
-    """All three rendering styles work for every action in the pool."""
-
     @pytest.mark.parametrize("style", ["emoji", "text", "emoji_text"])
     @pytest.mark.parametrize("name", list(BUILTIN_ACTIONS.keys()))
     def test_render_every_builtin_in_every_style(self, style: str, name: str) -> None:
         action = BUILTIN_ACTIONS[name]
         rendered = action.render(style)  # type: ignore[arg-type]
-        assert rendered  # non-empty
+        assert rendered
         if style == "emoji":
             assert rendered == action.emoji
         elif style == "text":
@@ -395,24 +354,18 @@ class TestStylePermutations:
 
 
 class TestGridShapePermutations:
-    """Grid shapes (1xN, Nx1, 2x4, 3x3, asymmetric) all parse correctly."""
-
     @pytest.mark.parametrize(
         ("shape_toml", "expected_shape"),
         [
-            # 1x1
             ('[["close"]]', (("close",),)),
-            # 1x4 horizontal
             (
                 '[["screen", "ctrlc", "live", "getfile"]]',
                 (("screen", "ctrlc", "live", "getfile"),),
             ),
-            # 4x1 vertical stack
             (
                 '[["screen"], ["ctrlc"], ["live"], ["getfile"]]',
                 (("screen",), ("ctrlc",), ("live",), ("getfile",)),
             ),
-            # 2x4
             (
                 '[["screen", "ctrlc", "live", "getfile"], '
                 '["mode", "think", "esc", "close"]]',
@@ -421,7 +374,6 @@ class TestGridShapePermutations:
                     ("mode", "think", "esc", "close"),
                 ),
             ),
-            # 3x3
             (
                 '[["screen", "ctrlc", "live"], '
                 '["mode", "think", "esc"], '
@@ -432,7 +384,6 @@ class TestGridShapePermutations:
                     ("last", "enter", "close"),
                 ),
             ),
-            # Asymmetric: rows of different widths
             (
                 '[["screen", "ctrlc", "live"], ["close"]]',
                 (("screen", "ctrlc", "live"), ("close",)),
@@ -449,8 +400,6 @@ class TestGridShapePermutations:
 
 
 class TestMultiProviderPermutations:
-    """Override any subset of providers; others keep their defaults."""
-
     @pytest.mark.parametrize(
         "to_override",
         [
@@ -479,8 +428,6 @@ class TestMultiProviderPermutations:
 
 
 class TestActionTypePermutations:
-    """Every valid action type round-trips through the loader."""
-
     @pytest.mark.parametrize(
         ("action_type", "payload"),
         [
@@ -507,9 +454,7 @@ class TestActionTypePermutations:
     def test_literal_escape_sequence_in_toml_literal_string(
         self, tmp_path: Path
     ) -> None:
-        """Users wanting the raw \\x1b[Z escape use TOML literal strings."""
         f = tmp_path / "t.toml"
-        # TOML literal strings are single-quoted and don't interpret escapes.
         f.write_text(
             "[actions.shifttab]\n"
             'emoji = "?"\n'
@@ -520,7 +465,6 @@ class TestActionTypePermutations:
         )
         cfg = load_toolbar_config(f)
         assert "shifttab" in cfg.actions
-        # The literal 6-character string \x1b[Z is preserved as-is
         assert cfg.actions["shifttab"].payload == "\\x1b[Z"
         assert cfg.actions["shifttab"].literal is True
 
@@ -550,8 +494,6 @@ class TestActionTypePermutations:
 
 
 class TestComplexUserConfigs:
-    """End-to-end TOML configs with multiple actions and providers."""
-
     def test_kitchen_sink(self, tmp_path: Path) -> None:
         f = tmp_path / "t.toml"
         f.write_text(
@@ -567,7 +509,7 @@ class TestComplexUserConfigs:
             "\n"
             "[actions.mode]\n"
             'emoji = "🆕"\ntext = "Mode"\ntype = "key"\n'
-            "payload = '\\x1b[Z'\n"  # TOML literal string (single-quoted)
+            "payload = '\\x1b[Z'\n"
             "literal = true\nread_state = true\n"
             "\n"
             "[providers.claude]\n"

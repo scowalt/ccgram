@@ -1,18 +1,3 @@
-"""JSONL session resolution — window-to-session lookup and message history.
-
-Resolves tmux windows to Claude Code session files on disk, reading JSONL
-transcripts to extract session summaries and message history.
-
-Key class: SessionResolver (singleton instantiated as ``session_resolver``).
-Key type: ClaudeSession.
-
-Responsibilities:
-  - Build JSONL file paths from session_id + cwd.
-  - Resolve window_id → ClaudeSession by reading the JSONL on disk.
-  - Find users bound to a given session_id (cross-reference with thread_router).
-  - Read paginated message history from a session's JSONL file.
-"""
-
 from __future__ import annotations
 
 import json
@@ -34,8 +19,6 @@ logger = structlog.get_logger()
 
 @dataclass
 class ClaudeSession:
-    """Information about a Claude Code session."""
-
     session_id: str
     summary: str
     message_count: int
@@ -43,10 +26,7 @@ class ClaudeSession:
 
 
 class SessionResolver:
-    """Resolves tmux windows to Claude session files and reads message history."""
-
     def _build_session_file_path(self, session_id: str, cwd: str) -> Path | None:
-        """Build the direct file path for a session from session_id and cwd."""
         if not session_id or not cwd:
             return None
         encoded_cwd = cwd.replace("/", "-")
@@ -57,7 +37,6 @@ class SessionResolver:
         window_id: str,
         identity: identity_state.IdentityProjection,
     ) -> ClaudeSession | None:
-        """Build a lightweight session object from persisted transcript_path."""
         transcript = identity.transcript_path
         if not transcript:
             return None
@@ -78,11 +57,6 @@ class SessionResolver:
     def _resolve_session_file(
         self, session_id: str, cwd: str, window_id: str
     ) -> Path | None:
-        """Return the JSONL path for a session, using glob fallback if needed.
-
-        When the direct path is missing, searches via glob. If found and the
-        decoded cwd is an existing directory, updates the window's stored cwd.
-        """
         file_path = self._build_session_file_path(session_id, cwd)
         if file_path and file_path.exists():
             return file_path
@@ -111,7 +85,6 @@ class SessionResolver:
     async def _read_session_summary(
         self, file_path: Path, session_id: str, window_id: str
     ) -> ClaudeSession | None:
-        """Read a JSONL session file and extract summary and message count."""
         summary = ""
         last_user_msg = ""
         message_count = 0
@@ -153,19 +126,12 @@ class SessionResolver:
     async def _get_session_direct(
         self, session_id: str, cwd: str, window_id: str = ""
     ) -> ClaudeSession | None:
-        """Get a ClaudeSession directly from session_id and cwd (no scanning)."""
         file_path = self._resolve_session_file(session_id, cwd, window_id)
         if not file_path:
             return None
         return await self._read_session_summary(file_path, session_id, window_id)
 
     async def resolve_session_for_window(self, window_id: str) -> ClaudeSession | None:
-        """Resolve a tmux window to the best matching Claude session.
-
-        Uses persisted session_id + cwd to construct file path directly.
-        Returns None if no session is associated with this window.
-        """
-        # Ensure a row exists (preserves prior get_window_state() semantics).
         window_store.get_window_state(window_id)
         identity = identity_state.get_identity(window_id)
         if identity is None or not identity.session_id or not identity.cwd:
@@ -207,7 +173,6 @@ class SessionResolver:
         self,
         session_id: str,
     ) -> list[tuple[int, str, int]]:
-        """Find all users whose thread-bound window maps to the given session_id."""
         result: list[tuple[int, str, int]] = []
         for user_id, thread_id, window_id in thread_router.iter_thread_bindings():
             if identity_state.get_session_id(window_id) == session_id:
@@ -221,12 +186,6 @@ class SessionResolver:
         start_byte: int = 0,
         end_byte: int | None = None,
     ) -> tuple[list[dict], int]:
-        """Get user/assistant messages for a window's session.
-
-        Resolves window → session, then reads the JSONL.
-        Supports byte range filtering via start_byte/end_byte.
-        Returns (messages, total_count).
-        """
         session = await self.resolve_session_for_window(window_id)
         if not session or not session.file_path:
             return [], 0

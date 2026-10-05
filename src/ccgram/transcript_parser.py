@@ -1,16 +1,3 @@
-"""JSONL transcript parser for Claude Code session files.
-
-Parses Claude Code session JSONL files and extracts structured messages.
-Handles: text, thinking, tool_use, tool_result, local_command, and user messages.
-Tool pairing: tool_use blocks in assistant messages are matched with
-tool_result blocks in subsequent user messages via tool_use_id.
-
-Shared by both session.py (history) and session_monitor.py (real-time).
-Format reference: https://github.com/desis123/claude-code-viewer
-
-Key classes: TranscriptParser (static methods), ParsedEntry, ParsedMessage, PendingToolInfo.
-"""
-
 import difflib
 import json
 import re
@@ -25,73 +12,41 @@ from .utils import shorten_path
 
 @dataclass
 class ParsedMessage:
-    """Parsed message from a transcript."""
-
-    message_type: str  # "user", "assistant", "tool_use", "tool_result", etc.
-    text: str  # Extracted text content
-    tool_name: str | None = None  # For tool_use messages
+    message_type: str
+    text: str
+    tool_name: str | None = None
 
 
 @dataclass
 class ParsedEntry:
-    """A single parsed message entry ready for display."""
-
-    role: str  # "user" | "assistant"
-    text: str  # Already formatted text
-    content_type: (
-        str  # "text" | "thinking" | "tool_use" | "tool_result" | "local_command"
-    )
+    role: str
+    text: str
+    content_type: str
     tool_use_id: str | None = None
-    timestamp: str | None = None  # ISO timestamp from JSONL
-    tool_name: str | None = (
-        None  # For tool_use entries, the tool name (e.g. "AskUserQuestion")
-    )
+    timestamp: str | None = None
+    tool_name: str | None = None
 
 
 @dataclass
 class PendingToolInfo:
-    """Information about a pending tool_use waiting for its tool_result."""
-
-    summary: str  # Formatted tool summary (e.g. "**Read**(file.py)")
-    tool_name: str  # Tool name (e.g. "Read", "Edit")
-    input_data: Any = None  # Tool input parameters (for Edit to generate diff)
+    summary: str
+    tool_name: str
+    input_data: Any = None
 
 
 @dataclass
 class _ParseState:
-    """Mutable cross-entry state threaded through parse_entries handlers."""
-
     pending_tools: dict[str, PendingToolInfo] = field(default_factory=dict)
     last_cmd_name: str | None = None
 
 
 class TranscriptParser:
-    """Parser for Claude Code JSONL session files.
-
-    Expected JSONL entry structure:
-    - type: "user" | "assistant" | "summary" | "file-history-snapshot" | ...
-    - message.content: list of blocks (text, tool_use, tool_result, thinking)
-    - sessionId, cwd, timestamp, uuid: metadata fields
-
-    Tool pairing model: tool_use blocks appear in assistant messages,
-    matching tool_result blocks appear in the next user message (keyed by tool_use_id).
-    """
-
-    # Magic string constants
     _NO_CONTENT_PLACEHOLDER = "(no content)"
     _INTERRUPTED_TEXT = "[Request interrupted by user for tool use]"
     _ERROR_SUMMARY_LIMIT = 100
 
     @staticmethod
     def parse_line(line: str) -> dict | None:
-        """Parse a single JSONL line.
-
-        Args:
-            line: A single line from the JSONL file
-
-        Returns:
-            Parsed dict or None if line is empty/invalid
-        """
         line = line.strip()
         if not line:
             return None
@@ -103,31 +58,14 @@ class TranscriptParser:
 
     @staticmethod
     def get_message_type(data: dict) -> str | None:
-        """Get the message type from parsed data.
-
-        Returns:
-            Message type: "user", "assistant", "file-history-snapshot", etc.
-        """
         return data.get("type")
 
     @staticmethod
     def is_user_message(data: dict) -> bool:
-        """Check if this is a user message."""
         return data.get("type") == "user"
 
     @staticmethod
     def extract_text_only(content_list: list[Any]) -> str:
-        """Extract only text content from structured content.
-
-        This is used for Telegram notifications where we only want
-        the actual text response, not tool calls or thinking.
-
-        Args:
-            content_list: List of content blocks
-
-        Returns:
-            Combined text content only
-        """
         if not isinstance(content_list, list):
             if isinstance(content_list, str):
                 return content_list
@@ -156,16 +94,13 @@ class TranscriptParser:
 
     @staticmethod
     def _format_edit_diff(old_string: str, new_string: str) -> str:
-        """Generate a compact unified diff between old_string and new_string."""
         old_lines = old_string.splitlines(keepends=True)
         new_lines = new_string.splitlines(keepends=True)
         diff = difflib.unified_diff(old_lines, new_lines, lineterm="")
-        # Skip the --- / +++ header lines
         result_lines: list[str] = []
         for line in diff:
             if line.startswith("---") or line.startswith("+++"):
                 continue
-            # Strip trailing newline for clean display
             result_lines.append(line.rstrip("\n"))
         return "\n".join(result_lines)
 
@@ -173,21 +108,9 @@ class TranscriptParser:
     def format_tool_use_summary(
         cls, name: str, input_data: dict | Any, cwd: str | None = None
     ) -> str:
-        """Format a tool_use block into a brief summary line.
-
-        Args:
-            name: Tool name (e.g. "Read", "Write", "Bash")
-            input_data: The tool input dict
-            cwd: Optional working directory for shortening file paths
-
-        Returns:
-            Formatted string like ``📖 read: "file.py"`` via
-            ``tool_format.format_tool_line``.
-        """
         if not isinstance(input_data, dict):
             return format_tool_line(name, "")
 
-        # Pick a meaningful short summary based on tool name
         summary = ""
         if name in ("Read", "Glob"):
             summary = input_data.get("file_path") or input_data.get("pattern", "")
@@ -198,8 +121,6 @@ class TranscriptParser:
         elif name in ("Edit", "NotebookEdit"):
             summary = input_data.get("file_path") or input_data.get("notebook_path", "")
             summary = shorten_path(summary, cwd)
-            # Note: Edit/Update diff and stats are generated in tool_result stage,
-            # not here. We just show the tool name and file path.
         elif name == "Bash":
             summary = input_data.get("command", "")
         elif name == "Grep":
@@ -233,7 +154,6 @@ class TranscriptParser:
         elif name == "Skill":
             summary = input_data.get("skill", "")
         else:
-            # Generic: show first string value
             for v in input_data.values():
                 if isinstance(v, str) and v:
                     summary = v
@@ -243,7 +163,6 @@ class TranscriptParser:
 
     @staticmethod
     def _summarize_task_create(input_data: dict[str, Any]) -> str:
-        """Build a stable summary for TaskCreate."""
         return (
             input_data.get("subject")
             or input_data.get("activeForm")
@@ -253,7 +172,6 @@ class TranscriptParser:
 
     @staticmethod
     def _summarize_task_update(input_data: dict[str, Any]) -> str:
-        """Build a stable summary for TaskUpdate."""
         label = (
             input_data.get("subject")
             or input_data.get("activeForm")
@@ -271,7 +189,6 @@ class TranscriptParser:
 
     @staticmethod
     def _summarize_task_list(input_data: dict[str, Any]) -> str:
-        """Build a stable summary for TaskList."""
         tasks = input_data.get("tasks")
         if isinstance(tasks, list):
             return f"{len(tasks)} task(s)"
@@ -279,7 +196,6 @@ class TranscriptParser:
 
     @staticmethod
     def extract_tool_result_text(content: list | Any) -> str:
-        """Extract text from a tool_result content block."""
         if isinstance(content, str):
             return content
         if isinstance(content, list):
@@ -296,14 +212,6 @@ class TranscriptParser:
 
     @classmethod
     def parse_message(cls, data: dict) -> ParsedMessage | None:
-        """Parse a message entry from the JSONL data.
-
-        Args:
-            data: Parsed JSON dict from a JSONL line
-
-        Returns:
-            ParsedMessage or None if not a parseable message
-        """
         msg_type = cls.get_message_type(data)
 
         if msg_type not in ("user", "assistant"):
@@ -319,8 +227,6 @@ class TranscriptParser:
         else:
             text = str(content) if content else ""
 
-        # Detect local command responses in user messages.
-        # These are rendered as bot replies: "❯ /cmd\n  ⎿  output"
         if msg_type == "user" and text:
             stdout_match = cls._RE_LOCAL_STDOUT.search(text)
             if stdout_match:
@@ -330,9 +236,8 @@ class TranscriptParser:
                 return ParsedMessage(
                     message_type="local_command",
                     text=stdout,
-                    tool_name=cmd,  # reuse field for command name
+                    tool_name=cmd,
                 )
-            # Pure command invocation (no stdout) — carry command name
             cmd_match = cls._RE_COMMAND_NAME.search(text)
             if cmd_match:
                 return ParsedMessage(
@@ -348,18 +253,10 @@ class TranscriptParser:
 
     @staticmethod
     def get_timestamp(data: dict) -> str | None:
-        """Extract timestamp from message data."""
         return data.get("timestamp")
 
     @classmethod
     def _format_tool_result_text(cls, text: str, tool_name: str | None = None) -> str:
-        """Format tool result text with statistics summary.
-
-        Shows relevant statistics for each tool type, with expandable quote for full content.
-
-        No truncation here — per project principles, truncation is handled
-        only at the send layer (split_message / _truncate_quote_text).
-        """
         if not text:
             return ""
 
@@ -405,8 +302,6 @@ class TranscriptParser:
 
         return format_expandable_quote(text)
 
-    # ── Per-block handlers ────────────────────────────────────────────────────
-
     @classmethod
     def _handle_tool_use_block(
         cls,
@@ -415,14 +310,12 @@ class TranscriptParser:
         timestamp: str | None,
         cwd: str | None,
     ) -> list[ParsedEntry]:
-        """Handle a single tool_use content block inside an assistant entry."""
         name = block.get("name", "unknown")
         inp = block.get("input", {})
         tool_id = block.get("id", "")
         summary = cls.format_tool_use_summary(name, inp, cwd=cwd)
         entries: list[ParsedEntry] = []
 
-        # ExitPlanMode: emit plan content as text before the tool_use entry
         if name == "ExitPlanMode" and isinstance(inp, dict):
             plan = inp.get("plan", "")
             if plan:
@@ -436,7 +329,6 @@ class TranscriptParser:
                 )
 
         if tool_id:
-            # Edit/NotebookEdit need input_data to generate diff at tool_result stage
             input_data = inp if name in ("Edit", "NotebookEdit") else None
             state.pending_tools[tool_id] = PendingToolInfo(
                 summary=summary,
@@ -463,7 +355,6 @@ class TranscriptParser:
         state: "_ParseState",
         timestamp: str | None,
     ) -> "ParsedEntry | None":
-        """Handle a single tool_result content block inside a user entry."""
         tool_use_id = block.get("tool_use_id", "")
         result_content = block.get("content", "")
         result_text = cls.extract_tool_result_text(result_content)
@@ -515,7 +406,6 @@ class TranscriptParser:
 
         if tool_summary:
             entry_text = tool_summary
-            # Edit: generate diff stats and expandable quote
             if tool_name == "Edit" and tool_input_data and result_text:
                 old_s = tool_input_data.get("old_string", "")
                 new_s = tool_input_data.get("new_string", "")
@@ -559,8 +449,6 @@ class TranscriptParser:
 
         return None
 
-    # ── Per-entry handlers ────────────────────────────────────────────────────
-
     @classmethod
     def _handle_local_command_entry(
         cls,
@@ -568,17 +456,10 @@ class TranscriptParser:
         state: "_ParseState",
         timestamp: str | None,
     ) -> "ParsedEntry | None":
-        """Handle local_command_invoke / local_command parsed messages.
-
-        Returns a ParsedEntry to emit, or None if only state was updated
-        (invoke case: updates last_cmd_name, nothing emitted).
-        Resets last_cmd_name after the stdout entry is consumed.
-        """
         if parsed.message_type == "local_command_invoke":
             state.last_cmd_name = parsed.tool_name
             return None
 
-        # local_command: emit the formatted output
         cmd = parsed.tool_name or state.last_cmd_name or ""
         text = parsed.text
         if cmd:
@@ -605,7 +486,6 @@ class TranscriptParser:
         timestamp: str | None,
         cwd: str | None,
     ) -> list[ParsedEntry]:
-        """Handle all content blocks in an assistant entry."""
         entries: list[ParsedEntry] = []
         has_text = False
 
@@ -660,7 +540,6 @@ class TranscriptParser:
         state: "_ParseState",
         timestamp: str | None,
     ) -> list[ParsedEntry]:
-        """Handle all content blocks in a user entry."""
         entries: list[ParsedEntry] = []
         user_text_parts: list[str] = []
 
@@ -681,7 +560,6 @@ class TranscriptParser:
                 if t and not cls._RE_SYSTEM_TAGS.search(t):
                     user_text_parts.append(t)
 
-        # Emit user text only if present and not local-command XML
         if user_text_parts:
             combined = "\n".join(user_text_parts)
             if not cls._RE_LOCAL_STDOUT.search(
@@ -698,8 +576,6 @@ class TranscriptParser:
 
         return entries
 
-    # ── Public entry point ────────────────────────────────────────────────────
-
     @classmethod
     def parse_entries(
         cls,
@@ -707,21 +583,6 @@ class TranscriptParser:
         pending_tools: dict[str, PendingToolInfo] | None = None,
         cwd: str | None = None,
     ) -> tuple[list[ParsedEntry], dict[str, PendingToolInfo]]:
-        """Parse a list of JSONL entries into a flat list of display-ready messages.
-
-        This is the shared core logic used by both get_recent_messages (history)
-        and check_for_updates (monitor).
-
-        Args:
-            entries: List of parsed JSONL dicts (already filtered through parse_line)
-            pending_tools: Optional carry-over pending tool_use state from a
-                previous call (tool_use_id -> formatted summary). Used by the
-                monitor to handle tool_use and tool_result arriving in separate
-                poll cycles.
-
-        Returns:
-            Tuple of (parsed entries, remaining pending_tools state)
-        """
         result: list[ParsedEntry] = []
         _carry_over = pending_tools is not None
         state = _ParseState(
@@ -744,7 +605,6 @@ class TranscriptParser:
 
             parsed = cls.parse_message(data)
 
-            # Local command messages are handled before role dispatch
             if parsed and parsed.message_type in (
                 "local_command_invoke",
                 "local_command",
@@ -762,11 +622,6 @@ class TranscriptParser:
             elif msg_type == "user":
                 result.extend(cls._handle_user_entry(content, state, entry_timestamp))
 
-        # Flush remaining pending tools at end.
-        # Carry-over mode (monitor): keep pending, no extra entries emitted.
-        # One-shot mode (history): emit a bare tool_use entry per dangling tool.
-        # Flushed entries intentionally have timestamp=None and tool_name=None
-        # to distinguish them from encounter-time entries.
         remaining_pending = dict(state.pending_tools)
         if not _carry_over:
             for tool_id, tool_info in state.pending_tools.items():
@@ -779,7 +634,6 @@ class TranscriptParser:
                     )
                 )
 
-        # Strip whitespace from all entries (applied after all entries are collected)
         for entry in result:
             entry.text = entry.text.strip()
 

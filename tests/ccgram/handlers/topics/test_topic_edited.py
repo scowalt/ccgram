@@ -1,5 +1,3 @@
-"""Tests for FORUM_TOPIC_EDITED handler (bidirectional name sync)."""
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,7 +15,6 @@ def _reset():
 def _make_update(
     new_name: str | None, thread_id: int = 42, chat_id: int = -100, user_id: int = 1
 ) -> MagicMock:
-    """Create a mock Update for FORUM_TOPIC_EDITED."""
     update = MagicMock()
     update.effective_user.id = user_id
     update.effective_chat.id = chat_id
@@ -66,7 +63,6 @@ class TestTopicEditedHandler:
         mock_tr.get_display_name.return_value = "myproject"
         mock_tm.rename_window = AsyncMock()
 
-        # Bot set "🟢 myproject" — clean name matches current display
         update = _make_update("\U0001f7e2 myproject")
         await topic_edited_handler(update, MagicMock())
 
@@ -133,7 +129,6 @@ class TestTopicEditedHandler:
         mock_tm: MagicMock,
         _allowed: MagicMock,
     ) -> None:
-        """FORUM_TOPIC_EDITED calls rename_window via the multiplexer proxy for herdr IDs."""
         from ccgram.handlers.topics.topic_lifecycle import topic_edited_handler
 
         herdr_id = "w1:t1"

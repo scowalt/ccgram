@@ -1,11 +1,3 @@
-"""Tests for status message singleton behavior (no pile-up).
-
-Verifies three invariants:
-1. Edit failure recovers by sending a new status message (no ghost messages).
-2. Content delivery does NOT eagerly recreate status (poll loop handles it).
-3. send_status_text edits existing status instead of sending new.
-"""
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -55,8 +47,6 @@ def _status_task(
 
 
 class TestEditFailureNoNewMessage:
-    """Edit failure recovers by sending a new message (no ghost messages)."""
-
     @patch("ccgram.handlers.status.status_bubble.thread_router")
     @patch(
         "ccgram.handlers.status.status_bubble.edit_with_fallback",
@@ -65,10 +55,8 @@ class TestEditFailureNoNewMessage:
     async def test_edit_failure_recovers_with_new_send(
         self, mock_edit, mock_tr
     ) -> None:
-        # No active DraftStream → falls back to edit_with_fallback,
-        # which fails, triggering a new send via DraftStream.start.
         mock_tr.resolve_chat_id.return_value = 42
-        mock_edit.return_value = False  # edit fails
+        mock_edit.return_value = False
 
         _status_msg_info[SKEY] = (100, WINDOW_ID, "old text", CHAT_ID)
 
@@ -85,14 +73,13 @@ class TestEditFailureNoNewMessage:
     )
     async def test_edit_success_updates_tracking(self, mock_edit, mock_tr) -> None:
         mock_tr.resolve_chat_id.return_value = 42
-        mock_edit.return_value = True  # edit succeeds
+        mock_edit.return_value = True
 
         _status_msg_info[SKEY] = (100, WINDOW_ID, "old text", CHAT_ID)
 
         bot = _make_bot()
         await process_status_update(bot, USER_ID, _status_task("new text"))
 
-        # Tracking updated with new text, same message id; no fresh send.
         assert _status_msg_info[SKEY] == (100, WINDOW_ID, "new text", CHAT_ID)
         bot.send_message.assert_not_called()
 
@@ -191,8 +178,6 @@ class TestEditFailureNoNewMessage:
 
 
 class TestDoSendGuard:
-    """Change 3: send_status_text edits existing instead of sending new."""
-
     @patch("ccgram.handlers.status.status_bubble.thread_router")
     @patch(
         "ccgram.handlers.status.status_bubble.edit_with_fallback",
@@ -201,7 +186,6 @@ class TestDoSendGuard:
     async def test_existing_status_same_window_edits_in_place(
         self, mock_edit, mock_tr
     ) -> None:
-        # Pre-existing tracking but no DraftStream → falls back to edit_with_fallback.
         mock_tr.resolve_chat_id.return_value = 42
         mock_edit.return_value = True
 
@@ -229,7 +213,6 @@ class TestDoSendGuard:
         bot = _make_bot()
         await send_status_text(bot, USER_ID, THREAD_ID, WINDOW_ID, "running...")
 
-        # Identical text → no API calls.
         mock_edit.assert_not_called()
         bot.send_message.assert_not_called()
         bot.edit_message_text.assert_not_called()
@@ -263,7 +246,7 @@ class TestDoSendGuard:
     ) -> None:
         mock_tr.resolve_chat_id.return_value = 42
 
-        _status_msg_info[SKEY] = (100, "@1", "running...", CHAT_ID)  # different window
+        _status_msg_info[SKEY] = (100, "@1", "running...", CHAT_ID)
 
         bot = _make_bot(send_id=300)
         await send_status_text(bot, USER_ID, THREAD_ID, WINDOW_ID, "running...")
@@ -281,14 +264,13 @@ class TestDoSendGuard:
         self, mock_edit, mock_tr
     ) -> None:
         mock_tr.resolve_chat_id.return_value = 42
-        mock_edit.return_value = False  # edit fails
+        mock_edit.return_value = False
 
         _status_msg_info[SKEY] = (100, WINDOW_ID, "old text", CHAT_ID)
 
         bot = _make_bot(send_id=400)
         await send_status_text(bot, USER_ID, THREAD_ID, WINDOW_ID, "new text")
 
-        # Edit attempted first, then falls through to send.
         mock_edit.assert_awaited_once()
         bot.send_message.assert_awaited_once()
         assert _status_msg_info[SKEY] == (400, WINDOW_ID, "new text", CHAT_ID)

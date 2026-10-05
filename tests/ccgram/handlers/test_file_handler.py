@@ -1,5 +1,3 @@
-"""Tests for file_handler helper functions."""
-
 import re
 from pathlib import Path
 

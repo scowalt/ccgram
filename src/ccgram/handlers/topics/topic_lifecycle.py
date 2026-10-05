@@ -1,12 +1,3 @@
-"""Topic lifecycle management — autoclose timers, unbound window TTL, probing.
-
-Periodic tasks that manage topic and window lifecycle:
-  - Autoclose: expire done/dead topics after configurable timeout
-  - Unbound window TTL: kill orphaned tmux windows without topic bindings
-  - Topic existence probing: detect deleted Telegram topics via API
-  - State pruning: sync display names and remove stale entries
-"""
-
 from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
@@ -37,11 +28,7 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 
-# ── Autoclose timer management ────────────────────────────────────────────
-
-
 async def check_autoclose_timers(client: TelegramClient) -> None:
-    """Close topics whose done/dead timers have expired."""
     all_topics = lifecycle_strategy.iter_topic_states()
     if not all_topics:
         return
@@ -68,7 +55,6 @@ async def check_autoclose_timers(client: TelegramClient) -> None:
 async def _close_expired_topic(
     client: TelegramClient, user_id: int, thread_id: int, state: str
 ) -> None:
-    """Attempt to close/delete an expired topic and clean up state."""
     window_id = thread_router.get_window_for_thread(user_id, thread_id)
     if state == "dead" and window_id is not None:
         live_window = await tmux_manager.find_window_by_id(window_id)
@@ -118,13 +104,9 @@ async def _close_expired_topic(
         thread_router.unbind_thread(user_id, thread_id)
 
 
-# ── Unbound window TTL ────────────────────────────────────────────────────
-
-
 async def check_unbound_window_ttl(
     live_windows: "list[TmuxWindow] | None" = None,
 ) -> None:
-    """Kill unbound tmux windows whose TTL has expired."""
     timeout = config.autoclose_done_minutes * 60
     if timeout <= 0:
         return
@@ -156,14 +138,10 @@ async def check_unbound_window_ttl(
 
 
 async def _kill_expired_unbound(now: float, timeout: float) -> None:
-    """Find and kill unbound windows past their TTL."""
     expired = terminal_poll_state.get_expired_unbound(now, timeout)
     for wid in expired:
         await tmux_manager.kill_window(wid)
 
-        # Lazy: topic_state_registry is wired during bootstrap; importing
-        # at top dragged registration side effects into the polling
-        # subpackage's import path.
         from ...topic_state_registry import topic_state
 
         topic_state.clear_window(wid)
@@ -173,35 +151,21 @@ async def _kill_expired_unbound(now: float, timeout: float) -> None:
 
 
 def _prune_orphaned_poll_state(live_ids: set[str], bound_ids: set[str]) -> None:
-    """Remove poll state for windows that are neither live nor bound."""
     for wid in terminal_poll_state.get_orphaned_window_ids(live_ids, bound_ids):
         terminal_poll_state.clear_state(wid)
 
 
-# ── Display name sync / state pruning ─────────────────────────────────────
-
-
 async def prune_stale_state(live_windows: "list[TmuxWindow]") -> None:
-    """Sync display names and prune orphaned state entries."""
     live_ids = {w.window_id for w in live_windows}
     live_pairs = [(w.window_id, w.window_name) for w in live_windows]
     session_manager.sync_display_names(live_pairs)
     session_manager.prune_stale_state(live_ids)
 
 
-# ── Topic existence probing ───────────────────────────────────────────────
-
-
-# Windows whose chat lacks can_pin_messages: the unpin-based probe can never
-# succeed there, so disable it permanently (per process) instead of counting it
-# as a probe failure (which would suspend deleted-topic detection and re-arm on
-# every inbound message). Reset on restart; mirrors _disabled_chats in
-# handlers/status/topic_emoji.py.
 _probe_pin_disabled: set[str] = set()
 
 
 async def probe_topic_existence(client: TelegramClient) -> None:
-    """Probe all bound topics via Telegram API; detect deleted topics."""
     for user_id, thread_id, wid in list(thread_router.iter_thread_bindings()):
         if wid in _probe_pin_disabled or lifecycle_strategy.should_skip_probe(wid):
             continue
@@ -251,23 +215,13 @@ async def probe_topic_existence(client: TelegramClient) -> None:
                     )
 
 
-# Telegram topic event handlers.
-
-
 async def topic_closed_handler(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Handle topic closure — unbind thread but keep the tmux window alive.
-
-    The window becomes "unbound" and is available for rebinding via the window
-    picker when a new topic is created. Unbound windows are auto-killed after
-    the configured TTL (autoclose_done_minutes) by the status polling loop.
-    """
     user = update.effective_user
     if not user or not config.is_user_allowed(user.id):
         return
 
-    # Lazy: callback_helpers ↔ topic_lifecycle through bootstrap wiring.
     from ..callback_helpers import get_thread_id
 
     thread_id = get_thread_id(update)
@@ -301,11 +255,6 @@ async def topic_closed_handler(
 async def topic_edited_handler(
     update: Update, _context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Handle topic rename — sync new name to tmux window and emoji cache.
-
-    Ignores icon-only edits (name is None) and emoji-only changes from the bot
-    itself (clean name unchanged after stripping prefixes).
-    """
     user = update.effective_user
     if not user or not config.is_user_allowed(user.id):
         return
@@ -316,12 +265,8 @@ async def topic_edited_handler(
     if not new_name:
         return
 
-    # Lazy: same callback_helpers cycle plus status.topic_emoji ↔ topics
-    # cycle through emoji refresh callbacks.
-    # Lazy: handlers.callback_helpers / handlers.status cycle
     from ..callback_helpers import get_thread_id
 
-    # Lazy: handlers.callback_helpers / handlers.status cycle
     from ..status.topic_emoji import strip_emoji_prefix, update_stored_topic_name
 
     thread_id = get_thread_id(update)

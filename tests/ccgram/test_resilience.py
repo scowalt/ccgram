@@ -1,11 +1,3 @@
-"""Tests for resilience and crash-prevention fixes.
-
-Covers: background loop catch-all, dead worker respawn, session_map corruption
-guard, pyte feed/resize guards, rate_limit_send locking, JSONL malformed entry
-handling, probe failure clearing, poll state cleanup, shutdown notification
-lifecycle.
-"""
-
 import asyncio
 import contextlib
 import json
@@ -194,20 +186,15 @@ class TestRateLimitSendLocking:
             await rate_limit_send(chat_id)
             timestamps.append(time.monotonic())
 
-        # Seed the rate limiter so subsequent calls must wait
         await rate_limit_send(chat_id)
         t0 = time.monotonic()
 
-        # Launch 2 concurrent senders — they should be serialized by the lock
         tasks = [asyncio.create_task(timed_send()) for _ in range(2)]
         await asyncio.gather(*tasks)
 
         assert len(timestamps) == 2
-        # Each send should be spaced at least MESSAGE_SEND_INTERVAL apart from seed
         for ts in timestamps:
-            assert (
-                ts - t0 >= MESSAGE_SEND_INTERVAL * 0.8
-            )  # 80% tolerance for scheduling jitter
+            assert ts - t0 >= MESSAGE_SEND_INTERVAL * 0.8
 
         _last_send_time.pop(chat_id, None)
         _rate_limit_locks.pop(chat_id, None)
@@ -312,7 +299,6 @@ class TestShellDetectionSafety:
         from ccgram.providers.shell_infra import _is_interactive_shell
 
         mock_tmux = MagicMock()
-        # A shell running a script has child argv → not interactive.
         mock_tmux.foreground = AsyncMock(
             return_value=ForegroundInfo(
                 pid=0,
@@ -330,7 +316,6 @@ class TestShellDetectionSafety:
         from ccgram.providers.shell_infra import _is_interactive_shell
 
         mock_tmux = MagicMock()
-        # An idle interactive shell is its own single-token foreground leader.
         mock_tmux.foreground = AsyncMock(
             return_value=ForegroundInfo(pid=1234, pgid=1234, argv=["-bash"], cwd="/tmp")
         )

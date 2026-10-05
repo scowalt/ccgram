@@ -1,17 +1,3 @@
-"""Pane subscription and rename callback handlers (Theme 5).
-
-Handles inline keyboard callbacks for the ``/panes`` keyboard:
-  - CB_PANE_SUBSCRIBE: mark a pane subscribed so its output is forwarded
-  - CB_PANE_UNSUBSCRIBE: stop forwarding the pane
-  - CB_PANE_RENAME: prompt the user to provide a friendly name for the pane
-
-Rename uses a context.user_data flag (``PANE_RENAME_*``); the next text
-message in the same thread is captured by ``apply_pane_rename`` and
-written to ``PaneInfo.name``. Auto-clear on pane death is handled by
-``PaneStatusStrategy.reconcile_dead_panes`` removing the ``PaneInfo``
-entry — the subscribed flag goes away with it.
-"""
-
 from __future__ import annotations
 
 
@@ -65,12 +51,6 @@ _RENAME_PROMPT = (
 
 
 def _parse_target(data: str, prefix: str) -> tuple[str, str] | None:
-    """Parse ``<prefix><window_id>|<pane_id>`` callback data.
-
-    Splits on ``CB_PANE_DELIMITER`` (``|``) so both tmux ids (``@12``,
-    ``%5``) and herdr ids (``w2:t1``, ``w2:p1``) round-trip without
-    colliding on the colons inside herdr ids.
-    """
     rest = data[len(prefix) :]
     sep = rest.find(CB_PANE_DELIMITER)
     if sep < 0:
@@ -81,7 +61,6 @@ def _parse_target(data: str, prefix: str) -> tuple[str, str] | None:
 def build_pane_buttons(
     window_id: str, pane_id: str, subscribed: bool
 ) -> list[InlineKeyboardButton]:
-    """Return the per-pane action row used in the ``/panes`` keyboard."""
     sub_label = "\U0001f515 Unsub" if subscribed else "\U0001f514 Sub"
     sub_data = f"{CB_PANE_UNSUBSCRIBE if subscribed else CB_PANE_SUBSCRIBE}{window_id}{CB_PANE_DELIMITER}{pane_id}"
     return [
@@ -104,7 +83,6 @@ def build_pane_buttons(
 def build_pane_lifecycle_button(
     window_id: str, *, enabled: bool
 ) -> InlineKeyboardButton:
-    """Return the per-window pane lifecycle notifications toggle button."""
     icon = "\U0001f514" if enabled else "\U0001f515"
     state = "on" if enabled else "off"
     return InlineKeyboardButton(
@@ -126,10 +104,6 @@ async def _toggle_subscribe(
         return
     pane = get_pane_projection(window_id, pane_id)
     if pane is None:
-        # Pane scanner hasn't seen this pane yet (common right after a split).
-        # If tmux still reports the pane, hydrate the entry inline so the
-        # subscribe action succeeds; otherwise the keyboard is showing a
-        # stale pane and we should fail loudly.
         try:
             live = await tmux_manager.list_panes(window_id)
         except Exception as exc:  # noqa: BLE001
@@ -202,12 +176,6 @@ async def apply_pane_rename(
     text: str,
     message: Message,
 ) -> bool:
-    """Consume an in-flight rename reply.
-
-    Returns True when the message was handled (rename pending in this
-    thread); the caller must early-return. Returns False otherwise so
-    normal text routing continues.
-    """
     if not user_data or thread_id is None:
         return False
     pending_thread = user_data.get(PANE_RENAME_THREAD_ID)
@@ -226,8 +194,6 @@ async def apply_pane_rename(
         await safe_reply(message, f"✓ Cleared name for {pane_id}")
         return True
     if len(name) > _MAX_PANE_NAME_LEN:
-        # Reject loudly so the user doesn't see a different name from what
-        # they typed. They can resend a shorter version.
         await safe_reply(
             message,
             f"❌ Name too long ({len(name)} chars, max {_MAX_PANE_NAME_LEN}).",

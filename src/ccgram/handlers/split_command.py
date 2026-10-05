@@ -1,14 +1,3 @@
-"""/split — add a sibling pane to the current topic's window.
-
-Splits the bound window/tab into a new pane (the multi-pane "agent team"
-shape). With an argument, the text is run in the new pane — e.g.
-``/split claude`` spawns a sibling agent, ``/split npm test`` starts a watcher.
-The new pane is discoverable via /panes and the existing multi-pane scanning.
-
-Backend-neutral: rides ``multiplexer.split_window`` (herdr ``pane split``,
-tmux ``window.split()``), so it works on both backends.
-"""
-
 from __future__ import annotations
 
 import structlog
@@ -25,14 +14,10 @@ logger = structlog.get_logger()
 
 
 async def split_command(update: "Update", context: "ContextTypes.DEFAULT_TYPE") -> None:
-    """Handle /split [command] — split the topic's window into a new pane."""
-    # Lazy: config singleton resolved at call time so tests can swap it
     from ..config import config
 
-    # Lazy: messaging_pipeline ↔ handler cycle through status_bubble
     from .messaging_pipeline.message_sender import safe_reply
 
-    # Lazy: callback_helpers only used when we have a real update
     from .callback_helpers import get_thread_id
 
     user = update.effective_user

@@ -1,11 +1,4 @@
 #!/usr/bin/env python3
-"""Generate a Homebrew formula for ccgram with all Python resource blocks.
-
-Usage: python scripts/generate_homebrew_formula.py <version>
-
-Requires: uv (used for dependency resolution and PyPI queries).
-For local development, prefer: brew update-python-resources alexei-led/tap/ccgram
-"""
 
 from __future__ import annotations
 
@@ -67,7 +60,6 @@ def pypi_json(name: str, version: str) -> dict:
 
 
 def sdist_info(name: str, version: str) -> tuple[str, str]:
-    """Return (url, sha256) for a package's sdist on PyPI."""
     for f in pypi_json(name, version)["urls"]:
         if f["packagetype"] == "sdist":
             return f["url"], f["digests"]["sha256"]
@@ -75,7 +67,6 @@ def sdist_info(name: str, version: str) -> tuple[str, str]:
 
 
 def wait_for_sdist(version: str) -> tuple[str, str]:
-    """Poll PyPI until ccgram sdist is available."""
     deadline = time.monotonic() + PYPI_API_TIMEOUT
     while True:
         try:
@@ -88,7 +79,6 @@ def wait_for_sdist(version: str) -> tuple[str, str]:
 
 
 def _compile_deps(version: str) -> list[tuple[str, str]]:
-    """Run 'uv pip compile' and parse output into (name, version) pairs."""
     with tempfile.TemporaryDirectory() as tmp:
         reqs_in = Path(tmp) / "in.txt"
         reqs_out = Path(tmp) / "out.txt"
@@ -119,7 +109,6 @@ def _compile_deps(version: str) -> list[tuple[str, str]]:
 
 
 def resolve_deps(version: str) -> list[tuple[str, str]]:
-    """Resolve deps with retries (uv index may lag behind PyPI API)."""
     deadline = time.monotonic() + UV_INDEX_TIMEOUT
     while True:
         try:
@@ -141,7 +130,7 @@ def resource_blocks(deps: list[tuple[str, str]]) -> str:
     return "\n\n".join(blocks)
 
 
-_EXPECTED_ARGS = 2  # script + version
+_EXPECTED_ARGS = 2
 
 
 def main() -> None:

@@ -61,8 +61,6 @@ class TestEnsureMultiplexerSession:
         backend.ensure_session = AsyncMock(side_effect=RuntimeError("socket down"))
         install_multiplexer(backend)
 
-        # An unreachable backend exits via SystemExit (caught by PTB's
-        # run_polling → graceful shutdown, no traceback), not a raw exception.
         with pytest.raises(SystemExit) as exc_info:
             await bootstrap.ensure_multiplexer_session()
 
@@ -239,8 +237,6 @@ class TestResetForTesting:
         bootstrap.wire_runtime_callbacks()
         bootstrap.reset_for_testing()
 
-        # After reset, re-wiring must succeed (i.e., the F2.6 fail-loud
-        # double-registration guard sees a clean slate).
         assert shell_capture._approval_callback_registered is False
 
         bootstrap.wire_runtime_callbacks()
@@ -283,9 +279,7 @@ class TestVerifyHooksInstalled:
         ):
             bootstrap.verify_hooks_installed()
 
-        # DEBUG, not INFO: an opt-in latency tip should not greet every startup.
         logger.debug.assert_called_once()
-        # Message includes the provider name and the install command.
         args = logger.debug.call_args[0]
         assert "codex" in args
 

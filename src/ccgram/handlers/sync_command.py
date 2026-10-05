@@ -1,15 +1,3 @@
-"""On-demand state audit and cleanup — /sync command.
-
-Audits all state maps against live multiplexer windows and reports issues.
-A "Fix" button runs cleanup operations and re-audits in place.
-Enforcement: closes ghost topics, recreates dead topics, and adopts orphaned windows.
-
-Key functions:
-  - sync_command(): /sync command handler
-  - handle_sync_fix(): fix button callback — run cleanup, re-audit, edit in place
-  - handle_sync_dismiss(): dismiss button callback — remove keyboard
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -61,7 +49,6 @@ _CATEGORY_LABELS: dict[str, str] = {
 
 
 async def _run_audit() -> AuditResult:
-    """Fetch live multiplexer state and run audit."""
     all_windows = await tmux_manager.list_windows()
     live_ids = {w.window_id for w in all_windows}
     live_pairs = [(w.window_id, w.window_name) for w in all_windows]
@@ -69,11 +56,10 @@ async def _run_audit() -> AuditResult:
 
 
 def _issue_summary_lines(audit: AuditResult) -> list[str]:
-    """Build category summary lines from audit issues."""
     category_counts: dict[str, int] = {}
     for issue in audit.issues:
         if issue.category in ("ghost_binding", "dead_topic"):
-            continue  # shown in dedicated report lines
+            continue
         category_counts[issue.category] = category_counts.get(issue.category, 0) + 1
 
     if category_counts:
@@ -89,7 +75,6 @@ def _issue_summary_lines(audit: AuditResult) -> list[str]:
 async def _sync_live_topic_names(
     client: TelegramClient, live_ids: set[str] | None = None
 ) -> None:
-    """Best-effort reconciliation of bound live topic titles."""
     if live_ids is None:
         all_windows = await tmux_manager.list_windows()
         live_ids = {w.window_id for w in all_windows}
@@ -116,7 +101,6 @@ def _format_report(
     recreated_topic_count: int = 0,
     manual_close_count: int = 0,
 ) -> tuple[str, InlineKeyboardMarkup | None]:
-    """Build report text and optional keyboard."""
     lines: list[str] = []
 
     if fixed_count > 0:
@@ -140,7 +124,6 @@ def _format_report(
             "safe to close manually"
         )
 
-    # Binding summary
     if audit.total_bindings == 0:
         lines.append("ℹ No topic bindings")
     elif audit.live_binding_count == audit.total_bindings:
@@ -152,7 +135,6 @@ def _format_report(
             f"({audit.live_binding_count}/{audit.total_bindings} alive)"
         )
 
-    # Dead topic summary (window alive, but Telegram topic deleted)
     dead_topic_count = sum(1 for i in audit.issues if i.category == "dead_topic")
     if dead_topic_count > 0:
         topic_word = "topic" if dead_topic_count == 1 else "topics"
@@ -162,7 +144,6 @@ def _format_report(
 
     text = "\n".join(lines)
 
-    # Build keyboard
     fixable = audit.fixable_count
     if fixable > 0:
         issue_word = "issue" if fixable == 1 else "issues"
@@ -184,11 +165,6 @@ def _format_report(
 
 
 async def _remove_topic(client: TelegramClient, chat_id: int, thread_id: int) -> bool:
-    """Try to delete a topic, fall back to close. Returns True on success.
-
-    Only "topic not found" BadRequest is treated as success; other BadRequest
-    errors (e.g. insufficient rights) fall through to the close fallback.
-    """
     try:
         await client.delete_forum_topic(chat_id, thread_id)
         return True
@@ -207,13 +183,6 @@ async def _remove_topic(client: TelegramClient, chat_id: int, thread_id: int) ->
 async def _close_ghost_topics(
     client: TelegramClient, issues: list[AuditIssue]
 ) -> tuple[int, int]:
-    """Delete (or close) Telegram topics for ghost bindings.
-
-    Tries ``delete_forum_topic`` first to fully remove the dead topic from the
-    sidebar.  Falls back to ``close_forum_topic`` if deletion fails (e.g.
-    missing ``can_manage_topics`` or General topic).  Returns
-    ``(closed_count, manual_close_count)``.
-    """
     closed_count = 0
     manual_close_count = 0
     for issue in issues:
@@ -265,14 +234,8 @@ async def _close_ghost_topics(
 async def _adopt_orphaned_windows(
     client: TelegramClient, issues: list[AuditIssue]
 ) -> None:
-    """Create Telegram topics for unbound multiplexer windows."""
-    # Lazy: bidirectional cycle — topic_orchestration.adopt_unbound_windows
-    # also lazy-imports _adopt_orphaned_windows from this module.  Either
-    # side must remain lazy until one is split into a third module.
-    # Lazy: session_monitor / topic_orchestration cycle through window-creation flow
     from ..session_monitor import NewWindowEvent
 
-    # Lazy: session_monitor / topic_orchestration cycle through window-creation flow
     from .topics.topic_orchestration import handle_new_window as _handle_new_window
 
     for issue in issues:
@@ -299,22 +262,15 @@ async def _adopt_orphaned_windows(
 
 
 async def _probe_dead_topics(client: TelegramClient) -> list[AuditIssue]:
-    """Probe Telegram topics for all live bindings, return dead_topic issues.
-
-    Sends a silent zero-width-space message to each thread and deletes it
-    immediately. ``send_chat_action`` does NOT validate thread existence —
-    only ``send_message`` reliably throws "thread not found" for deleted topics.
-    """
     bindings = [
         (uid, tid, wid, thread_router.resolve_chat_id(uid, tid))
         for uid, tid, wid in thread_router.iter_thread_bindings()
     ]
-    # Only probe bindings with a group chat (chat_id != user_id)
     bindings = [(uid, tid, wid, cid) for uid, tid, wid, cid in bindings if cid != uid]
     if not bindings:
         return []
 
-    sem = asyncio.Semaphore(5)  # limit concurrent Telegram API calls
+    sem = asyncio.Semaphore(5)
 
     async def _probe_one(
         user_id: int, thread_id: int, window_id: str, chat_id: int
@@ -323,11 +279,10 @@ async def _probe_dead_topics(client: TelegramClient) -> list[AuditIssue]:
             try:
                 msg = await client.send_message(
                     chat_id,
-                    "​",  # zero-width space — invisible
+                    "​",
                     message_thread_id=thread_id,
                     disable_notification=True,
                 )
-                # Topic exists — clean up probe message
                 with contextlib.suppress(TelegramError):
                     await client.delete_message(chat_id, msg.message_id)
             except BadRequest as exc:
@@ -339,7 +294,7 @@ async def _probe_dead_topics(client: TelegramClient) -> list[AuditIssue]:
                         fixable=True,
                     )
             except TelegramError:
-                pass  # network error, skip — not a dead topic
+                pass
         return None
 
     results = await asyncio.gather(
@@ -355,7 +310,6 @@ async def _probe_dead_topics(client: TelegramClient) -> list[AuditIssue]:
 
 
 def _parse_dead_topic_issue(issue: AuditIssue) -> tuple[int, int, str] | None:
-    """Extract user, thread, and window IDs from a dead_topic audit issue."""
     if issue.category != "dead_topic":
         return None
     match = _GHOST_RE.search(issue.detail)
@@ -367,7 +321,6 @@ def _parse_dead_topic_issue(issue: AuditIssue) -> tuple[int, int, str] | None:
 def _restore_dead_topic_binding(
     user_id: int, thread_id: int, window_id: str, name: str, chat_id: int
 ) -> None:
-    """Restore a topic binding after failed dead-topic recreation."""
     thread_router.bind_thread(user_id, thread_id, window_id, window_name=name)
     if chat_id != user_id:
         thread_router.set_group_chat_id(user_id, thread_id, chat_id)
@@ -376,16 +329,8 @@ def _restore_dead_topic_binding(
 async def _recreate_dead_topics(
     client: TelegramClient, issues: list[AuditIssue]
 ) -> int:
-    """Unbind dead topics and recreate them via _handle_new_window.
-
-    Returns count of successfully recreated topics.
-    """
-    # Lazy: same sync_command ↔ topic_orchestration cycle as
-    # _adopt_orphaned_windows.
-    # Lazy: session_monitor / topic_orchestration cycle through window-creation flow
     from ..session_monitor import NewWindowEvent
 
-    # Lazy: session_monitor / topic_orchestration cycle through window-creation flow
     from .topics.topic_orchestration import handle_new_window as _handle_new_window
 
     recreated = 0
@@ -409,17 +354,10 @@ async def _recreate_dead_topics(
             cwd=view.cwd if view else "",
         )
 
-        # Preserve group_chat_id before unbinding — unbind_thread deletes it,
-        # but _handle_new_window needs it to know which chat to create the topic in.
         chat_id = thread_router.resolve_chat_id(user_id, thread_id)
 
-        # Unbind THEN recreate — must unbind first so _handle_new_window
-        # doesn't skip the window as "already bound".  On failure, restore.
         thread_router.unbind_thread(user_id, thread_id)
 
-        # Inject a temporary in-memory-only group_chat_id so _handle_new_window
-        # can discover the chat.  Direct dict mutation avoids _save_state() —
-        # if the process crashes, the placeholder won't persist to state.json.
         _placeholder_key = f"{user_id}:0"
         if chat_id != user_id:
             thread_router.group_chat_ids[_placeholder_key] = chat_id
@@ -451,7 +389,6 @@ async def _recreate_dead_topics(
 
 
 async def sync_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /sync — audit state and show report."""
     user = update.effective_user
     if not user or not update.message:
         return
@@ -464,7 +401,6 @@ async def sync_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> N
     client = PTBTelegramClient(update.get_bot())
     await _sync_live_topic_names(client)
     audit = await _run_audit()
-    # Probe Telegram topics for live bindings (async, needs client)
     dead_issues = await _probe_dead_topics(client)
     audit.issues.extend(dead_issues)
     text, keyboard = _format_report(audit)
@@ -475,10 +411,8 @@ async def sync_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def handle_sync_fix(query: CallbackQuery) -> None:
-    """Run all fix operations, re-audit, and edit message in place."""
     await safe_edit(query, "🔧 Fixing…", reply_markup=None)
 
-    # A destructive repair requires a confirmed multiplexer listing.
     all_windows = await list_windows_for_reconciliation(tmux_manager)
     if all_windows is None:
         await safe_edit(
@@ -491,13 +425,11 @@ async def handle_sync_fix(query: CallbackQuery) -> None:
     live_ids = {w.window_id for w in all_windows}
     live_pairs = [(w.window_id, w.window_name) for w in all_windows]
 
-    # Audit before fixing to count fixable issues
     client = PTBTelegramClient(query.get_bot())
     pre_audit = session_manager.audit_state(live_ids, live_pairs)
     dead_issues = await _probe_dead_topics(client)
     pre_audit.issues.extend(dead_issues)
 
-    # Run state cleanup operations
     try:
         session_manager.sync_display_names(live_pairs)
         session_manager.prune_stale_state(live_ids)
@@ -513,17 +445,12 @@ async def handle_sync_fix(query: CallbackQuery) -> None:
 
     await _sync_live_topic_names(client, live_ids)
 
-    # Enforcement: adopt orphans first so stale same-name topics can be rebound.
     await _adopt_orphaned_windows(client, pre_audit.issues)
     closed_count, manual_close_count = await _close_ghost_topics(
         client, pre_audit.issues
     )
     recreated_count = await _recreate_dead_topics(client, pre_audit.issues)
 
-    # Re-audit and compute actual fixed count (handles partial failures).
-    # No skip_threads here: successful recreations use a new thread_id (old
-    # one is unbound and won't be probed), while failed ones restore the old
-    # binding and must be re-probed to avoid inflating actual_fixed.
     post_audit = await _run_audit()
     post_dead = await _probe_dead_topics(client)
     post_audit.issues.extend(post_dead)
@@ -539,7 +466,6 @@ async def handle_sync_fix(query: CallbackQuery) -> None:
 
 
 async def handle_sync_dismiss(query: CallbackQuery) -> None:
-    """Delete the sync dialog message."""
     if query.message is None:
         return
     try:

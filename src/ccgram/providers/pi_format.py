@@ -1,20 +1,3 @@
-"""Pi transcript formatting — parse pi session JSONL v3 into AgentMessages.
-
-Pi wraps every turn in a top-level envelope::
-
-    {"type": "message", "id": "...", "parentId": "...",
-     "message": {"role": "...", "content": [...] or str, ...}}
-
-Recognised roles: ``user``, ``assistant``, ``toolResult``, ``bashExecution``,
-``branchSummary``, ``compactionSummary``, ``custom``.  Content blocks inside
-an assistant message are ``text``, ``thinking`` (with ``thinkingSignature``),
-``toolCall`` (pi's equivalent of Anthropic's ``tool_use``), and ``image``.
-
-Parsers return ``(messages, pending)`` tuples so callers can chain pending-tool
-state across batches exactly like the Claude/Codex providers.  ``pending``
-maps ``toolCallId -> (raw_name, display_name)``.
-"""
-
 from __future__ import annotations
 
 import json
@@ -24,7 +7,6 @@ from ccgram.expandable_quote import format_expandable_quote
 from ccgram.providers.base import AgentMessage
 from ccgram.tool_format import format_tool_line
 
-# Pi hands us native tool names in lowercase; ccgram UI expects title-case.
 _TOOL_NAME_ALIASES: dict[str, str] = {
     "bash": "Bash",
     "read": "Read",
@@ -44,17 +26,14 @@ _TOOL_NAME_ALIASES: dict[str, str] = {
 _TOOL_RESULT_QUOTE_THRESHOLD = 3
 _PENDING_TUPLE_LEN = 2
 
-# Pending value: (raw_name, display_name).
 Pending = dict[str, tuple[str, str]]
 
 
 def canonical_tool_name(name: str) -> str:
-    """Map pi tool names to display-friendly names."""
     return _TOOL_NAME_ALIASES.get(name.lower(), name)
 
 
 def extract_text(content: Any) -> str:
-    """Collect visible text from a pi content field (string or block array)."""
     if isinstance(content, str):
         return content
     if not isinstance(content, list):
@@ -69,7 +48,6 @@ def extract_text(content: Any) -> str:
 
 
 def format_tool_result_text(raw_name: str, output: str) -> str:
-    """Render long outputs as ``N lines`` + expandable quote, short ones inline."""
     if not output:
         return "Done"
     line_count = output.count("\n") + 1
@@ -92,7 +70,6 @@ _TOOL_SUMMARY_ARG_KEYS: dict[str, tuple[str, ...]] = {
 
 
 def _first_string_arg(args: dict[str, Any], keys: tuple[str, ...]) -> str:
-    """Return the first non-empty string value among *keys*."""
     for key in keys:
         value = args.get(key)
         if isinstance(value, str) and value:
@@ -101,7 +78,6 @@ def _first_string_arg(args: dict[str, Any], keys: tuple[str, ...]) -> str:
 
 
 def _tool_call_summary(raw_name: str, args: dict[str, Any]) -> str:
-    """Pick a short, recognisable summary for a tool call."""
     display = canonical_tool_name(raw_name)
 
     preferred = _first_string_arg(args, _TOOL_SUMMARY_ARG_KEYS.get(raw_name, ()))
@@ -115,7 +91,6 @@ def _tool_call_summary(raw_name: str, args: dict[str, Any]) -> str:
 
 
 def parse_session_header(entry: dict[str, Any]) -> dict[str, str] | None:
-    """Extract ``id`` and ``cwd`` from a pi ``type: session`` entry."""
     if entry.get("type") != "session":
         return None
     session_id = entry.get("id", "")
@@ -128,7 +103,6 @@ def parse_session_header(entry: dict[str, Any]) -> dict[str, str] | None:
 
 
 def read_session_header(file_path: str) -> dict[str, str] | None:
-    """Open a pi transcript file and parse its first line as a session header."""
     try:
         with open(file_path, encoding="utf-8") as fh:
             first = fh.readline()
@@ -148,7 +122,6 @@ def read_session_header(file_path: str) -> dict[str, str] | None:
 def _tool_call_block_to_message(
     block: dict[str, Any], pending: Pending, timestamp: str | None = None
 ) -> AgentMessage:
-    """Convert one ``toolCall`` content block into a tool_use AgentMessage."""
     call_id_raw = block.get("id", "")
     call_id = call_id_raw if isinstance(call_id_raw, str) else ""
     raw_name_raw = block.get("name", "unknown")
@@ -172,7 +145,6 @@ def _tool_call_block_to_message(
 def _assistant_error_message(
     msg: dict[str, Any], timestamp: str | None = None
 ) -> AgentMessage | None:
-    """Emit an inline notice when pi records an LLM/provider error."""
     if msg.get("stopReason") != "error":
         return None
     err = msg.get("errorMessage")
@@ -191,7 +163,6 @@ def _parse_assistant_content(
     pending: Pending,
     timestamp: str | None,
 ) -> list[AgentMessage]:
-    """Extract text and tool_use messages from assistant content."""
     if isinstance(content, str):
         if content.strip():
             return [
@@ -229,12 +200,6 @@ def _parse_assistant_content(
 def parse_assistant(
     msg: dict[str, Any], pending: Pending, timestamp: str | None = None
 ) -> tuple[list[AgentMessage], Pending]:
-    """Split an assistant message into ordered text + tool_use AgentMessages.
-
-    ``stopReason=="error"`` always appends an ``errorMessage`` notice — pi can
-    emit errors alongside partial content, so gating on empty output would hide
-    the failure.
-    """
     content = msg.get("content", [])
     messages = _parse_assistant_content(content, pending, timestamp)
     err_msg = _assistant_error_message(msg, timestamp)
@@ -247,7 +212,6 @@ def parse_assistant(
 def parse_tool_result(
     msg: dict[str, Any], pending: Pending, timestamp: str | None = None
 ) -> tuple[list[AgentMessage], Pending]:
-    """Resolve a ``role: toolResult`` back to its call via ``toolCallId``."""
     call_id_value = msg.get("toolCallId", "")
     call_id = call_id_value if isinstance(call_id_value, str) else ""
 
@@ -289,7 +253,6 @@ def parse_tool_result(
 def parse_bash_execution(
     msg: dict[str, Any], timestamp: str | None = None
 ) -> list[AgentMessage]:
-    """Pi can persist shell runs as a dedicated ``bashExecution`` role."""
     if msg.get("excludeFromContext"):
         return []
 
@@ -329,7 +292,6 @@ def parse_bash_execution(
 
 
 def parse_user(msg: dict[str, Any], timestamp: str | None = None) -> list[AgentMessage]:
-    """Render a user turn — pi stores content as ``[{type:text,text:...}]``."""
     text = extract_text(msg.get("content", "")).strip()
     if not text:
         return []
@@ -339,10 +301,6 @@ def parse_user(msg: dict[str, Any], timestamp: str | None = None) -> list[AgentM
 
 
 def normalize_pending(value: Any) -> Pending:
-    """Coerce the cross-batch pending dict into the ``(raw, display)`` shape.
-
-    Older batches may have stored plain strings (tool name only); accept both.
-    """
     out: Pending = {}
     if not isinstance(value, dict):
         return out

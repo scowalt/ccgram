@@ -1,5 +1,3 @@
-"""Tests for resilient Telegram polling requests."""
-
 from pathlib import Path
 import tomllib
 from unittest.mock import AsyncMock, MagicMock, patch

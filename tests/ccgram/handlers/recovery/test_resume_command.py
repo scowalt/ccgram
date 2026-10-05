@@ -788,7 +788,6 @@ class TestBuildResumeKeyboard:
             }
         ]
         kb = _build_resume_keyboard(sessions)
-        # First row is the project header, second row is the session button.
         button = kb.inline_keyboard[1][0]
         assert "today" in button.text
         assert "Implement auth" in button.text

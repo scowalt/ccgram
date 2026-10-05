@@ -1,5 +1,3 @@
-"""Tests for SessionMonitor."""
-
 import json
 import os
 import time
@@ -201,11 +199,8 @@ def _winref(window_id: str, command: str) -> WindowRef:
 
 
 class TestEmitUnboundWindowEvents:
-    """The unbound-window discovery path is capability-gated (Task 10)."""
-
     @pytest.fixture
     def wired(self, monkeypatch) -> None:
-        # Wire thread_router via a real SessionManager and start empty.
         thread_router.reset()
         window_store.window_states.clear()
         monkeypatch.setattr(SessionManager, "_load_state", lambda self: None)
@@ -370,7 +365,6 @@ class TestEmitKnownUnboundWindowEvents:
     async def test_known_unbound_window_surfaces(
         self, monitor: SessionMonitor, wired
     ) -> None:
-        """A tab in session_map but not bound fires NewWindowEvent (self-heal path)."""
         cb = AsyncMock(spec=lambda event: None)
         monitor.set_new_window_callback(cb)
 
@@ -381,7 +375,7 @@ class TestEmitKnownUnboundWindowEvents:
                 "window_name": "agent",
             }
         }
-        live_window_ids = {"w1:t1"}  # tab is live
+        live_window_ids = {"w1:t1"}
 
         await monitor._emit_known_unbound_window_events(current_map, live_window_ids)
 
@@ -427,7 +421,6 @@ class TestEmitKnownUnboundWindowEvents:
     async def test_bound_window_not_re_fired(
         self, monitor: SessionMonitor, wired
     ) -> None:
-        """A tab already bound to a topic is skipped (no spam)."""
         thread_router.bind_thread(100, 42, "w1:t1")
         cb = AsyncMock(spec=lambda event: None)
         monitor.set_new_window_callback(cb)
@@ -444,37 +437,33 @@ class TestEmitKnownUnboundWindowEvents:
     async def test_dead_window_not_surfaced(
         self, monitor: SessionMonitor, wired
     ) -> None:
-        """A session_map entry for a window not in live_window_ids is skipped."""
         cb = AsyncMock(spec=lambda event: None)
         monitor.set_new_window_callback(cb)
 
         current_map = {
             "w9:t9": {"session_id": "S9", "cwd": "/gone", "window_name": "dead"}
         }
-        live_window_ids: set[str] = set()  # tab not alive / __*__-filtered
+        live_window_ids: set[str] = set()
 
         await monitor._emit_known_unbound_window_events(current_map, live_window_ids)
 
         cb.assert_not_called()
 
     async def test_star_tab_not_surfaced(self, monitor: SessionMonitor, wired) -> None:
-        """__*__ tabs are absent from live_window_ids (filtered by list_windows) — never adopted."""
         cb = AsyncMock(spec=lambda event: None)
         monitor.set_new_window_callback(cb)
 
-        # Simulate a __*__ tab somehow in session_map; list_windows filtered it out
         current_map = {
             "w0:t0": {"session_id": "S0", "cwd": "/self", "window_name": "__main__"}
         }
-        live_window_ids: set[str] = set()  # __*__ absent from list_windows output
+        live_window_ids: set[str] = set()
 
         await monitor._emit_known_unbound_window_events(current_map, live_window_ids)
 
         cb.assert_not_called()
 
     async def test_multiple_windows_mixed(self, monitor: SessionMonitor, wired) -> None:
-        """Only unbound live tabs surface; bound and dead are skipped."""
-        thread_router.bind_thread(100, 1, "w1:t1")  # already bound
+        thread_router.bind_thread(100, 1, "w1:t1")
         cb = AsyncMock(spec=lambda event: None)
         monitor.set_new_window_callback(cb)
 
@@ -483,7 +472,7 @@ class TestEmitKnownUnboundWindowEvents:
             "w2:t2": {"session_id": "S2", "cwd": "/b", "window_name": "unbound"},
             "w3:t3": {"session_id": "S3", "cwd": "/c", "window_name": "dead"},
         }
-        live_window_ids = {"w1:t1", "w2:t2"}  # w3:t3 not live
+        live_window_ids = {"w1:t1", "w2:t2"}
 
         await monitor._emit_known_unbound_window_events(current_map, live_window_ids)
 
@@ -491,17 +480,14 @@ class TestEmitKnownUnboundWindowEvents:
         assert surfaced == {"w2:t2"}
 
     async def test_no_callback_is_noop(self, monitor: SessionMonitor, wired) -> None:
-        """No callback registered — returns without error."""
         current_map = {
             "w1:t1": {"session_id": "S1", "cwd": "/repo", "window_name": "agent"}
         }
-        # No callback set — must not raise
         await monitor._emit_known_unbound_window_events(current_map, {"w1:t1"})
 
     async def test_callback_error_does_not_crash(
         self, monitor: SessionMonitor, wired
     ) -> None:
-        """Callback error is caught and logged; loop continues."""
         cb = AsyncMock(side_effect=RuntimeError("boom"))
         monitor.set_new_window_callback(cb)
 
@@ -511,19 +497,12 @@ class TestEmitKnownUnboundWindowEvents:
         }
         live_window_ids = {"w1:t1", "w2:t2"}
 
-        # Should not raise despite the callback error
         await monitor._emit_known_unbound_window_events(current_map, live_window_ids)
 
         assert cb.call_count == 2
 
 
 class TestLoadCurrentSessionMapBackend:
-    """The monitor's session_map reader must honor the active backend prefix.
-
-    Regression: under herdr the hook writes ``herdr:<wN:tM>`` tab keys; a tmux-only
-    ``ccgram:`` prefix silently dropped every herdr session so none was tracked.
-    """
-
     async def test_herdr_keys_surface(
         self, monitor: SessionMonitor, monkeypatch
     ) -> None:
@@ -554,7 +533,6 @@ class TestLoadCurrentSessionMapBackend:
 
 class TestPerWindowProviderResolution:
     async def test_process_session_file_passes_window_id(self, tmp_path) -> None:
-        """_process_session_file uses window_id for per-window provider resolution."""
         session_file = tmp_path / "transcript.jsonl"
         line = '{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}\n'
         session_file.write_text(line)
@@ -580,7 +558,6 @@ class TestPerWindowProviderResolution:
     async def test_process_session_file_prefers_transcript_provider_when_stale(
         self, tmp_path
     ) -> None:
-        """A stale hookful provider should not suppress Codex transcript parsing."""
         session_file = (
             tmp_path / ".codex" / "sessions" / "2026" / "03" / "23" / "transcript.jsonl"
         )
@@ -623,7 +600,6 @@ class TestPerWindowProviderResolution:
         assert new_messages[0].text == "hello codex"
 
     async def test_check_for_updates_maps_session_to_window(self, tmp_path) -> None:
-        """check_for_updates passes correct window_id to _process_session_file."""
         session_file = tmp_path / "transcript.jsonl"
         session_file.write_text('{"type":"summary"}\n')
 
@@ -804,7 +780,9 @@ class TestStaleTranscriptAdoption:
             },
         }
 
-        with patch("ccgram.session_monitor.get_provider_for_window", return_value=provider):
+        with patch(
+            "ccgram.session_monitor.get_provider_for_window", return_value=provider
+        ):
             current_map = await monitor._detect_and_cleanup_changes(raw)
 
         assert current_map["@2"]["session_id"] == "old-session"
@@ -843,7 +821,9 @@ class TestStaleTranscriptAdoption:
             },
         }
 
-        with patch("ccgram.session_monitor.get_provider_for_window", return_value=provider):
+        with patch(
+            "ccgram.session_monitor.get_provider_for_window", return_value=provider
+        ):
             current_map = await monitor._detect_and_cleanup_changes(raw)
 
         assert current_map["@2"]["session_id"] == "first-old-session"
@@ -897,7 +877,9 @@ class TestStaleTranscriptAdoption:
             },
         }
 
-        with patch("ccgram.session_monitor.get_provider_for_window", return_value=provider):
+        with patch(
+            "ccgram.session_monitor.get_provider_for_window", return_value=provider
+        ):
             current_map = await monitor._detect_and_cleanup_changes(raw)
 
         assert current_map["@2"]["session_id"] == "shared-new-session"
@@ -973,14 +955,12 @@ class TestCorruptedOffset:
             projects_path=tmp_path,
             state_file=tmp_path / "ms.json",
         )
-        # Set offset to mid-line1 (corrupted)
         tracked = TrackedSession(
             session_id="t1",
             file_path=str(session_file),
             last_byte_offset=10,
         )
         entries = await monitor._read_new_lines(tracked, session_file)
-        # Should recover: skip rest of line1, read line2
         assert len(entries) == 1
         text = entries[0].get("message", {}).get("content", [{}])[0].get("text", "")
         assert text == "second"
@@ -988,7 +968,6 @@ class TestCorruptedOffset:
 
 class TestCheckForUpdates:
     async def test_new_session_initializes_to_eof_fallback(self, tmp_path) -> None:
-        """Fallback path: entries without transcript_path use scan_projects."""
         projects_path = tmp_path / "projects"
         work_dir = tmp_path / "myproj"
         work_dir.mkdir()
@@ -1034,7 +1013,6 @@ class TestCheckForUpdates:
         assert tracked.last_byte_offset == session_file.stat().st_size
 
     async def test_new_session_initializes_to_eof_direct(self, tmp_path) -> None:
-        """Primary path: entries with transcript_path are read directly."""
         session_file = tmp_path / "transcript.jsonl"
         session_file.write_text('{"type":"summary"}\n')
 
@@ -1136,7 +1114,6 @@ class TestCheckForUpdates:
         monitor.state.update_session(tracked)
         monitor._file_mtimes["sess-1"] = original_mtime
 
-        # Append content without changing mtime (simulate sub-second write)
         with open(session_file, "a") as f:
             f.write(
                 '{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}\n'
@@ -1162,7 +1139,6 @@ class TestCheckForUpdates:
         mock_read.assert_called_once()
 
     async def test_direct_path_reads_new_content(self, tmp_path) -> None:
-        """Primary path reads new content from transcript_path."""
         session_file = tmp_path / "transcript.jsonl"
         line = '{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}\n'
         session_file.write_text(line)
@@ -1171,7 +1147,6 @@ class TestCheckForUpdates:
             projects_path=tmp_path / "projects",
             state_file=tmp_path / "ms.json",
         )
-        # Pre-track at offset 0 so it reads the content
         tracked = TrackedSession(
             session_id="sess-d",
             file_path=str(session_file),
@@ -1432,7 +1407,6 @@ class TestScanProjects:
             projects_path=projects_path,
             state_file=tmp_path / "ms.json",
         )
-        # active_cwds value is irrelevant — the skip happens before cwd matching
         active_cwds = {"anything"}
         result = monitor._scan_projects_sync(active_cwds)
         assert result == []
@@ -1447,8 +1421,6 @@ class TestScanProjects:
 
 
 class TestGeminiTranscriptReading:
-    """Test _read_new_lines delegation for Gemini with supports_incremental_read=True."""
-
     _GEMINI_META = {
         "sessionId": "g1",
         "projectHash": "h1",
@@ -1483,17 +1455,14 @@ class TestGeminiTranscriptReading:
             "ccgram.transcript_reader.get_provider_for_window",
             return_value=_make_gemini_provider(),
         ):
-            # First read: gets everything
             entries = await monitor._read_new_lines(tracked, transcript, window_id="@5")
-            assert len(entries) == 4  # meta + 3 messages
+            assert len(entries) == 4
             assert entries[0]["sessionId"] == "g1"
             assert entries[1]["type"] == "user"
 
-            # Second read: nothing new
             entries = await monitor._read_new_lines(tracked, transcript, window_id="@5")
             assert len(entries) == 0
 
-            # Third read: append a message
             with open(transcript, "a", encoding="utf-8") as f:
                 f.write(
                     json.dumps({"type": "gemini", "content": [{"text": "bye"}]}) + "\n"
@@ -1511,8 +1480,6 @@ class TestGeminiTranscriptReading:
             projects_path=tmp_path / "projects",
             state_file=tmp_path / "ms.json",
         )
-        # We start tracking with offset pointing at the end of the file
-        # (simulating a session that was already active at startup)
         st = transcript.stat()
         tracked = TrackedSession(
             session_id="g1",
@@ -1521,7 +1488,6 @@ class TestGeminiTranscriptReading:
         )
         monitor.state.update_session(tracked)
 
-        # Append new message
         with open(transcript, "a", encoding="utf-8") as f:
             f.write(
                 json.dumps({"type": "gemini", "content": [{"text": "new!"}]}) + "\n"

@@ -1,16 +1,3 @@
-"""Click-based CLI for ccgram.
-
-Defines the top-level command group and the ``run`` subcommand with all
-bot-configuration flags.  Precedence: CLI flag > env var > .env > default.
-``apply_args_to_env()`` sets os.environ for explicitly provided flags so
-Config reads the overridden values.
-
-Every subcommand body lazy-loads its workers (``run_bot``, ``hook_main``,
-``status_main``, ``doctor_main``).  ``ccgram --help`` and
-``ccgram --version`` stay snappy and avoid pulling PTB / aiohttp /
-provider chains; only the invoked subcommand pays its import cost.
-"""
-
 import os
 from pathlib import Path
 
@@ -36,11 +23,7 @@ def _validate_non_negative_int(
 
 
 class _DefaultToRun(click.Group):
-    """Click group that runs the ``run`` command when invoked without a subcommand."""
-
     def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
-        # Prepend "run" only for run-command flags. Bare unknown tokens should
-        # stay unknown subcommands so removed commands like "msg" fail clearly.
         if args and args[0].startswith("-") and args[0] not in {"--help", "--version"}:
             args = ["run", *args]
         return super().parse_args(ctx, args)
@@ -58,9 +41,6 @@ def cli(ctx: click.Context) -> None:
         ctx.invoke(run_cmd)
 
 
-# --- run command -----------------------------------------------------------
-
-# Mapping: click option name → environment variable name
 _FLAG_TO_ENV: list[tuple[str, str]] = [
     ("config_dir", "CCGRAM_DIR"),
     ("allowed_users", "ALLOWED_USERS"),
@@ -80,11 +60,6 @@ _FLAG_TO_ENV: list[tuple[str, str]] = [
 
 
 def apply_args_to_env(**kwargs: object) -> None:
-    """Set environment variables from explicitly provided CLI flags.
-
-    Call BEFORE Config instantiation to ensure CLI flags take precedence.
-    Only sets env vars for flags that were explicitly provided (not None).
-    """
     verbose = kwargs.get("verbose", False)
     log_level = kwargs.get("log_level")
 
@@ -103,7 +78,7 @@ def apply_args_to_env(**kwargs: object) -> None:
             os.environ[env_var] = str(value)
 
 
-@cli.command("run")
+@cli.command("run", help="Start the bot with optional overrides.")
 @click.option("-v", "--verbose", is_flag=True, help="Enable debug logging.")
 @click.option(
     "--log-level",
@@ -208,19 +183,14 @@ def apply_args_to_env(**kwargs: object) -> None:
     help="Topic emoji color scheme: 'system' (green=active) or 'user' (green=ready for me).",
 )
 def run_cmd(**kwargs: object) -> None:
-    """Start the bot with optional overrides."""
     apply_args_to_env(**kwargs)
 
-    # Lazy: defer subcommand import until that command is invoked, keeping `ccgram --help` fast
     from .main import run_bot
 
     run_bot()
 
 
-# --- hook command ----------------------------------------------------------
-
-
-@cli.command("hook")
+@cli.command("hook", help="Agent session tracking hook.")
 @click.option(
     "--install",
     is_flag=True,
@@ -244,8 +214,6 @@ def run_cmd(**kwargs: object) -> None:
     help="Agent provider hook contract to use.",
 )
 def hook_cmd(install: bool, uninstall: bool, status: bool, provider_name: str) -> None:
-    """Agent session tracking hook."""
-    # Lazy: defer subcommand import until that command is invoked, keeping `ccgram --help` fast
     from .hook import hook_main
 
     hook_main(
@@ -256,29 +224,16 @@ def hook_cmd(install: bool, uninstall: bool, status: bool, provider_name: str) -
     )
 
 
-# --- status command --------------------------------------------------------
-
-
-@cli.command("status")
+@cli.command("status", help="Show running state.")
 def status_cmd() -> None:
-    """Show running state."""
-    # Lazy: defer subcommand import until that command is invoked, keeping `ccgram --help` fast
     from .status_cmd import status_main
 
     status_main()
 
 
-# --- doctor command --------------------------------------------------------
-
-
-# --- doctor command --------------------------------------------------------
-
-
-@cli.command("doctor")
+@cli.command("doctor", help="Validate setup and diagnose issues.")
 @click.option("--fix", is_flag=True, help="Auto-fix issues where possible.")
 def doctor_cmd(fix: bool) -> None:
-    """Validate setup and diagnose issues."""
-    # Lazy: defer subcommand import until that command is invoked, keeping `ccgram --help` fast
     from .doctor_cmd import doctor_main
 
     doctor_main(fix=fix)

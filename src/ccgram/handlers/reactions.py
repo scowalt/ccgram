@@ -1,21 +1,3 @@
-"""Telegram message reactions helper (Bot API 7.0+).
-
-Provides `react()` for setting a single emoji reaction on a message, with:
-- Allowed-emoji validation against the Telegram-allowed reaction set
-  (sourced from `telegram.constants.ReactionEmoji`).
-- Per-(chat_id, message_id) dedupe to skip redundant API calls.
-- Graceful failure: BadRequest/TelegramError caught, optional callback toast
-  is shown as a user-visible fallback.
-
-Intended replacement for `query.answer(...)` toasts where a persistent
-acknowledgement is more useful than a one-shot popup (voice send, /send
-delivery, shell command lifecycle).
-
-Note on allowed reactions: Telegram restricts bots to a fixed set of free
-emoji reactions; the audit's preferred icons (✅ ❌ 📬 ⚙) are not on the
-list. Semantic constants below map intent → an allowed emoji approximation.
-"""
-
 from __future__ import annotations
 
 import contextlib
@@ -35,8 +17,6 @@ logger = structlog.get_logger()
 ALLOWED_REACTIONS: Final[frozenset[str]] = frozenset(e.value for e in ReactionEmoji)
 
 
-# Semantic constants — guaranteed members of ALLOWED_REACTIONS.
-# Pick values that map cleanly to the audit's intents while staying valid.
 REACT_SEEN: Final[str] = "👀"
 REACT_THINKING: Final[str] = "🤔"
 REACT_DONE: Final[str] = "🔥"
@@ -45,8 +25,6 @@ REACT_INBOX: Final[str] = "✍"
 REACT_RUNNING: Final[str] = "⚡"
 
 
-# LRU cap on the dedupe cache. A long-lived bot reacts to many messages, so an
-# unbounded dict would grow without bound (one entry per ever-reacted message).
 _MAX_DEDUPE_ENTRIES: Final[int] = 2000
 
 _last_reaction: OrderedDict[tuple[int, int], str] = OrderedDict()
@@ -61,14 +39,6 @@ async def react(
     fallback_query: CallbackQuery | None = None,
     fallback_toast: str | None = None,
 ) -> bool:
-    """Set an emoji reaction on a message.
-
-    Returns True on success (including dedupe skip). Returns False when
-    the emoji is not in `ALLOWED_REACTIONS` or the API call fails. On
-    failure, if `fallback_query` and `fallback_toast` are both provided,
-    the callback is answered with the toast text as a user-visible
-    fallback.
-    """
     if emoji not in ALLOWED_REACTIONS:
         logger.warning("Disallowed reaction emoji %r — falling back", emoji)
         await _maybe_toast(fallback_query, fallback_toast)
@@ -98,7 +68,6 @@ async def react(
 
 
 async def clear_reaction(client: TelegramClient, chat_id: int, message_id: int) -> bool:
-    """Remove all reactions from a message."""
     try:
         await client.set_message_reaction(
             chat_id=chat_id,

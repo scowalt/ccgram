@@ -1,25 +1,3 @@
-"""Remote Control outcome probe — classify Claude /remote-control result.
-
-After Claude's ``/remote-control`` is fired (status-bubble button or a
-forwarded slash command) there is no built-in signal of the outcome:
-silent on success, silent on "feature unavailable", silent on failure.
-This module arms a short-lived background probe that captures the pane,
-classifies the result with a pure regex classifier, and posts a single
-status reply in the bound topic.
-
-Both trigger paths call ``arm_rc_probe(window_id, client)``. The
-per-window ``rc_probe_state`` field on ``WindowState`` de-dupes
-double-taps; it is in-memory only (never serialized — see
-``window_state_store``) and is safe to drop on restart.
-
-Capability-gated to the Claude provider — other providers return early
-and keep their existing "not supported by <provider>" behaviour.
-
-Key components: ``RCOutcome`` result type, the pure
-``classify_rc_output``, ``arm_rc_probe`` (double-tap guard + capability
-gate), the ``_classify_loop`` polling coroutine, ``_send_outcome_reply``.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -54,15 +32,10 @@ _UNAVAILABLE_RE = re.compile(
     r"(?i)\b(?:not available|requires|upgrade|permission denied|unknown command)\b"
 )
 _FAILED_RE = re.compile(r"(?i)\b(?:error|failed)\b")
-# The /remote-control (or /rc) echo we just sent. "unavailable"/"failed"
-# words are only the command's outcome when they appear at or after this
-# line — pre-RC scrollback routinely contains "error"/"requires"/etc.
 _RC_ANCHOR_RE = re.compile(r"(?i)/remote-control\b|/rc\b")
 
 
 class RCOutcomeKind(Enum):
-    """Classification of the pane state after /remote-control was sent."""
-
     SUCCESS = "success"
     UNAVAILABLE = "unavailable"
     FAILED = "failed"
@@ -71,27 +44,11 @@ class RCOutcomeKind(Enum):
 
 @dataclass(frozen=True, slots=True)
 class RCOutcome:
-    """Result of classifying captured pane output.
-
-    ``detail`` carries the matched URL for ``SUCCESS`` and the offending
-    line for ``UNAVAILABLE`` / ``FAILED``; empty for ``PENDING`` and for
-    a success with no URL in the captured text.
-    """
-
     kind: RCOutcomeKind
     detail: str = ""
 
 
 def classify_rc_output(text: str) -> RCOutcome:
-    """Classify the last lines of captured pane text.
-
-    Priority: a Remote Control URL means RC actually started (success)
-    and wins everywhere. Otherwise "unavailable" / generic error lines
-    count only at or after the most recent ``/remote-control`` (``/rc``)
-    echo — pre-RC scrollback routinely contains "error"/"failed"/
-    "requires" and must not be misread as the command's outcome. No
-    anchor and no URL → pending (keep polling).
-    """
     if not text:
         return RCOutcome(RCOutcomeKind.PENDING)
 
@@ -137,7 +94,6 @@ def _format_reply(outcome: RCOutcome) -> str:
 async def _send_outcome_reply(
     client: TelegramClient, window_id: str, outcome: RCOutcome
 ) -> None:
-    """Post the classified outcome in every topic bound to this window."""
     text = _format_reply(outcome)
     for user_id, thread_id, bound_wid in thread_router.iter_thread_bindings():
         if bound_wid != window_id:
@@ -147,12 +103,6 @@ async def _send_outcome_reply(
 
 
 async def _classify_loop(window_id: str, client: TelegramClient) -> None:
-    """Capture + classify the pane until a verdict or the timeout.
-
-    Resets ``rc_probe_state`` on every exit path (verdict, timeout,
-    exception, cancellation) so a tracebacked probe never leaves the
-    window stuck in ``armed``.
-    """
     try:
         await asyncio.sleep(_FIRST_CAPTURE_DELAY)
         start = time.monotonic()
@@ -162,8 +112,6 @@ async def _classify_loop(window_id: str, client: TelegramClient) -> None:
             if outcome.kind is not RCOutcomeKind.PENDING:
                 await _send_outcome_reply(client, window_id, outcome)
                 return
-            # Lazy: polling_state import cycle (status ↔ polling) — same
-            # reason status_bar_actions defers terminal_screen_buffer.
             from ..polling.polling_state import terminal_screen_buffer
 
             if terminal_screen_buffer.is_rc_active(window_id):
@@ -178,11 +126,6 @@ async def _classify_loop(window_id: str, client: TelegramClient) -> None:
 
 
 def arm_rc_probe(window_id: str, client: TelegramClient) -> None:
-    """Arm the RC outcome probe for a window (Claude provider only).
-
-    No-op when the window's provider is not Claude or when a probe is
-    already ``armed`` for the window (double-tap guard).
-    """
     provider = get_provider_for_window(
         window_id, provider_name=window_query.get_window_provider(window_id)
     )

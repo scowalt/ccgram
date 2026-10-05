@@ -1,14 +1,3 @@
-"""Status-bubble button callbacks (recall, last reply, get file, esc, keys).
-
-Handles inline keyboard callbacks originating from the status-bubble keyboard
-built by status_bubble.py:
-  - CB_STATUS_RECALL: Send one of the last shown commands directly
-  - CB_STATUS_LAST_REPLY: Show last assistant reply (or last shell output)
-  - CB_STATUS_GET_FILE: Open the file browser to download a file from agent CWD
-  - CB_STATUS_ESC: Send Escape key from status message
-  - CB_STATUS_KEY: Quick key dispatch (arrow keys, enter, esc, etc.)
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -56,18 +45,11 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-_KEY_REFRESH_DELAY = 0.3  # seconds — debounce window for rapid key taps
+_KEY_REFRESH_DELAY = 0.3
 _pending_key_refreshes: dict[tuple[int, str], asyncio.Task[None]] = {}
 
 
 def build_dashboard_button(window_id: str, user_id: int) -> InlineKeyboardButton | None:
-    """Return the 🪟 Dashboard WebApp button, or None when Mini App is disabled.
-
-    Mints a short-lived signed token scoped to ``(window_id, user_id)`` and
-    embeds it in the URL so the Mini App can verify the request without an
-    extra round-trip. Returns ``None`` (button hidden) when
-    ``CCGRAM_MINIAPP_BASE_URL`` is unset.
-    """
     base_url = config.miniapp_base_url
     if not base_url:
         return None
@@ -82,8 +64,6 @@ def build_dashboard_button(window_id: str, user_id: int) -> InlineKeyboardButton
 
 @topic_state.register("window")
 def _clear_key_refreshes(window_id: str) -> None:
-    """Cancel in-flight debounced key-refresh tasks for a closing window."""
-    # Lazy: pane delimiter constant
     from ..callback_data import CB_PANE_DELIMITER
 
     stale = [
@@ -100,7 +80,6 @@ def _clear_key_refreshes(window_id: str) -> None:
 async def _handle_status_recall(
     query: CallbackQuery, user_id: int, data: str, update: Update
 ) -> None:
-    """Handle CB_STATUS_RECALL: send one of the last shown commands directly."""
     rest = data[len(CB_STATUS_RECALL) :]
     if ":" not in rest:
         await query.answer("Invalid data")
@@ -125,9 +104,6 @@ async def _handle_status_recall(
         await query.answer("Stale status button", show_alert=True)
         return
 
-    # Lazy: command_history → messaging_pipeline → status → status_bar_actions
-    # forms a cycle when imported at module top. Keep lazy.
-    # Lazy: command_history ↔ status cycle
     from ..command_history import get_history, record_command
 
     history = get_history(user_id, thread_id, limit=idx + 1)
@@ -137,15 +113,12 @@ async def _handle_status_recall(
 
     command = history[idx]
 
-    # Lazy: providers/__init__ pulls in process_detection / shell_infra.
     from ...providers import get_provider_for_window
 
     provider = get_provider_for_window(
         window_id, provider_name=window_query.get_window_provider(window_id)
     )
     if provider.capabilities.chat_first_command_path:
-        # Lazy: shell.shell_commands ↔ status via the approval callback
-        # wired in bootstrap.
         from ..shell.shell_commands import handle_shell_message
 
         await handle_shell_message(
@@ -168,7 +141,6 @@ async def _handle_status_recall(
 
 
 async def _handle_status_esc(query: CallbackQuery, user_id: int, data: str) -> None:
-    """Handle CB_STATUS_ESC: send Escape key from status message."""
     window_id = data[len(CB_STATUS_ESC) :]
     if not user_owns_window(user_id, window_id):
         await query.answer("Not your session", show_alert=True)
@@ -184,7 +156,6 @@ async def _handle_status_esc(query: CallbackQuery, user_id: int, data: str) -> N
 async def _handle_keys(
     query: CallbackQuery, user_id: int, data: str, update: Update
 ) -> None:
-    """Handle CB_KEYS_PREFIX: send a quick key from screenshot keyboard."""
     rest = data[len(CB_KEYS_PREFIX) :]
     colon_idx = rest.find(":")
     if colon_idx < 0:
@@ -219,9 +190,6 @@ async def _handle_keys(
         )
     await query.answer(KEY_LABELS.get(key_id, key_id))
 
-    # Lazy: live_view ↔ screenshot_callbacks ↔ status pair through the
-    # screenshot keyboard wiring.
-    # Lazy: live ↔ status cycle
     from ..live.live_view import get_live_view
 
     thread_id = get_thread_id(update)
@@ -238,11 +206,6 @@ def _schedule_key_refresh(
     window_id: str,
     pane_id: str | None,
 ) -> None:
-    """Schedule a debounced screenshot refresh after a key press.
-
-    Cancels any pending refresh for the same target so rapid key taps
-    (e.g. Down Down Down) only render the final terminal state.
-    """
     refresh_key = (user_id, target)
     prev = _pending_key_refreshes.pop(refresh_key, None)
     if prev and not prev.done():
@@ -278,13 +241,9 @@ def _schedule_key_refresh(
     _pending_key_refreshes[refresh_key] = asyncio.create_task(_do_refresh())
 
 
-# --- Dispatch for status-bar action callbacks ---
-
-
 async def _handle_last_reply(
     query: CallbackQuery, user_id: int, data: str, update: Update
 ) -> None:
-    """Handle CB_STATUS_LAST_REPLY: show last assistant reply or shell output."""
     window_id = data[len(CB_STATUS_LAST_REPLY) :]
     if not user_owns_window(user_id, window_id):
         await query.answer("Not your session", show_alert=True)
@@ -294,7 +253,6 @@ async def _handle_last_reply(
         await query.answer("Use in a topic", show_alert=True)
         return
     chat_id = thread_router.resolve_chat_id(user_id, thread_id)
-    # Lazy: last_reply ↔ status_bar_actions cycle
     from ..last_reply import send_last_reply
 
     await send_last_reply(
@@ -310,8 +268,6 @@ async def _handle_get_file(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle CB_STATUS_GET_FILE: open the file browser for the agent CWD."""
-    # Lazy: pathlib used only for the CWD existence check
     from pathlib import Path
 
     window_id = data[len(CB_STATUS_GET_FILE) :]
@@ -331,7 +287,6 @@ async def _handle_get_file(
     if chat_id is None:
         await query.answer("Use in a topic", show_alert=True)
         return
-    # Lazy: send subpackage ↔ status_bar_actions cycle
     from ..send import open_file_browser
 
     await open_file_browser(
@@ -352,7 +307,6 @@ async def _handle_status_bar_action(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Route status-bar action callbacks to the correct handler."""
     with_update = {
         CB_STATUS_RECALL: _handle_status_recall,
         CB_KEYS_PREFIX: _handle_keys,

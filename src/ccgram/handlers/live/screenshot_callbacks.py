@@ -1,17 +1,3 @@
-"""Screenshot callback handlers.
-
-Handles inline keyboard callbacks for screenshot UI:
-  - CB_SCREENSHOT_REFRESH: Refresh an existing screenshot
-  - CB_LIVE_START: Start auto-refreshing live terminal view
-  - CB_LIVE_STOP: Stop live view and revert to screenshot keyboard
-  - CB_STATUS_SCREENSHOT: Take a screenshot from status message
-  - CB_PANE_SCREENSHOT: Take a screenshot of a specific pane
-
-Status-bar button callbacks (notify, recall, esc, remote, keys) are in
-status_bar_actions.py. Toolbar callbacks (CB_TOOLBAR_*) are in
-toolbar_callbacks.py.
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -52,7 +38,6 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-# key_id -> (tmux_key, enter, literal)
 KEYS_SEND_MAP: dict[str, tuple[str, bool, bool]] = {
     "up": ("Up", False, False),
     "dn": ("Down", False, False),
@@ -65,7 +50,6 @@ KEYS_SEND_MAP: dict[str, tuple[str, bool, bool]] = {
     "cc": ("C-c", False, False),
 }
 
-# key_id -> display label (shown in callback answer toast)
 KEY_LABELS: dict[str, str] = {
     "up": "\u2191",
     "dn": "\u2193",
@@ -82,11 +66,6 @@ KEY_LABELS: dict[str, str] = {
 def build_screenshot_keyboard(
     window_id: str, pane_id: str | None = None
 ) -> InlineKeyboardMarkup:
-    """Build inline keyboard for screenshot: control keys + refresh.
-
-    When *pane_id* is given, keys and refresh target that specific pane
-    instead of the window's active pane.
-    """
     target = f"{window_id}{CB_PANE_DELIMITER}{pane_id}" if pane_id else window_id
 
     def btn(label: str, key_id: str) -> InlineKeyboardButton:
@@ -117,7 +96,6 @@ def build_screenshot_keyboard(
 async def _handle_live_start(
     query: CallbackQuery, user_id: int, data: str, update: Update
 ) -> None:
-    """Handle CB_LIVE_START: start auto-refreshing live view."""
     target = data[len(CB_LIVE_START) :]
     window_id, pane_id = parse_target(target)
     if not user_owns_window(user_id, window_id):
@@ -128,7 +106,6 @@ async def _handle_live_start(
         await query.answer("Use in a topic", show_alert=True)
         return
 
-    # Lazy: live_view ↔ screenshot_callbacks bidirectional cycle.
     from .live_view import (
         LiveViewState,
         build_live_keyboard,
@@ -193,7 +170,6 @@ async def _handle_live_start(
 async def _handle_live_stop(
     query: CallbackQuery, user_id: int, data: str, update: Update
 ) -> None:
-    """Handle CB_LIVE_STOP: stop live view and revert to screenshot keyboard."""
     target = data[len(CB_LIVE_STOP) :]
     window_id, pane_id = parse_target(target)
     if not user_owns_window(user_id, window_id):
@@ -204,7 +180,6 @@ async def _handle_live_stop(
         await query.answer("Use in a topic", show_alert=True)
         return
 
-    # Lazy: live_view ↔ screenshot_callbacks bidirectional cycle.
     from .live_view import stop_live_view
 
     stop_live_view(user_id, thread_id)
@@ -217,9 +192,7 @@ async def _handle_live_stop(
 async def _handle_pane_screenshot(
     query: CallbackQuery, user_id: int, data: str, update: Update
 ) -> None:
-    """Handle CB_PANE_SCREENSHOT: screenshot a specific pane."""
     rest = data[len(CB_PANE_SCREENSHOT) :]
-    # Format: <window_id>|<pane_id> — delimiter is | so herdr ids (w2:t1, w2:p1) round-trip
     delim_idx = rest.find(CB_PANE_DELIMITER)
     if delim_idx < 0:
         await query.answer("Invalid data")
@@ -267,11 +240,6 @@ async def handle_screenshot_callback(
     update: Update,
     _context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle screenshot-related callbacks only.
-
-    Status-bar actions (notify, recall, esc, remote, keys) are dispatched
-    separately by status_bar_actions.py.
-    """
     with_update = {
         CB_LIVE_START: _handle_live_start,
         CB_LIVE_STOP: _handle_live_stop,
@@ -293,7 +261,6 @@ async def handle_screenshot_callback(
 
 
 async def _handle_refresh(query: CallbackQuery, user_id: int, data: str) -> None:
-    """Handle CB_SCREENSHOT_REFRESH: refresh an existing screenshot."""
     target = data[len(CB_SCREENSHOT_REFRESH) :]
     window_id, pane_id = parse_target(target)
     if not user_owns_window(user_id, window_id):
@@ -332,7 +299,6 @@ async def _handle_refresh(query: CallbackQuery, user_id: int, data: str) -> None
 async def _handle_status_screenshot(
     query: CallbackQuery, user_id: int, data: str, update: Update
 ) -> None:
-    """Handle CB_STATUS_SCREENSHOT: take screenshot from status message."""
     window_id = data[len(CB_STATUS_SCREENSHOT) :]
     if not user_owns_window(user_id, window_id):
         await query.answer("Not your session", show_alert=True)
@@ -367,25 +333,13 @@ async def _handle_status_screenshot(
         await query.answer("Failed to send screenshot", show_alert=True)
 
 
-# ------------------------------------------------------------------
-# Command handlers (moved from bot.py)
-# ------------------------------------------------------------------
-
-
 async def screenshot_command(
     update: Update, _context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Capture and send a terminal screenshot for the current topic."""
-    # Lazy: command-handler entry; loaded by callback_registry.  Hoisting
-    # config / utils / message_sender pulls handler registration into
-    # this module's import graph and breaks reset-for-testing.
-    # Lazy: config singleton resolved at call time so tests can swap it
     from ...config import config
 
-    # Lazy: utils pulls in chat-id helpers that reach back into handlers
     from ...utils import handle_general_topic_message, is_general_topic
 
-    # Lazy: messaging_pipeline ↔ live cycle through status_bubble
     from ..messaging_pipeline.message_sender import safe_reply
 
     user = update.effective_user
@@ -425,7 +379,6 @@ async def screenshot_command(
         await safe_reply(update.message, "\u274c Failed to capture terminal.")
         return
 
-    # Lazy: only needed when rendering the screenshot payload
     import io
 
     png_bytes = await text_to_image(pane_text, with_ansi=True)
@@ -446,19 +399,12 @@ async def screenshot_command(
 
 
 async def live_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Open auto-refreshing live terminal view directly, skipping the screenshot step."""
-    # Lazy: same callback-registry contract as screenshot_command, plus
-    # the live_view ↔ screenshot_callbacks cycle.
-    # Lazy: config singleton resolved at call time so tests can swap it
     from ...config import config
 
-    # Lazy: utils pulls in chat-id helpers that reach back into handlers
     from ...utils import handle_general_topic_message, is_general_topic
 
-    # Lazy: messaging_pipeline ↔ live cycle through status_bubble
     from ..messaging_pipeline.message_sender import safe_reply
 
-    # Lazy: live_view registers callbacks against this module on import
     from .live_view import (
         LiveViewState,
         build_live_keyboard,
@@ -537,26 +483,19 @@ async def live_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def panes_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> None:  # noqa: C901
-    """List all panes in the current topic's window."""
-    # Lazy: same callback-registry contract as screenshot_command.
     from telegram import InlineKeyboardMarkup
 
-    # Lazy: config singleton resolved at call time so tests can swap it
     from ...config import config
 
-    # Lazy: utils pulls in chat-id helpers that reach back into handlers
     from ...utils import handle_general_topic_message, is_general_topic
 
-    # Lazy: window_state_ports proxy not yet wired at module load
     from ...window_state_ports.pane_state import (
         get_pane_lifecycle_notify,
         get_pane_projection,
     )
 
-    # Lazy: messaging_pipeline ↔ live cycle through status_bubble
     from ..messaging_pipeline.message_sender import safe_reply
 
-    # Lazy: pane_callbacks ↔ screenshot_callbacks cycle through the toolbar
     from .pane_callbacks import build_pane_buttons, build_pane_lifecycle_button
 
     user = update.effective_user
@@ -594,7 +533,6 @@ async def panes_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
-    # Lazy: polling_state imports many handler symbols transitively.
     from ..polling.polling_state import interactive_strategy
 
     lines = [f"\U0001f4d0 {len(panes)} panes in window\n"]
@@ -629,9 +567,6 @@ async def panes_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> 
     rows.append([build_pane_lifecycle_button(window_id, enabled=lifecycle_on)])
     keyboard = InlineKeyboardMarkup(rows) if rows else None
     await safe_reply(update.message, "\n".join(lines), reply_markup=keyboard)
-
-
-# --- Registry dispatch entry point ---
 
 
 @register(

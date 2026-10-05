@@ -520,8 +520,6 @@ def _mock_update_status_patches(*, pyte_result, provider):
             return_value=provider,
         )
     )
-    # observe.py has its own bindings — patch those too so _resolve_status
-    # sees the mocked provider/tmux_manager/window_query.
     stack.enter_context(
         patch(
             "ccgram.handlers.polling.window_tick.observe.get_provider_for_window",
@@ -532,8 +530,6 @@ def _mock_update_status_patches(*, pyte_result, provider):
         patch("ccgram.handlers.polling.window_tick.observe.tmux_manager")
     )
     observe_tm.get_pane_title = AsyncMock(return_value="")
-    # Model a tmux window (the "@0" test fixture): no native agent status, so
-    # _resolve_status does not take the herdr native-status gap-fill path.
     observe_tm.capabilities.native_agent_status = False
     stack.enter_context(
         patch("ccgram.handlers.polling.window_tick.observe.window_query")
@@ -1043,7 +1039,6 @@ class TestProviderSwitchChain:
             mock_sm.set_window_provider.side_effect = _set_provider
             mock_config.return_value = "ccgram:"
 
-            # Step 1: claude → shell. User exits claude, pane shows fish.
             mock_detect.return_value = "shell"
             mock_tmux.find_window_by_id = AsyncMock(
                 return_value=MagicMock(
@@ -1061,7 +1056,6 @@ class TestProviderSwitchChain:
             mock_clear_capture.assert_not_called()
             mock_clear_orch.assert_not_called()
 
-            # Step 2: shell → gemini. User runs `gemini` in shell.
             mock_detect.return_value = "gemini"
             mock_tmux.find_window_by_id = AsyncMock(
                 return_value=MagicMock(
@@ -1074,10 +1068,8 @@ class TestProviderSwitchChain:
             assert state.provider_name == "gemini"
             mock_clear_capture.assert_called_once_with("@7")
             mock_clear_orch.assert_called_once_with("@7")
-            # No new ensure_setup call — we're leaving shell, not entering it.
             assert mock_ensure.await_count == 1
 
-            # Step 3: gemini → shell. User exits gemini, pane shows fish.
             mock_detect.return_value = "shell"
             mock_tmux.find_window_by_id = AsyncMock(
                 return_value=MagicMock(

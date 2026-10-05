@@ -1,23 +1,3 @@
-"""Git-worktree helpers for the new-topic flow.
-
-When a new topic targets an eligible git repository, the directory flow
-offers an opt-in step: keep the current branch (today's behaviour) or
-spin up a fresh worktree on a new branch. This module is the pure git
-plumbing behind that step — eligibility probing, branch-name
-suggestion with collision avoidance, path/slug derivation, branch-name
-validation, and worktree creation.
-
-All git access goes through ``subprocess.run`` against the host ``git``
-(already a runtime requirement). Nothing here touches Telegram, tmux,
-or window state; the picker UI and wiring live in
-``directory_browser`` / ``directory_callbacks``.
-
-Key components: ``WorktreeEligibility`` (frozen result),
-``check_worktree_eligibility``, ``suggest_branch_name``,
-``slug_for_path``, ``worktree_path_for``, ``validate_branch_name``,
-``create_worktree`` (raises ``WorktreeError`` on failure).
-"""
-
 from __future__ import annotations
 
 import re
@@ -36,18 +16,11 @@ _MAX_BRANCH_LEN = 200
 
 
 class WorktreeError(RuntimeError):
-    """Raised when ``git worktree add`` fails."""
+    pass
 
 
 @dataclass(frozen=True, slots=True)
 class WorktreeEligibility:
-    """Outcome of probing a directory for worktree eligibility.
-
-    ``reason`` is populated only when ``eligible`` is False and exists
-    for debug logging — it is never surfaced in the UI (the step is
-    silently skipped when ineligible).
-    """
-
     eligible: bool
     repo_path: Path | None
     current_branch: str | None
@@ -94,13 +67,6 @@ def _has_merge_or_rebase(git_dir: Path) -> bool:
 
 
 def check_worktree_eligibility(path: Path) -> WorktreeEligibility:
-    """Probe *path* for git-worktree eligibility.
-
-    Eligible only when *path* is inside a non-bare work tree, on a
-    named branch (not detached HEAD), with no merge or rebase in
-    progress. A dirty work tree is still eligible (the picker warns
-    but allows it). Any git/OS error is treated as ineligible.
-    """
     try:
         inside = _git(path, "rev-parse", "--is-inside-work-tree")
         if inside.returncode != 0 or inside.stdout.strip() != "true":
@@ -159,14 +125,6 @@ def _kebab(text: str) -> str:
 
 
 def suggest_branch_name(topic_title: str | None, repo_path: Path) -> str:
-    """Suggest a non-colliding ``ccg/`` branch name.
-
-    Prefers ``ccg/<kebab(topic-title)>``; on collision appends the
-    smallest ``-<n>`` (n≥2) that is free. With no usable title, falls
-    back to ``ccg/agent-<n>`` (smallest n≥1 that is free). Collisions
-    are checked against both local branches and existing worktree
-    branches.
-    """
     used = _used_branch_names(repo_path)
     kebab = _kebab(topic_title) if topic_title else ""
     if kebab:
@@ -184,22 +142,14 @@ def suggest_branch_name(topic_title: str | None, repo_path: Path) -> str:
 
 
 def slug_for_path(branch: str) -> str:
-    """Worktree directory name for *branch* (``/`` → ``-``)."""
     return branch.replace("/", "-")
 
 
 def worktree_path_for(repo_path: Path, slug: str) -> Path:
-    """Worktree location: ``<repo>.worktrees/<slug>`` next to the repo."""
     return repo_path.parent / f"{repo_path.name}.worktrees" / slug
 
 
 def validate_branch_name(name: str) -> bool:
-    """Return True if *name* is a valid git branch name.
-
-    Rejects empty, over-long, and leading-dash names up front (the
-    last would be misread as a git option), then defers to
-    ``git check-ref-format --branch``.
-    """
     if not name or name.startswith("-") or len(name) > _MAX_BRANCH_LEN:
         return False
     try:
@@ -216,11 +166,6 @@ def validate_branch_name(name: str) -> bool:
 
 
 def create_worktree(repo_path: Path, branch: str, worktree_path: Path) -> None:
-    """Create a worktree at *worktree_path* on a new *branch* off HEAD.
-
-    Raises ``WorktreeError`` with git's stderr on any failure (branch
-    already exists, target path occupied, git/OS error).
-    """
     try:
         worktree_path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:

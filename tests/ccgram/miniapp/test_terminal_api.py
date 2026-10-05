@@ -27,8 +27,6 @@ async def _ws_authenticate(ws, *, user_id: int = 42) -> None:
 
 
 class FakePane:
-    """Capture stub returning a queue of frames; blocks once exhausted."""
-
     def __init__(self, frames: list[str | None]):
         self.frames = list(frames)
         self.calls: list[str] = []
@@ -37,7 +35,6 @@ class FakePane:
         self.calls.append(window_id)
         if self.frames:
             return self.frames.pop(0)
-        # Idle forever — keeps the websocket alive between assertions.
         await asyncio.sleep(0.5)
         return None
 
@@ -91,7 +88,6 @@ async def test_websocket_closes_when_first_frame_user_mismatch(app_client):
     c, _ = app_client
     tok = sign_token(bot_token=BOT, window_id=WINDOW_ID, user_id=42)
     async with c.ws_connect(f"/ws/terminal/{tok}") as ws:
-        # Wrong user id → server closes with auth-failed code.
         await _ws_authenticate(ws, user_id=999)
         msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
         assert msg.type == WSMsgType.CLOSE
@@ -99,8 +95,6 @@ async def test_websocket_closes_when_first_frame_user_mismatch(app_client):
 
 
 async def test_websocket_closes_on_auth_timeout(app_client):
-    # Server gives clients _WS_AUTH_TIMEOUT (5s) to send the auth frame; we
-    # poke the timeout knob to keep the test snappy.
     from ccgram.miniapp.api import terminal as term_mod
 
     original = term_mod._WS_AUTH_TIMEOUT
@@ -132,7 +126,6 @@ async def test_websocket_streams_hello_then_frame(app_client):
         assert frame["hash"]
         await ws.close()
 
-    # First frame plus possibly a couple of poll calls.
     assert capture.calls and capture.calls[0] == WINDOW_ID
 
 
@@ -148,9 +141,6 @@ async def test_websocket_dedupes_unchanged_frames(app_client):
         assert frame_a["type"] == "frame"
         assert frame_a["text"] == "screen one"
 
-        # The next pane capture returns identical text — no new frame should
-        # arrive within a short window. The third capture flips text and
-        # produces "screen two".
         frame_b = await _read_one(ws, timeout=2.0)
         assert frame_b["type"] == "frame"
         assert frame_b["text"] == "screen two"
@@ -165,13 +155,11 @@ async def test_websocket_disconnect_stops_capture():
         tok = sign_token(bot_token=BOT, window_id=WINDOW_ID, user_id=42)
         async with c.ws_connect(f"/ws/terminal/{tok}") as ws:
             await _ws_authenticate(ws)
-            await _read_one(ws)  # hello
-            await _read_one(ws)  # first frame
+            await _read_one(ws)
+            await _read_one(ws)
             await ws.close()
-        # Drain in-flight tick, then snapshot call count.
         await asyncio.sleep(0.05)
         baseline = len(capture.calls)
-        # No further captures should fire after the socket is closed.
         await asyncio.sleep(0.1)
         assert len(capture.calls) == baseline
 
@@ -193,7 +181,7 @@ async def test_websocket_capture_failure_emits_error_then_continues():
         tok = sign_token(bot_token=BOT, window_id=WINDOW_ID, user_id=42)
         async with c.ws_connect(f"/ws/terminal/{tok}") as ws:
             await _ws_authenticate(ws)
-            await _read_one(ws)  # hello
+            await _read_one(ws)
             err = await _read_one(ws, timeout=1.0)
             assert err["type"] == "error"
             assert "capture failed" in err["message"]
@@ -211,7 +199,7 @@ async def test_websocket_truncates_oversized_frame():
         tok = sign_token(bot_token=BOT, window_id=WINDOW_ID, user_id=42)
         async with c.ws_connect(f"/ws/terminal/{tok}") as ws:
             await _ws_authenticate(ws)
-            await _read_one(ws)  # hello
+            await _read_one(ws)
             frame = await _read_one(ws)
             assert frame["type"] == "frame"
             assert len(frame["text"].encode("utf-8")) <= MAX_FRAME_BYTES
@@ -225,7 +213,7 @@ async def test_websocket_handles_none_capture_as_empty():
         tok = sign_token(bot_token=BOT, window_id=WINDOW_ID, user_id=42)
         async with c.ws_connect(f"/ws/terminal/{tok}") as ws:
             await _ws_authenticate(ws)
-            await _read_one(ws)  # hello
+            await _read_one(ws)
             frame = await _read_one(ws)
             assert frame["type"] == "frame"
             assert frame["text"] == ""
@@ -234,7 +222,6 @@ async def test_websocket_handles_none_capture_as_empty():
 
 def test_register_clamps_low_poll_interval():
     app = _make_app(FakePane([]), interval=0.0001)
-    # Stash key uses module-private AppKey but we can still iterate values.
     intervals = [v for k, v in app.items() if isinstance(v, float)]
     assert intervals
     assert min(intervals) >= 0.05
@@ -371,7 +358,6 @@ async def test_default_pane_list_handles_missing_window(monkeypatch):
 
 
 async def test_panes_endpoint_accepts_init_data_header():
-    """HTTP /api/panes/* must read initData from the header, not the URL."""
 
     async def pane_list(_window_id: str) -> list[dict]:
         return [{"pane_id": "%1", "active": True, "name": "x"}]
@@ -382,10 +368,8 @@ async def test_panes_endpoint_accepts_init_data_header():
     )
     async with TestClient(TestServer(app)) as c:
         tok = sign_token(bot_token=BOT, window_id=WINDOW_ID, user_id=42)
-        # Without header → 403.
         resp = await c.get(f"/api/panes/{tok}")
         assert resp.status == 403
-        # With valid header → 200.
         resp = await c.get(f"/api/panes/{tok}", headers=_init_headers())
         assert resp.status == 200
         body = await resp.json()

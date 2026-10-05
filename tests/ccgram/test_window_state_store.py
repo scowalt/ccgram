@@ -1,5 +1,3 @@
-"""Tests for WindowStateStore — pane management, serialization, helpers."""
-
 from __future__ import annotations
 
 import pytest
@@ -457,7 +455,6 @@ class TestBatchMode:
         assert store._save_calls == []  # type: ignore[attr-defined]
 
     def test_cycle_default_to_verbose(self, store: WindowStateStore) -> None:
-        # Default is "ephemeral"; one cycle advances to "verbose".
         assert store.cycle_batch_mode("@1") == "verbose"
 
     def test_cycle_ephemeral_to_verbose(self, store: WindowStateStore) -> None:
@@ -469,7 +466,6 @@ class TestBatchMode:
         assert store.cycle_batch_mode("@1") == "batched"
 
     def test_cycle_full_loop(self, store: WindowStateStore) -> None:
-        # ephemeral -> verbose -> batched -> ephemeral.
         assert store.cycle_batch_mode("@1") == "verbose"
         assert store.cycle_batch_mode("@1") == "batched"
         assert store.cycle_batch_mode("@1") == "ephemeral"
@@ -539,9 +535,6 @@ class TestSetWindowProvider:
     def test_hook_to_hook_switch_invokes_callback(
         self, store: WindowStateStore
     ) -> None:
-        """Regression: hook-to-hook switch (e.g. claude -> pi) must clear the stale
-        session_map.json entry, or the poll loop and the live hook fight each other
-        and spam 'Corrected provider' warnings every poll cycle."""
         called: list[str] = []
         store._on_hookless_provider_switch = called.append
         state = store.get_window_state("@1")
@@ -552,8 +545,6 @@ class TestSetWindowProvider:
     def test_hook_to_hook_switch_does_not_clear_session_fields(
         self, store: WindowStateStore
     ) -> None:
-        """Hook providers update session/transcript via their own hooks;
-        the session fields must survive a hook-to-hook provider change."""
         state = store.get_window_state("@1")
         state.provider_name = "claude"
         state.session_id = "keep-me"
@@ -738,14 +729,6 @@ class TestToolCallVisibilitySerialization:
 
 
 class TestWindowStateFullPersistenceCharacterization:
-    """Pin every persisted feature group on WindowState.to_dict/from_dict.
-
-    Locks the persisted shape before the window-state feature-port migration
-    so the per-port refactors cannot silently drop or rename a persisted
-    field. Each block covers one feature group exposed to handlers, the
-    Mini App, or providers.
-    """
-
     def test_full_round_trip_preserves_all_feature_groups(self) -> None:
         original = WindowState(
             session_id="sid-abc",
@@ -842,8 +825,6 @@ class TestWindowStateFullPersistenceCharacterization:
 
 
 class TestWindowStateTransientRcProbeFieldsNotSerialized:
-    """RC probe lifecycle fields are in-memory only — must never survive a round trip."""
-
     def test_rc_probe_state_absent_from_to_dict(self) -> None:
         ws = WindowState(cwd="/p")
         ws.rc_probe_state = "armed"
@@ -861,8 +842,6 @@ class TestWindowStateTransientRcProbeFieldsNotSerialized:
         assert loaded.rc_armed_at is None
 
     def test_rc_probe_state_ignored_if_present_in_input_dict(self) -> None:
-        # Even if a corrupt state.json carries the transient field, the
-        # dataclass constructor must drop it on the floor.
         loaded = WindowState.from_dict(
             {
                 "session_id": "s",

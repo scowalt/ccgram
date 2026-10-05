@@ -1,5 +1,3 @@
-"""Tests for the /split command handler."""
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 

@@ -1,15 +1,3 @@
-"""Regression test: parse_session_map() must work without SessionManager wiring.
-
-The fix here pins the contract that ``parse_session_map`` is a pure free
-function. It used to crash with ``RuntimeError("WindowStateStore not yet
-wired")`` whenever the caller imported it without first instantiating
-``SessionManager`` — pytest's conftest masked the regression because it
-imports SessionManager at collection time.
-
-Runs the assertion in a fresh interpreter so conftest cannot wire the
-proxy first.
-"""
-
 from __future__ import annotations
 
 import json

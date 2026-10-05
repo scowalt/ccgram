@@ -1,9 +1,3 @@
-"""Integration tests for Whisper transcription — real Config + filesystem.
-
-Tests get_transcriber() factory with real env vars and .env file loading,
-covering all provider resolution paths and configuration edge cases.
-"""
-
 import pytest
 
 from ccgram.whisper.httpx_transcriber import OpenAICompatTranscriber

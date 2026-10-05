@@ -1,6 +1,3 @@
-"""Tests for PaneStatusStrategy: classification, transitions, dead-pane reconciliation,
-state upserts, and the async scan_window orchestration."""
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -139,9 +136,6 @@ class TestReconcileDeadPanes:
         strategy.record_pane_state("@0", "%2", "idle", provider="claude")
         strategy.record_pane_state("@0", "%3", "idle", provider="claude")
         gone = strategy.reconcile_dead_panes("@0", {"%1"})
-        # reconcile_dead_panes returns (pane_id, name) tuples so callers
-        # can preserve the user-assigned name in lifecycle notifications
-        # after the PaneInfo is removed.
         assert sorted(pid for pid, _ in gone) == ["%2", "%3"]
         assert window_store.get_pane("@0", "%2") is None
         assert window_store.get_pane("@0", "%3") is None
@@ -158,8 +152,6 @@ class TestScanWindowSinglePane:
     async def test_records_active_single_pane(
         self, strategy: PaneStatusStrategy
     ) -> None:
-        # Mark the window scanned so first-scan suppression doesn't drop
-        # the "created" transition this test is verifying.
         strategy._scanned_windows.add("@0")
         bot = AsyncMock(spec=Bot)
         on_blocked = AsyncMock()
@@ -177,9 +169,6 @@ class TestScanWindowSinglePane:
     async def test_first_scan_suppresses_created_transition(
         self, strategy: PaneStatusStrategy
     ) -> None:
-        # First scan must not announce an existing pane as freshly born;
-        # this prevents bot restart from spamming "pane created" for
-        # single-pane windows that were already alive.
         bot = AsyncMock(spec=Bot)
         on_blocked = AsyncMock()
         with patch("ccgram.multiplexer.multiplexer") as mock_tm:
@@ -187,8 +176,6 @@ class TestScanWindowSinglePane:
             transitions = await strategy.scan_window(
                 bot, 1, "@0", 42, on_blocked=on_blocked
             )
-        # The pane state still gets recorded for future transition tracking,
-        # but no transition is surfaced for the "created" event.
         assert window_store.get_pane("@0", "%1") is not None
         assert all(
             not (t.pane_id == "%1" and t.prev_state is None) for t in transitions
@@ -227,7 +214,6 @@ class TestScanWindowMultiPane:
             )
             mock_tm.capture_pane_by_id = AsyncMock(return_value="text")
             await strategy.scan_window(bot, 1, "@0", 42, on_blocked=on_blocked)
-        # Active pane is never captured
         mock_tm.capture_pane_by_id.assert_called_once_with("%2", window_id="@0")
         assert _require_pane("@0", "%1").state == "active"
         assert _require_pane("@0", "%2").state == "idle"
@@ -235,8 +221,6 @@ class TestScanWindowMultiPane:
     async def test_blocked_pane_surfaces_alert(
         self, strategy: PaneStatusStrategy
     ) -> None:
-        # Mark window already scanned so first-scan suppression doesn't
-        # drop the "blocked" transition this test verifies.
         strategy._scanned_windows.add("@0")
         bot = AsyncMock(spec=Bot)
         on_blocked = AsyncMock()

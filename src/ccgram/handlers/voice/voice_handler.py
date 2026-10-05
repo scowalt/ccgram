@@ -1,13 +1,3 @@
-"""Voice message handler — download OGG audio, transcribe via Whisper, and present confirm keyboard.
-
-Handles Telegram voice messages by downloading the audio, transcribing it using
-the configured Whisper provider, and showing the transcription with a confirm/discard
-inline keyboard so the user can review before sending to the agent.
-
-Key handler:
-  - handle_voice_message: main entry point for filters.VOICE
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -28,12 +18,10 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-# Max voice file size: 25 MB (Telegram Bot API getFile limit)
 _MAX_VOICE_SIZE = 25 * 1024 * 1024
 
 
 def _build_voice_keyboard(message_id: int) -> InlineKeyboardMarkup:
-    """Build the confirm/discard inline keyboard for a transcribed voice message."""
     return InlineKeyboardMarkup(
         [
             [
@@ -51,7 +39,6 @@ def _build_voice_keyboard(message_id: int) -> InlineKeyboardMarkup:
 
 
 async def _download_voice(message: Message, file_id: str) -> bytes | None:
-    """Download voice audio from Telegram. Returns bytes or None on error."""
     try:
         file = await message.get_bot().get_file(file_id)
         audio_bytearray = await file.download_as_bytearray()
@@ -63,7 +50,6 @@ async def _download_voice(message: Message, file_id: str) -> bytes | None:
 
 
 async def _get_transcriber_or_reply(message: Message) -> WhisperTranscriber | None:
-    """Resolve the configured transcriber and surface user-facing errors."""
     try:
         transcriber = get_transcriber()
     except (ValueError, RuntimeError) as e:
@@ -83,7 +69,6 @@ async def _get_transcriber_or_reply(message: Message) -> WhisperTranscriber | No
 async def _transcribe_audio(
     message: Message, transcriber: WhisperTranscriber, audio_bytes: bytes
 ) -> TranscriptionResult | None:
-    """Transcribe audio bytes. Returns TranscriptionResult or None on error."""
     try:
         return await transcriber.transcribe(audio_bytes, "voice.ogg")
     except (ValueError, RuntimeError) as e:
@@ -94,11 +79,6 @@ async def _transcribe_audio(
 async def _send_confirm_message(
     message: Message, text: str, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Send transcription with confirm/discard keyboard in a single message.
-
-    Uses the original voice message_id as the callback reference so the keyboard
-    is included on first send (no edit_reply_markup needed).
-    """
     keyboard = _build_voice_keyboard(message.message_id)
     confirm_msg = await safe_reply(
         message, f"🎤 Transcribed:\n\n{text}", reply_markup=keyboard
@@ -114,7 +94,6 @@ async def _send_confirm_message(
 async def handle_voice_message(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Handle incoming voice messages: transcribe and present confirm keyboard."""
     user = update.effective_user
     message = update.message
     if not user or not message or not message.voice:

@@ -1,11 +1,3 @@
-"""Claude task tracking from transcripts and hook-derived wait states.
-
-Maintains an in-memory per-window snapshot of Claude Code tasks so Telegram can
-render a live task list inside the existing status bubble. Transcript entries
-are the source of truth; hook notifications only provide transient wait-state
-headers and optimistic task completion hints.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -13,8 +5,6 @@ from typing import Any
 
 from .topic_state_registry import topic_state
 
-# Idle status sentinel — lives here (core) rather than in handlers/callback_data
-# to avoid a core → handler layer violation.
 IDLE_STATUS_TEXT = "\u2713 Ready"
 
 _WAITING_INPUT = "Waiting for input"
@@ -23,8 +13,6 @@ _PLAN_APPROVAL = "Plan approval needed"
 
 @dataclass(frozen=True, slots=True)
 class ClaudeTaskItem:
-    """A single Claude task row suitable for UI rendering."""
-
     task_id: str
     subject: str
     description: str = ""
@@ -37,8 +25,6 @@ class ClaudeTaskItem:
 
 @dataclass(frozen=True, slots=True)
 class ClaudeTaskSnapshot:
-    """Public snapshot of the current ordered Claude task list."""
-
     items: tuple[ClaudeTaskItem, ...]
     done_count: int
     open_count: int
@@ -91,8 +77,6 @@ def _iter_message_blocks(entry: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 class ClaudeTaskStateStore:
-    """In-memory Claude task tracker keyed by tmux window ID."""
-
     def __init__(self) -> None:
         self._window_states: dict[str, _WindowTaskState] = {}
         self._wait_headers: dict[str, str] = {}
@@ -157,28 +141,12 @@ class ClaudeTaskStateStore:
         return self._wait_headers.get(window_id)
 
     def set_last_status(self, window_id: str, status_text: str) -> None:
-        """Store the last non-idle status text for a window."""
         self._last_status[window_id] = status_text
 
     def get_last_status(self, window_id: str) -> str | None:
-        """Retrieve the last non-idle status text for a window."""
         return self._last_status.get(window_id)
 
     def format_completion_text(self, window_id: str, num_turns: int = 0) -> str:
-        """Build an enriched Ready message with task checklist and last status.
-
-        Returns:
-            Enriched text like::
-
-                ✓ Ready
-                ━━━━━━━━━━━━━━━━━━━━
-                ✔ write unit tests
-                ✔ run linter
-                3/3 tasks done · 12 turns
-
-            Falls back to ``"✓ Ready\\nLast: <status> · N turns"`` when no
-            task checklist, or bare ``"✓ Ready"`` when nothing available.
-        """
         snapshot = self.get_snapshot(window_id)
         last_status = self.get_last_status(window_id)
 
@@ -473,7 +441,6 @@ class ClaudeTaskStateStore:
 
 
 def classify_wait_message(message: str) -> str | None:
-    """Normalize Claude hook notification text into a short status header."""
     stripped = message.strip()
     if not stripped:
         return None
@@ -493,25 +460,17 @@ claude_task_state = ClaudeTaskStateStore()
 
 
 def get_claude_task_snapshot(window_id: str) -> ClaudeTaskSnapshot | None:
-    """Return the current Claude task snapshot for a window."""
     return claude_task_state.get_snapshot(window_id)
 
 
 def get_claude_wait_header(window_id: str) -> str | None:
-    """Return the current hook-derived wait header for a window."""
     return claude_task_state.get_wait_header(window_id)
 
 
 @topic_state.register("window")
 def clear_claude_task_window(window_id: str) -> None:
-    """Clear Claude task and wait state for a window."""
     claude_task_state.clear_window(window_id)
 
-
-# ── Subagent tracking ────────────────────────────────────────────────────
-# Active subagents per window, keyed by subagent_id. Maintained by
-# hook_events SubagentStart/SubagentStop handlers; consumed by status
-# bubble rendering (message_queue, polling_coordinator).
 
 _active_subagents: dict[str, dict[str, str]] = {}
 
@@ -519,17 +478,11 @@ _MAX_DISPLAYED_SUBAGENT_NAMES = 3
 
 
 def add_subagent(window_id: str, subagent_id: str, name: str) -> int:
-    """Record a started subagent. Returns the new active count for the window."""
     _active_subagents.setdefault(window_id, {})[subagent_id] = name
     return len(_active_subagents[window_id])
 
 
 def remove_subagent(window_id: str, subagent_id: str) -> tuple[str, int]:
-    """Remove a subagent. Returns ``(name, remaining_count)``.
-
-    Returns the recorded name (or a fallback) for the removed subagent and
-    the number of subagents still active for the window after removal.
-    """
     agents = _active_subagents.get(window_id)
     if not agents:
         return (subagent_id[:12] or "subagent", 0)
@@ -540,15 +493,10 @@ def remove_subagent(window_id: str, subagent_id: str) -> tuple[str, int]:
 
 
 def get_subagent_names(window_id: str) -> list[str]:
-    """Return names of active subagents for a window."""
     return list(_active_subagents.get(window_id, {}).values())
 
 
 def build_subagent_label(names: list[str]) -> str | None:
-    """Build a display label for active subagents.
-
-    Returns None if no subagents are active.
-    """
     if not names:
         return None
     if len(names) == 1:
@@ -559,5 +507,4 @@ def build_subagent_label(names: list[str]) -> str | None:
 
 @topic_state.register("window")
 def clear_subagents(window_id: str) -> None:
-    """Clear all subagent tracking for a window."""
     _active_subagents.pop(window_id, None)

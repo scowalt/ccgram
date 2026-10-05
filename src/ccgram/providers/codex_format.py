@@ -1,9 +1,3 @@
-"""Formatting helpers for interactive prompt text shown in Telegram.
-
-Currently used for Codex interactive prompts to keep approval controls readable
-when edit diffs are rendered in dense side-by-side terminal output.
-"""
-
 import re
 
 _ACTION_HINT_RE = re.compile(
@@ -27,7 +21,6 @@ _MAX_PREVIEW_CHARS = 120
 
 
 def format_codex_interactive_prompt(raw_text: str, ui_type: str | None = None) -> str:
-    """Format Codex interactive prompt text for Telegram readability."""
     _ = ui_type
     if not raw_text:
         return raw_text

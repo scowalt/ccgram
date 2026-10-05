@@ -1,5 +1,3 @@
-"""Integration tests for TmuxManager with a real tmux server."""
-
 import asyncio
 import os
 import shutil
@@ -13,8 +11,6 @@ pytestmark = [
     pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux not installed"),
 ]
 
-# Unique per xdist worker so parallel workers (``--dist=worksteal``) never share
-# the one real tmux session — concurrent create/kill on a shared name races.
 TEST_SESSION = (
     f"ccgram-test-integration-{os.environ.get('PYTEST_XDIST_WORKER', 'main')}"
 )
@@ -97,9 +93,6 @@ async def test_get_pane_title(tmux, tmp_path) -> None:
     assert isinstance(title, str)
 
 
-# ── Pane-level operations ────────────────────────────────────────────
-
-
 async def test_list_panes_single(tmux, tmp_path) -> None:
     ok, _msg, _name, window_id = await tmux.create_window(
         str(tmp_path), window_name="pane-list", start_agent=False
@@ -120,7 +113,6 @@ async def test_list_panes_multiple(tmux, tmp_path) -> None:
     )
     assert ok
 
-    # Split the window to create a second pane
     session = tmux.get_session()
     assert session
     window = session.windows.get(window_id=window_id)
@@ -129,7 +121,7 @@ async def test_list_panes_multiple(tmux, tmp_path) -> None:
     panes = await tmux.list_panes(window_id)
     assert len(panes) == 2
     pane_ids = [p.pane_id for p in panes]
-    assert len(set(pane_ids)) == 2  # IDs are unique
+    assert len(set(pane_ids)) == 2
     active_count = sum(1 for p in panes if p.active)
     assert active_count == 1
 
@@ -163,21 +155,12 @@ async def test_capture_pane_by_id_missing(tmux) -> None:
     assert output is None
 
 
-# ── ANSI capture ───────────────────────────────────────────────────────
-
-
 async def test_capture_pane_with_ansi(tmux, tmp_path) -> None:
     ok, _msg, _name, window_id = await tmux.create_window(
         str(tmp_path), window_name="ansi-test", start_agent=False
     )
     assert ok
 
-    # raw=True: plain shell window — use the direct send path, not the
-    # Claude-TUI path (vim-mode probe + 500ms Enter delay). The trailing
-    # `touch` of a sentinel file proves the shell actually executed the line,
-    # independent of pane capture: the command is always *echoed* on screen
-    # (so "red"/"normal"/the ESC sequence appear whether or not it ran), making
-    # the captured text alone an unreliable execution signal.
     done = tmp_path / ".ansi_executed"
     await tmux.send_keys(
         window_id,
@@ -192,10 +175,6 @@ async def test_capture_pane_with_ansi(tmux, tmp_path) -> None:
         if done.exists():
             break
 
-    # Some sandboxed CI environments run the pane under a shell that never
-    # executes piped keystrokes — skip there. But if the shell DID execute
-    # (sentinel present) yet ANSI capture lost the escape, that is a real
-    # capture regression and must fail, not skip.
     if not done.exists():
         pytest.skip("tmux pane shell did not execute the command in this environment")
 
@@ -205,9 +184,6 @@ async def test_capture_pane_with_ansi(tmux, tmp_path) -> None:
     assert "normal" in plain
     assert "\x1b[31m" in ansi
     assert "red" in ansi
-
-
-# ── YOLO bypass prompt detection ────────────────────────────────────────
 
 
 async def test_accept_yolo_confirmation_detects_prompt(tmux, tmp_path) -> None:
@@ -233,12 +209,6 @@ async def test_accept_yolo_confirmation_detects_prompt(tmux, tmp_path) -> None:
 
 
 async def test_create_window_with_special_char_launch_command(tmux, tmp_path) -> None:
-    """Launch command containing = and / is sent literally (regression for Gemini bug).
-
-    Gemini's hardened launch command is `env VAR=/path/to/file gemini`.
-    Without literal=True in pane.send_keys, the = and / are misinterpreted
-    as tmux key sequences and the command is corrupted.
-    """
     marker = "CCGRAM_LAUNCH_TEST_MARKER"
     launch_cmd = (
         f"env {marker}=special/path/value sh -c 'echo ${{CCGRAM_LAUNCH_TEST_MARKER}}'"

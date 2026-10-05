@@ -54,17 +54,10 @@ def test_register_all_registers_all_handler_kinds():
     assert by_kind.get(CommandHandler) == len(COMMAND_NAMES)
     assert by_kind.get(CallbackQueryHandler) == 1
     assert by_kind.get(InlineQueryHandler) == 1
-    # 8 MessageHandlers: FORUM_TOPIC_CLOSED, FORUM_TOPIC_EDITED, COMMAND fallback,
-    # TEXT, PHOTO, Document.ALL, VOICE, catch-all unsupported = 8
     assert by_kind.get(MessageHandler) == 8
 
 
 def test_register_all_command_handlers_precede_message_command_fallback():
-    """CommandHandlers must be registered before the COMMAND-fallback MessageHandler.
-
-    PTB dispatches the first matching handler — if the COMMAND fallback came
-    first, /history would never reach history_command.
-    """
     app = _make_app()
     register_all(app, filters.ALL)
 

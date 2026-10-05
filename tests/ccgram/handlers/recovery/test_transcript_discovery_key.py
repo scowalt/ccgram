@@ -1,9 +1,3 @@
-"""Regression: _find_and_register_transcript builds window_key from session_map_prefix().
-
-Before this fix the key was hardcoded as f"{config.tmux_session_name}:{window_id}",
-which never matched herdr session_map entries (keyed as "herdr:<tab_id>").
-"""
-
 from unittest.mock import MagicMock, patch
 
 from ccgram.config import config
@@ -26,16 +20,13 @@ def _identity(
 
 
 class TestFindAndRegisterTranscriptWindowKey:
-    """window_key passed to provider.discover_transcript matches the active backend prefix."""
-
     async def _run(self, window_id: str) -> str | None:
-        """Call _find_and_register_transcript and return the window_key seen by discover_transcript."""
         captured: list[str] = []
         provider = MagicMock()
 
         def _discover(cwd, window_key, *, max_age=None):
             captured.append(window_key)
-            return None  # no transcript found — enough to verify the key
+            return None
 
         provider.discover_transcript.side_effect = _discover
 

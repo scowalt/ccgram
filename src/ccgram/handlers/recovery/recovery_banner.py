@@ -1,24 +1,3 @@
-"""Dead-window recovery banner UX flow.
-
-Owns the banner the user sees in three situations:
-  - a tmux window died proactively (``dead`` mode),
-  - the user invoked ``/restore`` (``restore`` mode),
-  - the user opened the resume picker (``resume`` mode).
-
-Public surface:
-  - :class:`RecoveryBanner` / :data:`RecoveryMode`
-  - :func:`render_banner`, :func:`build_recovery_keyboard`
-  - :func:`_create_and_bind_window` (used by :mod:`resume_picker` to wire a
-    new window after the user picks a session)
-  - the per-button handlers ``_handle_back/_fresh/_continue/_resume/
-    _send_empty_state/_handle_browse/_handle_cancel``
-
-The dispatcher in :mod:`recovery_callbacks` routes button taps here. The
-sibling cycle with :mod:`resume_picker` is one-way at the top level
-(this module imports from the picker for ``scan_sessions_for_cwd``); the
-reverse direction lives behind a lazy import inside the picker.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -73,15 +52,6 @@ RecoveryMode = Literal["dead", "restore", "resume"]
 
 @dataclass(frozen=True)
 class RecoveryBanner:
-    """Inputs for the unified recovery banner.
-
-    The banner is the dead-window notification ccgram shows in three
-    situations: a window died proactively (``dead``), the user invoked
-    /restore (``restore``), or the user opened the resume picker
-    (``resume``). All three flow through ``render_banner`` so the keyboard,
-    subtitle, and copy stay consistent across entry points.
-    """
-
     chat_id: int
     thread_id: int
     window_id: str
@@ -96,15 +66,6 @@ def _validate_recovery_state(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> tuple[int, str] | None:
-    """Validate common recovery preconditions.
-
-    Supports two paths:
-      1. Text-handler path: PENDING_THREAD_ID and RECOVERY_WINDOW_ID in user_data.
-      2. Proactive notification path: no user_data state, validate via binding.
-
-    Returns ``(thread_id, old_window_id)`` on success, or ``None`` on
-    failure (caller should return early and call ``query.answer``).
-    """
     thread_id = get_thread_id(update)
     if thread_id is None:
         return None
@@ -135,15 +96,6 @@ def _validate_recovery_state(
 
 
 def render_banner(banner: RecoveryBanner) -> tuple[str, InlineKeyboardMarkup]:
-    """Render the recovery banner text and inline keyboard.
-
-    Returns the message body and a :class:`InlineKeyboardMarkup` ready to
-    pass to ``safe_reply`` / ``rate_limit_send_message``. The keyboard is
-    the provider-aware action keyboard from :func:`build_recovery_keyboard`
-    in every mode — modes only differ in the surrounding copy so the user
-    knows whether the banner appeared on its own or in response to a
-    request.
-    """
 
     keyboard = build_recovery_keyboard(banner.window_id)
     help_text = _recovery_help_text(banner.window_id)
@@ -165,12 +117,6 @@ def render_banner(banner: RecoveryBanner) -> tuple[str, InlineKeyboardMarkup]:
 
 
 def _recovery_help_text(window_id: str) -> str:
-    """Return a one-line subtitle explaining the available recovery actions.
-
-    Mirrors the keyboard layout in ``build_recovery_keyboard`` so users can
-    read what each button does without trial and error. Buttons hidden by
-    the active provider's capabilities are omitted from the subtitle too.
-    """
 
     caps = get_provider_for_window(
         window_id, provider_name=window_query.get_window_provider(window_id)
@@ -184,11 +130,6 @@ def _recovery_help_text(window_id: str) -> str:
 
 
 def build_recovery_keyboard(window_id: str) -> InlineKeyboardMarkup:
-    """Build inline keyboard for dead window recovery options.
-
-    Buttons for Continue and Resume are only shown when the active provider
-    declares support for those capabilities.
-    """
 
     caps = get_provider_for_window(
         window_id, provider_name=window_query.get_window_provider(window_id)
@@ -232,14 +173,7 @@ async def _create_and_bind_window(
     success_label: str = "Session started.",
     old_window_id: str = "",
 ) -> bool:
-    """Create a new tmux window, bind it, rename topic, forward pending text.
-
-    Returns True on success, False on failure.
-    """
     thread_router.unbind_thread(user_id, thread_id)
-    # Lazy: polling_state → recovery_banner via callback_registry
-    # side effects.
-    # Lazy: polling.polling_state pulls heavy strategy stack; defer per-call
     from ..polling.polling_state import lifecycle_strategy
 
     lifecycle_strategy.clear_dead_notification(user_id, thread_id)
@@ -320,7 +254,6 @@ async def _create_and_bind_window(
 
 
 def _cwd_for_window(window_id: str) -> str:
-    """Return the bound cwd for ``window_id`` or empty string."""
     view = window_query.view_window(window_id)
     return view.cwd if view else ""
 
@@ -331,7 +264,6 @@ async def _handle_back(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle CB_RECOVERY_BACK: return to the recovery options menu."""
     window_id = data[len(CB_RECOVERY_BACK) :]
     validated = _validate_recovery_state(window_id, update, context)
     if validated is None:
@@ -364,7 +296,6 @@ async def _handle_fresh(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle CB_RECOVERY_FRESH: create fresh session in same directory."""
     old_wid = data[len(CB_RECOVERY_FRESH) :]
     validated = _validate_recovery_state(old_wid, update, context)
     if validated is None:
@@ -397,12 +328,6 @@ async def _handle_continue(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle CB_RECOVERY_CONTINUE: resume most recent session via --continue.
-
-    If there are no sessions on disk for ``cwd``, ``--continue`` would fail
-    silently inside the agent. Surface the empty-state UI instead so the
-    user can pick another project or start fresh.
-    """
     old_wid = data[len(CB_RECOVERY_CONTINUE) :]
     validated = _validate_recovery_state(old_wid, update, context)
     if validated is None:
@@ -443,7 +368,6 @@ async def _handle_resume(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle CB_RECOVERY_RESUME: show session picker for --resume."""
     old_wid = data[len(CB_RECOVERY_RESUME) :]
     validated = _validate_recovery_state(old_wid, update, context)
     if validated is None:
@@ -482,12 +406,6 @@ async def _send_empty_state(
     window_id: str,
     cwd: str,
 ) -> None:
-    """Edit the recovery message to the no-sessions empty-state UI.
-
-    Replaces the legacy ``query.answer("No sessions ...", show_alert=True)``
-    toast with an inline keyboard so the user has explicit next steps
-    instead of being trapped on a dismissable alert.
-    """
 
     keyboard = _build_empty_resume_keyboard(window_id)
     await safe_edit(
@@ -505,17 +423,9 @@ async def _handle_browse(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle CB_RECOVERY_BROWSE: switch to the cross-project resume picker.
 
-    The user explicitly chose to look outside the bound cwd, so the pending
-    text — which targeted the original project — is dropped before
-    delegating to the /resume cross-project flow.
-    """
-
-    # Lazy: sibling cycle — resume_command imports from this package.
     from ..user_state import RESUME_SESSIONS
 
-    # Lazy: recovery_banner ↔ resume_command cycle through the picker
     from .resume_command import _build_resume_keyboard, scan_all_sessions
 
     old_wid = data[len(CB_RECOVERY_BROWSE) :]
@@ -557,8 +467,6 @@ async def _handle_cancel(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle CB_RECOVERY_CANCEL: cancel recovery."""
-    # Lazy: callback_helpers ↔ recovery cycle
 
     thread_id = get_thread_id(update)
     if thread_id is None:

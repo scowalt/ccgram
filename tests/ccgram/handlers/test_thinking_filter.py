@@ -4,7 +4,6 @@ from ccgram.handlers.messaging_pipeline.message_routing import _MIN_THINKING_LEN
 
 
 def _should_skip_thinking(text: str | None) -> bool:
-    """Replicate the thinking filter logic from bot.handle_new_message."""
     stripped = (text or "").strip()
     return len(stripped) < _MIN_THINKING_LENGTH
 

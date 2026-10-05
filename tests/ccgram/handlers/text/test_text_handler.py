@@ -647,8 +647,8 @@ class TestBashCaptureCleanup:
             await asyncio.sleep(0)
 
             task_a.cancel()
-            _bash_capture_tasks[key] = sentinel  # Task B
+            _bash_capture_tasks[key] = sentinel
 
-            await task_a  # A's finally runs
+            await task_a
 
         assert _bash_capture_tasks.get(key) is sentinel

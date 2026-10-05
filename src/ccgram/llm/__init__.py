@@ -1,9 +1,3 @@
-"""LLM command generation provider abstraction.
-
-Provides a pluggable interface for generating shell commands from
-natural language descriptions using OpenAI-compatible or Anthropic APIs.
-"""
-
 import os
 
 from .base import CommandGenerator, CommandResult, TextCompleter
@@ -42,23 +36,10 @@ _PROVIDERS: dict[str, dict[str, str | None]] = {
     },
 }
 
-# Fallback: when no explicit CCGRAM_LLM_API_KEY is set, try OPENAI_API_KEY
-# as a universal default (many providers accept it, and it's the most common).
 _FALLBACK_API_KEY_ENV = "OPENAI_API_KEY"
 
 
 def _create_completer() -> OpenAICompatCompleter | AnthropicCompleter | None:
-    """Create an LLM completer instance from config.
-
-    Returns None if llm_provider is not configured. The returned object
-    satisfies both ``CommandGenerator`` and ``TextCompleter`` protocols.
-
-    API key resolution order:
-      1. ``CCGRAM_LLM_API_KEY`` (explicit override)
-      2. Provider-specific env var (e.g. ``XAI_API_KEY``, ``DEEPSEEK_API_KEY``)
-      3. ``OPENAI_API_KEY`` as universal fallback
-    """
-    # Lazy: config singleton resolved by factory call
     from ccgram.config import config
 
     provider = config.llm_provider
@@ -103,20 +84,10 @@ def _create_completer() -> OpenAICompatCompleter | AnthropicCompleter | None:
 
 
 def get_completer() -> CommandGenerator | None:
-    """Create and return an LLM command generator based on config.
-
-    Returns None if llm_provider is not configured (empty string).
-    """
     return _create_completer()
 
 
 def get_text_completer() -> TextCompleter | None:
-    """Create and return a generic LLM text completer based on config.
-
-    Returns None if llm_provider is not configured. Uses the same
-    config/instantiation as ``get_completer()`` but typed for
-    ``complete(system_prompt, user_message)`` usage.
-    """
     return _create_completer()
 
 

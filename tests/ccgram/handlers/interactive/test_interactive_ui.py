@@ -1,5 +1,3 @@
-"""Tests for interactive UI rendering."""
-
 import pytest
 from telegram import InlineKeyboardMarkup
 
@@ -110,7 +108,6 @@ class TestFormatInteractiveMessage:
         out = format_interactive_message(huge)
         assert len(out) <= 4096
         assert out.startswith(INTERACTIVE_INSTRUCTION_LINE)
-        # Tail of the input must survive (most recent terminal lines)
         assert out.endswith("x")
 
     def test_oversized_with_pane_prefix_within_4096(self) -> None:
@@ -122,7 +119,6 @@ class TestFormatInteractiveMessage:
     def test_pane_name_replaces_generic_label(self) -> None:
         out = format_interactive_message("Body", pane_id="%5", pane_name="api-gateway")
         assert "api-gateway (%5):" in out
-        # Generic "Pane" word must NOT appear when a name is set.
         assert "Pane (%5):" not in out
 
     def test_blank_pane_name_falls_back_to_generic(self) -> None:
@@ -177,8 +173,6 @@ class TestInteractiveModeTracking:
 
 
 class TestDeadTopicCooldown:
-    """Verify longer backoff when topic is deleted (thread not found)."""
-
     @pytest.fixture(autouse=True)
     def _clear_state(self) -> None:
         from ccgram.handlers.interactive.interactive_ui import (
@@ -224,13 +218,12 @@ class TestDeadTopicCooldown:
             result = await handle_interactive_ui(mock_bot, 100, "@2", thread_id=42)
             assert result is False
 
-            # Cooldown should be set to ~60s, not the default 5s
             ikey = (100, 42)
             assert ikey in _send_cooldowns
             import time
 
             cooldown_remaining = _send_cooldowns[ikey] - time.monotonic()
-            assert cooldown_remaining > 30  # well above the default 5s
+            assert cooldown_remaining > 30
             assert cooldown_remaining <= _DEAD_TOPIC_RETRY_INTERVAL
 
     async def test_non_dead_topic_error_uses_normal_cooldown(self) -> None:
@@ -266,7 +259,6 @@ class TestDeadTopicCooldown:
             result = await handle_interactive_ui(mock_bot, 100, "@2", thread_id=42)
             assert result is False
 
-            # Normal cooldown — should be around now, not 60s into the future
             ikey = (100, 42)
             assert ikey in _send_cooldowns
             import time

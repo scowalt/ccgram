@@ -1,16 +1,3 @@
-"""Status subpackage — status bubble, status-bar callbacks, topic emoji.
-
-Bundles the modules that own the per-topic status surface:
-``status_bubble`` (status message lifecycle, keyboard layout, task-list
-formatting, status-to-content conversion), ``status_bar_actions``
-(inline-button callbacks for the status bubble — notify toggle, recall,
-remote control, esc, quick keys), and ``topic_emoji`` (forum topic name
-emoji updates with debounced state transitions).
-
-Public surface re-exported here is the entry point for ``bot.py`` and
-the rest of ``handlers/``; internals stay in the per-module files.
-"""
-
 from .status_bar_actions import build_dashboard_button
 from .status_bubble import (
     build_status_keyboard,

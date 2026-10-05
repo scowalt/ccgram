@@ -1,15 +1,3 @@
-"""/restore command — re-show the recovery banner for a dead topic.
-
-When a tmux window dies, the topic becomes stale and ccgram normally
-surfaces a recovery banner once. /restore lets the user re-show that
-banner on demand so they can pick how to recover (Fresh / Continue /
-Resume) — the actual session creation is owned by the recovery
-callbacks. The command is a thin re-render — see
-``handlers.recovery.recovery_banner.render_banner``.
-
-Key function: restore_command().
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -32,12 +20,6 @@ logger = structlog.get_logger()
 
 
 async def restore_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /restore — re-show the recovery banner for a dead topic.
-
-    The previous behaviour auto-ran ``--continue``; Task 1.9 of the UX
-    overhaul moved that decision back to the user via the unified
-    recovery banner.
-    """
     user = update.effective_user
     if not user or not update.message:
         return

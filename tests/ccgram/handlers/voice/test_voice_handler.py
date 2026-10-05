@@ -1,5 +1,3 @@
-"""Unit tests for voice message handler and voice callbacks."""
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -384,7 +382,6 @@ class TestHandleVoiceCallback:
 
         mock_send_to_window.assert_called_once_with("@0", "hello")
         update.callback_query.message.delete.assert_called_once()
-        # Toast replaced with persistent reactions: 👀 on receive, 🔥 on delivery.
         update.callback_query.answer.assert_called_once_with()
         bot = update.callback_query.message.get_bot()
         emojis = [

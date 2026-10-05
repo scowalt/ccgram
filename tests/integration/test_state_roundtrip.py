@@ -1,11 +1,3 @@
-"""Integration tests for SessionManager state persistence round-trips.
-
-Tests bind → save → reload → verify cycles using real file I/O,
-ensuring state.json serialization is correct across restarts.
-Pure in-memory behavior (notification cycling, one-topic-one-window)
-is covered by unit tests in test_session.py.
-"""
-
 import json
 from pathlib import Path
 
@@ -21,7 +13,6 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture
 def make_session_manager(tmp_path, monkeypatch):
-    """Factory: create a SessionManager with isolated state files."""
 
     def _make(state_file: Path | None = None) -> SessionManager:
         sf = state_file or (tmp_path / "state.json")
@@ -120,7 +111,7 @@ async def test_window_state_survives_reload(make_session_manager) -> None:
     sm1.set_window_provider("@5", "claude")
     sm1.flush_state()
 
-    _sm2 = make_session_manager()  # reload triggers __post_init__ -> _load_state
+    _sm2 = make_session_manager()
     reloaded = window_store.get_window_state("@5")
     assert reloaded.session_id == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
     assert reloaded.cwd == "/tmp/myproject"
@@ -130,13 +121,6 @@ async def test_window_state_survives_reload(make_session_manager) -> None:
 async def test_full_window_state_feature_groups_survive_reload(
     make_session_manager,
 ) -> None:
-    """Every persisted WindowState feature group survives a SessionManager reload.
-
-    Locks the integration-level persistence contract before the
-    window-state feature-port refactor. If a future port forgets to
-    serialize one of these fields, this test fails before any handler
-    notices.
-    """
     sm1 = make_session_manager()
     state = window_store.get_window_state("@7")
     state.session_id = "ffff-eeee-dddd-cccc"
@@ -186,13 +170,11 @@ async def test_full_window_state_feature_groups_survive_reload(
     assert pane5.state == "blocked"
     assert pane5.subscribed is True
     assert reloaded.panes["%6"].state == "idle"
-    # Transient RC-probe fields must not have been resurrected.
     assert reloaded.rc_probe_state is None
     assert reloaded.rc_armed_at is None
 
 
 async def test_duplicate_bindings_deduped_on_load(tmp_path, monkeypatch) -> None:
-    """Old state with duplicate bindings — loader keeps highest thread_id."""
     state = {
         "window_states": {},
         "user_window_offsets": {},

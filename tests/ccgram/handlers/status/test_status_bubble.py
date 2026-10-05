@@ -36,7 +36,6 @@ def _clear_status_tracking():
 
 
 def _make_bot(send_id: int = 99) -> AsyncMock:
-    """Build an AsyncMock bot that returns a sensible Message on send."""
     bot = AsyncMock()
     sent = MagicMock()
     sent.message_id = send_id
@@ -52,7 +51,6 @@ class TestSendStatusText:
         bot = _make_bot(send_id=99)
         await send_status_text(bot, USER_ID, THREAD_ID, WINDOW_ID, "running...")
 
-        # safe_send uses bot.send_message with entity-based formatting.
         bot.send_message.assert_awaited_once()
         assert _status_msg_info[(USER_ID, THREAD_ID)] == (
             99,
@@ -86,9 +84,6 @@ class TestSendStatusText:
     async def test_replace_failure_deletes_old_bubble_before_resending(
         self, mock_edit, mock_router
     ):
-        # When the in-place edit can't update the existing bubble, the old
-        # message must be deleted before a fresh one is created — otherwise
-        # the topic ends up with two status bubbles, the first one orphaned.
         mock_router.resolve_chat_id.return_value = CHAT_ID
         _status_msg_info[(USER_ID, THREAD_ID)] = (50, WINDOW_ID, "old", CHAT_ID)
         mock_edit.return_value = False
@@ -123,7 +118,6 @@ class TestSendStatusText:
 
 class TestClearStatusMessage:
     async def test_deletes_tracked_message(self):
-        # No DraftStream tracked → falls back to bot.delete_message.
         _status_msg_info[(USER_ID, THREAD_ID)] = (50, WINDOW_ID, "text", CHAT_ID)
 
         bot = AsyncMock()
@@ -252,7 +246,6 @@ class TestProcessStatusUpdate:
         result = await process_status_update(bot, USER_ID, task)
 
         assert result is None
-        # Legacy DraftStream uses bot.send_message for the initial bubble.
         bot.send_message.assert_awaited_once()
 
     @patch("ccgram.handlers.status.status_bubble.thread_router")
@@ -380,7 +373,6 @@ class TestFormatPaneBlock:
         assert result.startswith("└ ")
         assert "%5 active" in result
         assert "%6 ⏸ blocked" in result
-        # Single line for ≤3 panes — no expandable quote sentinel.
         assert "\n" not in result
         assert EXPANDABLE_QUOTE_START not in result
 
@@ -396,7 +388,7 @@ class TestFormatPaneBlock:
         result = format_pane_block("@0")
         assert result is not None
         assert "api-gateway active" in result
-        assert "%5 active" not in result  # name preferred over pane_id
+        assert "%5 active" not in result
         assert "%6 ⏸ blocked" in result
         assert " · " in result
 
@@ -450,7 +442,6 @@ class TestFormatPaneBlock:
         assert result.endswith(EXPANDABLE_QUOTE_END)
         assert "└ %5 active" in result
         assert "└ %8" in result
-        # 4 panes → multi-line content inside the quote.
         assert result.count("\n") >= 3
 
     def test_panes_sorted_for_stable_output(self, _isolated_window_store):
@@ -554,7 +545,6 @@ class TestFormatClaudeTaskStatusWithPanes:
         result = format_claude_task_status("@0", "Running")
         assert result is not None
         lines = result.splitlines()
-        # header → pane block → task summary → task item
         assert lines[0] == "Running"
         assert lines[1].startswith("└ ")
         assert "1 tasks (0 done, 1 open)" in lines[2]

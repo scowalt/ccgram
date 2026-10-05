@@ -1,23 +1,3 @@
-"""Session map I/O — reads and writes session_map.json.
-
-Owns all logic for synchronising window states against the session_map.json
-file written by the Claude Code hook. Extracted from SessionManager so that
-session_map concerns live in one place without pulling in the full
-SessionManager stack.
-
-The ``schedule_save`` callback is injected via the constructor — the
-sync cannot be built without an explicit callback.
-
-Module-level access: ``get_session_map_sync()`` returns the
-SessionManager-owned instance (raises RuntimeError until SessionManager
-has constructed the sync). The legacy module attribute
-``session_map_sync`` is a thin proxy that delegates to the same instance
-for backward compat.
-
-Key class: SessionMapSync.
-Free functions: parse_session_map.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -59,13 +39,6 @@ def _primary_session_grace_sec() -> float:
 
 
 async def read_session_map_raw() -> dict[str, Any] | None:
-    """Read and parse session_map.json once.
-
-    Returns the parsed dict, ``{}`` if the file does not exist, or ``None``
-    if read/parse failed.  Caller passes the result to both
-    ``SessionMapSync.load_session_map`` and ``parse_session_map`` to avoid
-    re-reading the file twice per poll cycle.
-    """
     if not config.session_map_file.exists():
         return {}
     try:
@@ -79,15 +52,6 @@ async def read_session_map_raw() -> dict[str, Any] | None:
 def live_window_session_ids(
     raw: dict[str, Any], live_window_ids: set[str]
 ) -> dict[str, str]:
-    """Map each live window id to its session_id from a raw session_map.
-
-    Backend-neutral: a session_map key is ``<prefix>:<window_id>`` (e.g.
-    ``ccgram:@12`` for tmux, ``herdr:w2:t1`` for herdr, whose id itself contains
-    a colon), so this matches the key to a live window id by suffix rather than
-    splitting on ``:``. Only ids in ``live_window_ids`` are returned, so stale
-    pre-restart entries are ignored. Used by herdr restart re-resolution to join
-    persisted ``session_id`` -> current tab id (``window_resolver``).
-    """
     result: dict[str, str] = {}
     for key, info in raw.items():
         if not isinstance(info, dict):
@@ -103,27 +67,10 @@ def live_window_session_ids(
 
 
 def session_map_prefix() -> str:
-    """Return the session_map key prefix for the active multiplexer backend.
-
-    The hook encodes the backend into each key's prefix: tmux keys are
-    ``<tmux_session_name>:<@id>`` (the live tmux session name), herdr keys are
-    ``herdr:<wN:tM>`` (the backend name — see ``multiplexer.self_identify``).
-    Readers mirror that here so they match the writer regardless of the active
-    backend; the tmux branch is byte-identical to the previous hard-coded
-    ``f"{config.tmux_session_name}:"``.
-    """
     return session_map_prefix_for(config.multiplexer_name, config.tmux_session_name)
 
 
 def is_backend_window_id(window_id: str) -> bool:
-    """Validate a prefix-stripped session_map window id for the active backend.
-
-    tmux requires the ``@N`` form so legacy window-name-keyed entries are still
-    detected and purged as old format; non-stable-id backends (herdr) use
-    ``wN:tM`` tab ids that ``is_window_id`` rejects, so any non-empty token after
-    the prefix is valid there (mirrors ``window_resolver._resolve_by_session_id``,
-    which likewise does not apply ``is_window_id`` to herdr ids).
-    """
     if config.multiplexer_name == "tmux":
         return is_window_id(window_id)
     return bool(window_id)
@@ -153,11 +100,6 @@ def _prefer_existing_primary(
     if config.multiplexer_name != "tmux":
         return None
 
-    # Lazy: session.py imports both session_map and window_state_store at
-    # top; hoisting forms session → session_map → window_state_store →
-    # session cycle.  Lazy import also guarantees the store has been
-    # wired via install_window_store before access.
-    # Lazy: window_state_store / thread_router proxies wired by SessionManager constructor
     from .window_state_store import is_window_store_wired, window_store
 
     if not is_window_store_wired():
@@ -213,18 +155,6 @@ def effective_session_map_info(
 
 
 def parse_session_map(raw: dict[str, Any], prefix: str) -> dict[str, dict[str, str]]:
-    """Parse session_map.json entries matching a backend prefix.
-
-    Returns {window_id: {"session_id": ..., "cwd": ...}} for matching entries,
-    where window_id is the bare id after stripping the prefix — e.g. ``"@12"``
-    for tmux (``"ccgram:@12"``) or ``"w2:t1"`` for herdr (``"herdr:w2:t1"``).
-
-    Safe to call from a clean interpreter (no SessionManager wired): the
-    nested-session preference logic in ``_prefer_existing_primary`` short-
-    circuits to ``None`` when the window store is unwired, so the result
-    reflects the raw session_map rather than a wiring crash. When wired,
-    the result also incorporates the in-memory primary-session preference.
-    """
     result: dict[str, dict[str, str]] = {}
     for key, info in raw.items():
         if not key.startswith(prefix):
@@ -233,14 +163,6 @@ def parse_session_map(raw: dict[str, Any], prefix: str) -> dict[str, dict[str, s
         if not isinstance(info, dict):
             continue
         try:
-            # parse_session_map_entry is used as a validation gate: it raises
-            # StateFileValidationError for malformed entries (missing session_id,
-            # unsupported schema_version) so they are skipped. The returned
-            # SessionMapEntry is intentionally discarded; the raw dict is passed
-            # downstream because effective_session_map_info/_prefer_existing_primary
-            # merge it with in-memory window state and return a computed dict,
-            # not a passthrough — rewiring to SessionMapEntry would add indirection
-            # across two divergent call paths for no behavioral gain.
             parse_session_map_entry(info)
         except StateFileValidationError as exc:
             logger.debug("Skipping invalid session_map entry %s: %s", key, exc)
@@ -252,35 +174,10 @@ def parse_session_map(raw: dict[str, Any], prefix: str) -> dict[str, dict[str, s
 
 
 class SessionMapSync:
-    """Session map I/O and window-state synchronisation.
-
-    Reads and writes session_map.json, syncing window states from hook-written
-    entries. Persistence of window_states is delegated: the ``schedule_save``
-    callback (provided by SessionManager) triggers a debounced save after
-    mutations.
-
-    Depends on ``window_store`` and ``thread_router`` singletons for state access.
-    """
-
     def __init__(self, *, schedule_save: Callable[[], None]) -> None:
         self._schedule_save: Callable[[], None] = schedule_save
 
-    # ------------------------------------------------------------------
-    # Public: async read/sync methods
-    # ------------------------------------------------------------------
-
     async def load_session_map(self, raw: dict[str, Any] | None = None) -> None:
-        """Read session_map.json and update window_states with new session associations.
-
-        Keys in session_map are formatted as "tmux_session:window_id" for tmux
-        (e.g. "ccgram:@12") or "herdr:tab_id" for herdr (e.g. "herdr:w2:t1").
-        Only native entries (matching our tmux_session_name or the "herdr:" prefix) are processed.
-        Also cleans up window_states entries not in current session_map.
-        Updates window_display_names from the "window_name" field in values.
-
-        If ``raw`` is provided (e.g., by ``read_session_map_raw``), use it
-        directly to avoid a redundant file read.  Otherwise read the file.
-        """
         if raw is None:
             raw = await read_session_map_raw()
         if not raw:
@@ -302,10 +199,6 @@ class SessionMapSync:
         session_map: dict[str, Any],
         prefix: str,
     ) -> tuple[set[str], set[str], list[str], bool]:
-        """Iterate session_map entries and sync window states.
-
-        Returns (valid_wids, old_format_sids, old_format_keys, changed).
-        """
         valid_wids: set[str] = set()
         old_format_sids: set[str] = set()
         old_format_keys: list[str] = []
@@ -323,15 +216,8 @@ class SessionMapSync:
                     old_format_sids.add(sid)
                 old_format_keys.append(key)
                 continue
-            # Protect this window_id from stale-state deletion regardless of
-            # whether the entry passes schema validation.  Validation failures
-            # are forward-compat / corruption guards; they must not delete
-            # in-memory state for a window that is present in the file.
             valid_wids.add(window_id)
             try:
-                # Validation gate — see the identical pattern in parse_session_map()
-                # for the full rationale. Returned SessionMapEntry is discarded;
-                # raw dict is consumed by _sync_window_from_session_map below.
                 parse_session_map_entry(info)
             except StateFileValidationError as exc:
                 logger.debug("Skipping invalid session_map entry %s: %s", key, exc)
@@ -346,16 +232,8 @@ class SessionMapSync:
         valid_wids: set[str],
         old_format_sids: set[str],
     ) -> bool:
-        """Remove window_states not in valid_wids, not bound, and not old-format.
-
-        Returns True if any states were removed.
-        """
-        # Lazy: same session ↔ session_map ↔ stores cycle as
-        # _prefer_existing_primary; both stores must be installed.
-        # Lazy: window_state_store / thread_router proxies wired by SessionManager constructor
         from .thread_router import thread_router
 
-        # Lazy: window_state_store / thread_router proxies wired by SessionManager constructor
         from .window_state_store import window_store
 
         bound_wids = {
@@ -384,7 +262,6 @@ class SessionMapSync:
         session_map: dict[str, Any],
         old_format_keys: list[str],
     ) -> None:
-        """Remove old-format (window-name-keyed) entries from session_map.json."""
         if not old_format_keys:
             return
         for key in old_format_keys:
@@ -395,10 +272,6 @@ class SessionMapSync:
     async def wait_for_session_map_entry(
         self, window_id: str, timeout: float = 5.0, interval: float = 0.5
     ) -> bool:
-        """Poll session_map.json until an entry for window_id appears.
-
-        Returns True if the entry was found within timeout, False otherwise.
-        """
         logger.debug(
             "Waiting for session_map entry: window_id=%s, timeout=%.1f",
             window_id,
@@ -420,7 +293,7 @@ class SessionMapSync:
                         )
                         await self.load_session_map()
                         return True
-            except (json.JSONDecodeError, OSError):  # fmt: skip
+            except json.JSONDecodeError, OSError:
                 pass
             await asyncio.sleep(interval)
         logger.warning(
@@ -428,29 +301,18 @@ class SessionMapSync:
         )
         return False
 
-    # ------------------------------------------------------------------
-    # Public: sync read/write methods
-    # ------------------------------------------------------------------
-
     def prune_session_map(self, live_window_ids: set[str]) -> None:
-        """Remove session_map.json entries for windows that no longer exist.
-
-        Reads session_map.json, drops entries whose window_id is not in
-        live_window_ids, and writes back only if changes were made.
-        Also removes corresponding window_states.
-        """
-        # Lazy: same cycle + wiring contract as _prefer_existing_primary.
         from .window_state_store import window_store
 
         if not config.session_map_file.exists():
             return
         try:
             raw = json.loads(config.session_map_file.read_text())
-        except (json.JSONDecodeError, OSError):  # fmt: skip
+        except json.JSONDecodeError, OSError:
             return
 
         prefix = session_map_prefix()
-        dead_entries: list[tuple[str, str]] = []  # (map_key, window_id)
+        dead_entries: list[tuple[str, str]] = []
         for key in raw:
             if not key.startswith(prefix):
                 continue
@@ -484,16 +346,6 @@ class SessionMapSync:
         transcript_path: str,
         provider_name: str,
     ) -> None:
-        """Register a session for a hookless provider (Codex, Gemini).
-
-        Updates in-memory WindowState and schedules a debounced state save.
-        Must be called from the event loop thread (not from asyncio.to_thread)
-        because _schedule_save() touches asyncio timer handles.
-
-        Pair with write_hookless_session_map() for the file-locked
-        session_map.json write, which is safe to call from any thread.
-        """
-        # Lazy: same cycle + wiring contract as _prefer_existing_primary.
         from .window_state_store import window_store
 
         state = window_store.get_window_state(window_id)
@@ -511,12 +363,6 @@ class SessionMapSync:
         transcript_path: str,
         provider_name: str,
     ) -> None:
-        """Write a synthetic entry to session_map.json for a hookless provider.
-
-        Uses file locking consistent with hook.py. Safe to call from any
-        thread (no asyncio handles touched).
-        """
-        # Lazy: same cycle + wiring contract as _prefer_existing_primary.
         from .thread_router import thread_router
 
         map_file = config.session_map_file
@@ -550,7 +396,6 @@ class SessionMapSync:
                                 "Failed to read session_map.json for hookless write"
                             )
                     display_name = thread_router.get_display_name(window_id)
-                    # Lazy: same session_map ↔ stores cycle as _prefer_existing_primary
                     from .hooks.state_files import serialize_session_map_entry
 
                     session_map[window_key] = serialize_session_map_entry(
@@ -569,7 +414,6 @@ class SessionMapSync:
             logger.exception("Failed to write session_map for hookless session")
 
     def clear_session_map_entry(self, window_id: str) -> None:
-        """Remove a window's entry from session_map.json if present."""
         if not config.session_map_file.exists():
             return
         lock_path = config.session_map_file.with_suffix(".lock")
@@ -583,33 +427,22 @@ class SessionMapSync:
                         del raw[key]
                         atomic_write_json(config.session_map_file, raw)
                         logger.debug("Cleared session_map entry for %s", window_id)
-                except (json.JSONDecodeError, OSError):  # fmt: skip
+                except json.JSONDecodeError, OSError:
                     return
                 finally:
                     fcntl.flock(lock_f, fcntl.LOCK_UN)
         except OSError as exc:
-            # Lock failure means the entry clear was lost — surface it.
             logger.warning(
                 "Failed to lock session_map for clearing %s: %s", window_id, exc
             )
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
 
     def _sync_window_from_session_map(
         self,
         window_id: str,
         info: dict[str, Any],
     ) -> bool:
-        """Sync a single window's state from session_map entry.
-
-        Returns True if any state was changed.
-        """
-        # Lazy: same cycle + wiring contract as _prefer_existing_primary.
         from .thread_router import thread_router
 
-        # Lazy: window_state_store / thread_router proxies wired by SessionManager constructor
         from .window_state_store import window_store
 
         effective = effective_session_map_info(window_id, info)
@@ -636,24 +469,14 @@ class SessionMapSync:
             state.transcript_path = new_transcript
             changed = True
         new_provider = effective["provider_name"].lower()
-        # Cross-check provider claim against the transcript path. session_map.json
-        # may carry a stale `provider_name` from a previous run in the same tmux
-        # window (e.g. codex once owned @9729, then claude took over). The
-        # transcript path is observed reality and wins; without this guard the
-        # transcript_reader spams "Provider mismatch" warnings every poll.
         path_for_inference = new_transcript or state.transcript_path
         if new_provider and path_for_inference:
-            # Lazy: providers import pulls the agent provider registry which
-            # imports the shell provider's prompt-marker machinery; defer.
             from .providers import detect_provider_from_transcript_path
 
             inferred = detect_provider_from_transcript_path(path_for_inference)
             if inferred and inferred != new_provider:
                 new_provider = inferred
         if new_provider and state.provider_name != new_provider:
-            # Log only on actual mutation so a persistent stale claim in
-            # session_map.json doesn't spam the log every poll cycle once the
-            # in-memory state has already been corrected.
             logger.warning(
                 "Corrected provider for %s: state=%s -> %s "
                 "(session_map claimed %s; transcript_path=%s)",
@@ -680,12 +503,6 @@ _active_sync: SessionMapSync | None = None
 
 
 def get_session_map_sync() -> SessionMapSync:
-    """Return the SessionManager-owned SessionMapSync.
-
-    Raises:
-        RuntimeError: when called before SessionManager has constructed
-        and installed the sync.
-    """
     if _active_sync is None:
         raise RuntimeError(
             "SessionMapSync not yet wired. "
@@ -695,24 +512,11 @@ def get_session_map_sync() -> SessionMapSync:
 
 
 def install_session_map_sync(sync: SessionMapSync) -> None:
-    """Install the SessionManager-owned sync as the module-level singleton.
-
-    Called once by ``SessionManager.__post_init__``. Replaces any
-    previously installed instance (used by tests that build a fresh
-    SessionManager).
-    """
     global _active_sync
     _active_sync = sync
 
 
 class _SessionMapSyncProxy:
-    """Backward-compat module-level facade that resolves to the wired sync.
-
-    All attribute access delegates to the SessionManager-owned
-    ``SessionMapSync``. Raises ``RuntimeError`` if accessed before
-    SessionManager has installed an instance.
-    """
-
     __slots__ = ()
 
     def __getattr__(self, name: str) -> Any:

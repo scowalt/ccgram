@@ -1,17 +1,3 @@
-"""Callback handlers for /send file browser navigation.
-
-Handles all inline keyboard callbacks for the /send file browser UI:
-  - CB_SEND_FILE: select and upload a file
-  - CB_SEND_DIR: navigate into a subdirectory
-  - CB_SEND_PAGE: paginate the directory listing
-  - CB_SEND_UP: navigate to the parent directory (clamped at CWD)
-  - CB_SEND_CANCEL: cancel the file browser
-
-All handlers share a stale guard: the stored SEND_WINDOW_ID_KEY must match the
-window currently bound to the topic. If it doesn't, the state is cleared and the
-user receives a "Session expired" alert.
-"""
-
 from __future__ import annotations
 
 import contextlib
@@ -50,7 +36,6 @@ from ..user_state import (
 
 
 async def _react_uploaded(client: TelegramClient, sent: Message | None) -> None:
-    """Best-effort persistent ✅ on the just-uploaded file message."""
     if sent is None:
         return
     await react(client, sent.chat_id, sent.message_id, REACT_DONE)
@@ -68,7 +53,6 @@ _SEND_STATE_KEYS = (
 
 
 def _clear_send_state(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Pop all SEND_* keys from context.user_data."""
     if context.user_data is None:
         return
     for key in _SEND_STATE_KEYS:
@@ -99,7 +83,6 @@ async def _render_send_browser(
 
 @register(CB_SEND_FILE, CB_SEND_DIR, CB_SEND_PAGE, CB_SEND_UP, CB_SEND_CANCEL)
 async def _dispatch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Route CB_SEND_* callbacks to the appropriate handler."""
 
     query = update.callback_query
     user = update.effective_user
@@ -112,7 +95,6 @@ async def _dispatch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     assert context.user_data is not None
 
-    # --- Stale guard ---
     thread_id = get_thread_id(update)
     if thread_id is None:
         await query.answer("Not in a topic", show_alert=True)
@@ -144,7 +126,6 @@ async def _handle_file(
     context: ContextTypes.DEFAULT_TYPE,
     data: str,
 ) -> None:
-    """Select and upload the file at the given index."""
     query = update.callback_query
     assert query is not None and context.user_data is not None
 
@@ -200,7 +181,6 @@ async def _handle_dir(
     context: ContextTypes.DEFAULT_TYPE,
     data: str,
 ) -> None:
-    """Navigate into a subdirectory and rebuild the browser."""
     query = update.callback_query
     assert query is not None and context.user_data is not None
 
@@ -231,7 +211,6 @@ async def _handle_page(
     context: ContextTypes.DEFAULT_TYPE,
     data: str,
 ) -> None:
-    """Paginate to the requested page and rebuild the browser."""
     query = update.callback_query
     assert query is not None and context.user_data is not None
 
@@ -257,7 +236,6 @@ async def _handle_up(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Navigate to the parent directory, clamped at CWD."""
     query = update.callback_query
     assert query is not None and context.user_data is not None
 
@@ -285,7 +263,6 @@ async def _handle_cancel(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Cancel the file browser and clean up state."""
     query = update.callback_query
     assert query is not None
 

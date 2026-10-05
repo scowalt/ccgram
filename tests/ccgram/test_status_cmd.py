@@ -1,5 +1,3 @@
-"""Tests for ccgram status command."""
-
 import contextlib
 import json
 
@@ -158,7 +156,6 @@ class TestStatusMainHerdr:
             status_main()
 
         captured = capsys.readouterr()
-        # herdr key counted, tmux-prefixed key ignored
         assert "Monitored sessions: 1" in captured.out
         assert "Herdr: 1 pane(s)" in captured.out
         assert "Tmux session" not in captured.out
@@ -169,12 +166,8 @@ class TestStatusMainHerdr:
     def test_reads_multiplexer_from_config_dir_env(
         self, tmp_path, monkeypatch, capsys
     ) -> None:
-        # CCGRAM_MULTIPLEXER set only in ~/.ccgram/.env (the documented config
-        # path), not exported. status must load that .env like the bot does, so
-        # it counts herdr: keys and lists herdr panes — not default to tmux.
         monkeypatch.setenv("CCGRAM_DIR", str(tmp_path))
         monkeypatch.setenv("TMUX_SESSION_NAME", "ccgram")
-        # Registers the key so the load_dotenv-set value is restored on teardown.
         monkeypatch.delenv("CCGRAM_MULTIPLEXER", raising=False)
         (tmp_path / ".env").write_text("CCGRAM_MULTIPLEXER=herdr\n")
 
@@ -197,8 +190,6 @@ class TestStatusMainHerdr:
     def test_herdr_listing_degrades_to_empty_on_backend_error(
         self, monkeypatch
     ) -> None:
-        # Socket unreachable / backend error must degrade to [] (best-effort),
-        # not crash `ccgram status`.
         from ccgram.status_cmd import _list_herdr_windows
 
         def _boom(_name):

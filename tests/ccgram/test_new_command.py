@@ -1,5 +1,3 @@
-"""Tests for the /start welcome command."""
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

@@ -1,5 +1,3 @@
-"""Tests for state file backward compatibility."""
-
 from ccgram.session import WindowState
 from ccgram.session_map import parse_session_map
 

@@ -324,9 +324,6 @@ class TestHandleWtConfirm:
 
 
 class TestHandleWtConfirmNativeWorktrees:
-    """native_worktrees (herdr) path must skip the workspace picker and go
-    straight to the provider picker (MAJOR-2 regression)."""
-
     @patch("ccgram.handlers.topics.directory_callbacks.tmux_manager")
     @patch(
         "ccgram.handlers.topics.workspace_callbacks._show_workspace_picker_or_provider",
@@ -351,9 +348,7 @@ class TestHandleWtConfirmNativeWorktrees:
 
         await _handle_wt_confirm(_make_query(), context)
 
-        # workspace picker must NOT be called on the native_worktrees path
         mock_workspace_picker.assert_not_called()
-        # provider picker edit must have been called (shows "Select Provider")
         assert mock_edit.called
         assert "Select Provider" in mock_edit.call_args[0][1]
 

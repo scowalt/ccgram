@@ -1,9 +1,3 @@
-"""Provider-agnostic command discovery and caching.
-
-Separates command-source discovery (filesystem skills/commands) from
-Telegram menu formatting and provider implementations.
-"""
-
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,11 +9,6 @@ _DEFAULT_TTL_SECONDS = 60.0
 
 
 def parse_frontmatter(path: Path) -> dict[str, str]:
-    """Parse YAML frontmatter from a markdown file.
-
-    Simple key:value parser — no PyYAML dependency. Handles the subset
-    needed for skills/commands: name, description, user-invocable.
-    """
     try:
         text = path.read_text(encoding="utf-8")
     except _FrontmatterReadError:
@@ -104,10 +93,7 @@ def _discover_custom_commands(claude_dir: Path) -> list[DiscoveredCommand]:
 def discover_user_defined_commands(
     claude_dir: Path | None = None,
 ) -> list[DiscoveredCommand]:
-    """Discover user-defined skills and custom commands from config dir."""
     if claude_dir is None:
-        # Lazy: config singleton is wired late at startup; importing at top
-        # would freeze test overrides that monkeypatch config attrs.
         from ccgram.config import config
 
         claude_dir = config.claude_config_dir
@@ -121,8 +107,6 @@ def discover_user_defined_commands(
 
 @dataclass(slots=True)
 class CommandCatalog:
-    """Merge provider built-ins with optional user-defined command sources."""
-
     ttl_seconds: float = _DEFAULT_TTL_SECONDS
     _cache: dict[tuple[str, str], tuple[float, list[DiscoveredCommand]]] = field(
         default_factory=dict
@@ -143,9 +127,6 @@ class CommandCatalog:
 
         commands = list(provider.discover_commands(base_dir))
         if provider.capabilities.supports_user_command_discovery:
-            # Current shared source for user-defined commands is ~/.claude.
-            # If a provider needs a different source, add a new source adapter
-            # and route it here via provider capabilities.
             commands.extend(
                 discover_user_defined_commands(Path(base_dir) if base_dir else None)
             )

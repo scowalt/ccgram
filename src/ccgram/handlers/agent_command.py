@@ -1,20 +1,3 @@
-"""/agent — manually override the auto-detected provider for a topic's window.
-
-Lets the user fix mis-tagged windows when auto-detection picks the wrong
-provider (e.g. a custom wrapper binary in the foreground that the
-basename/JS-runtime fallback cannot classify).
-
-Bare command shows an inline-keyboard picker; one-arg form skips the
-picker (``/agent shell``). Setting a provider clears the stale session
-bookkeeping (transcript_path on WindowState, the session_map.json entry)
-so SessionMonitor stops polling the wrong transcript. The
-``provider_manual_override`` flag on WindowState blocks the periodic
-``_detect_and_apply_provider`` from overwriting the choice on the next
-poll. ``/agent auto`` clears the flag and re-runs detection.
-
-Aliased as ``/provider``.
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -44,7 +27,6 @@ logger = structlog.get_logger()
 
 _BUTTONS_PER_ROW = 3
 
-# Stable order — also defines what shows in the picker.
 _PROVIDERS: tuple[tuple[str, str], ...] = (
     ("claude", "Claude"),
     ("codex", "Codex"),
@@ -56,7 +38,6 @@ _VALID_NAMES = frozenset(name for name, _ in _PROVIDERS) | {"auto"}
 
 
 def _resolve_window(update: Update) -> tuple[int, int, str] | None:
-    """Return ``(user_id, thread_id, window_id)`` or None if not in a bound topic."""
     user = update.effective_user
     if not user or not config.is_user_allowed(user.id):
         return None
@@ -115,12 +96,6 @@ async def _apply_switch(
     chat_id: int = 0,
     thread_id: int = 0,
 ) -> tuple[str, str]:
-    """Apply the provider switch and return ``(resolved_name, reply_text)``.
-
-    ``client``/``chat_id``/``thread_id`` are threaded to ``ensure_setup`` so
-    the shell-switch path can show the "Set up / Skip" offer keyboard instead
-    of silently mutating PS1.
-    """
     current = identity_state.get_provider_name(window_id) or ""
     if chosen == "auto":
         target = await _redetect_provider(window_id)
@@ -138,12 +113,6 @@ async def _apply_switch(
     _commit_switch(window_id, target, current, manual=manual)
 
     if target == "shell":
-        # Always offer prompt-marker setup on a shell-target switch —
-        # whether the user picked shell explicitly or auto-detect resolved
-        # to it. ``ensure_setup`` no-ops when the marker is already present
-        # or the user previously chose Skip.
-        # Lazy: shell prompt orchestrator hits the recovery subpackage via
-        # send-keys callbacks; loading at module level would cycle.
         from .shell.shell_prompt_orchestrator import ensure_setup
 
         await ensure_setup(
@@ -165,12 +134,8 @@ async def _apply_switch(
 
 
 async def _redetect_provider(window_id: str) -> str:
-    """Re-run auto-detection for ``/agent auto``; return resolved provider."""
-    # Lazy: detect_provider_from_pane pulls the providers package — only
-    # needed when the user actually requests re-detection via /agent auto.
     from ..providers import detect_provider_from_pane
 
-    # Lazy: tmux_manager imports providers; same cycle-break as above.
     from ..multiplexer import multiplexer as tmux_manager
 
     w = await tmux_manager.find_window_by_id(window_id)
@@ -183,13 +148,6 @@ async def _redetect_provider(window_id: str) -> str:
 
 
 def _commit_switch(window_id: str, chosen: str, current: str, *, manual: bool) -> None:
-    """Switch provider and clear stale transcript bookkeeping atomically.
-
-    When ``chosen == current`` the provider doesn't change; we still toggle
-    the manual-override flag (the user may be locking in the current pick),
-    but skip the destructive session_map clear and the shell-state teardown
-    — both are appropriate only for an actual provider transition.
-    """
     same_provider = current == chosen
     session_manager.set_window_provider(window_id, chosen)
     if not same_provider:
@@ -198,15 +156,9 @@ def _commit_switch(window_id: str, chosen: str, current: str, *, manual: bool) -
     if same_provider:
         return
     if chosen != "shell":
-        # session_map entry is now cleared unconditionally by
-        # set_window_provider via _on_hookless_provider_switch for any real
-        # provider switch — no explicit call needed here.
         return
-    # Leaving a hookful provider for shell: drop monitor/orchestrator state.
-    # Lazy: shell subpackage pulls shell_infra; only needed on the shell-switch branch.
     from .shell.shell_capture import clear_shell_monitor_state
 
-    # Lazy: same shell-switch-only reason as above.
     from .shell.shell_prompt_orchestrator import clear_state as clear_orchestrator
 
     clear_shell_monitor_state(window_id)
@@ -214,7 +166,6 @@ def _commit_switch(window_id: str, chosen: str, current: str, *, manual: bool) -
 
 
 async def agent_command(update: Update, _context: "ContextTypes.DEFAULT_TYPE") -> None:
-    """Handle ``/agent [provider|auto]`` — show picker or apply switch."""
     resolved = _resolve_window(update)
     if resolved is None or not update.message:
         if update.message:
@@ -285,6 +236,5 @@ async def _dispatch(update: Update, _context: "ContextTypes.DEFAULT_TYPE") -> No
 
 
 async def _ack_and_strip(query: CallbackQuery, text: str) -> None:
-    """Answer the callback and edit the picker message in place, removing the keyboard."""
     await query.answer()
     await safe_edit(query, text, reply_markup=None)

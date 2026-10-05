@@ -1,26 +1,3 @@
-"""Recovery callback dispatcher + shared state cleanup.
-
-After the Round 5 split, this module is a thin dispatcher: it routes
-prefix-tagged callback data to the banner handlers in
-:mod:`recovery_banner` or the picker handler in :mod:`resume_picker`,
-and owns ``_clear_recovery_state`` — the only helper both sibling
-modules import. The banner-specific ``_validate_recovery_state`` lives
-in :mod:`recovery_banner` next to its callers.
-
-The dispatcher has no top-level imports of the siblings, so they can
-both import ``_clear_recovery_state`` eagerly while the dispatcher
-imports their handlers lazily inside ``handle_recovery_callback``.
-
-Routes handled:
-  - CB_RECOVERY_FRESH: create fresh session in same directory
-  - CB_RECOVERY_CONTINUE: continue most recent session
-  - CB_RECOVERY_RESUME: show session picker
-  - CB_RECOVERY_PICK: a session was picked from the list
-  - CB_RECOVERY_BACK: return from the picker to the banner
-  - CB_RECOVERY_BROWSE: switch to the cross-project picker
-  - CB_RECOVERY_CANCEL: dismiss the recovery flow
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -52,7 +29,6 @@ logger = structlog.get_logger()
 
 
 def _clear_recovery_state(user_data: dict | None) -> None:
-    """Remove all recovery-related keys from user_data."""
     if user_data is None:
         return
     for key in (
@@ -71,8 +47,6 @@ async def handle_recovery_callback(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle recovery UI callbacks. Always answers ``query`` once."""
-    # Lazy: dispatcher → handler-module cycle (siblings register on import)
     from .recovery_banner import (
         _handle_back,
         _handle_browse,
@@ -82,13 +56,8 @@ async def handle_recovery_callback(
         _handle_resume,
     )
 
-    # Lazy: dispatcher → handler-module cycle (siblings register on import)
     from .resume_picker import _handle_resume_pick
 
-    # All recovery prefixes terminate with a non-overlapping character
-    # ("rec:b:" vs "rec:br:" diverge at index 5: ":" vs "r"), so order is
-    # not load-bearing — but check the longer prefix first as a safety
-    # belt against future renames that introduce a real overlap.
     if data.startswith(CB_RECOVERY_BROWSE):
         await _handle_browse(query, user_id, data, update, context)
         return

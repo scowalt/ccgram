@@ -1,16 +1,3 @@
-"""Tests for required _schedule_save callbacks on persistence singletons.
-
-All four state singletons — ``WindowStateStore`` (F2.1),
-``ThreadRouter`` (F2.2), ``UserPreferences`` (F2.3) and
-``SessionMapSync`` (F2.4) — are constructor-injected. Their
-``schedule_save`` callbacks are required arguments, so a singleton
-cannot be built without explicit wiring. The legacy ``unwired_save``
-fallback was removed in F2.5.
-
-This guarantees that any test or caller that builds a singleton without
-wiring it fails loudly instead of silently dropping the save.
-"""
-
 from __future__ import annotations
 
 import pytest
@@ -110,8 +97,6 @@ class TestThreadRouterRequiresCallbacks:
         assert calls == [1]
 
     def test_constructor_wires_has_window_state(self) -> None:
-        # When has_window_state returns True, unbind_thread must NOT
-        # remove the display name (the WindowState still references it).
         router = ThreadRouter(
             schedule_save=lambda: None,
             has_window_state=lambda _wid: True,
@@ -127,7 +112,6 @@ class TestThreadRouterRequiresCallbacks:
         )
         router.bind_thread(100, 1, "@1", window_name="proj")
         router.unbind_thread(100, 1)
-        # Falls back to window_id when display name was removed.
         assert router.get_display_name("@1") == "@1"
 
 
@@ -145,9 +129,6 @@ class TestSessionMapSyncRequiresCallback:
 
 class TestSessionManagerWiresAllSingletons:
     def test_post_init_wires_all_schedule_save_callbacks(self) -> None:
-        # SessionManager.__post_init__ wires every singleton's _schedule_save
-        # to its own _save_state. After construction, calling _schedule_save
-        # on any singleton must NOT raise.
         from ccgram.session import SessionManager
 
         sm = SessionManager()
@@ -163,8 +144,6 @@ class TestSessionManagerWiresAllSingletons:
             session_map_sync,
         ):
             assert singleton._schedule_save is not None
-            # _save_state may schedule via asyncio if a loop is running,
-            # otherwise saves synchronously — either path is fine here.
             singleton._schedule_save()
 
         del sm
@@ -172,8 +151,6 @@ class TestSessionManagerWiresAllSingletons:
     def test_set_window_provider_triggers_save(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # End-to-end check that SessionManager-level mutations propagate
-        # through the wired stores into StatePersistence.
         from ccgram.session import SessionManager
 
         sm = SessionManager()

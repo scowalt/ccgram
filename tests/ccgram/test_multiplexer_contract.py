@@ -1,14 +1,3 @@
-"""F2 contract test — one test, run against each registered backend.
-
-The ``Multiplexer`` contract (design "The Multiplexer contract") is enforced by
-this parametrized test. The tmux leg is always active; the herdr leg activates
-once herdr is registered (Task 7) and a socket is present, otherwise it skips.
-
-The Protocol is ``runtime_checkable``, so ``isinstance`` verifies the backend
-exposes every contract method. The capability shape is checked structurally so
-a backend can't silently drop a flag callers gate on.
-"""
-
 from __future__ import annotations
 
 import inspect
@@ -18,10 +7,8 @@ import pytest
 from ccgram.multiplexer import UnknownMultiplexerError, get_multiplexer
 from ccgram.multiplexer.base import Multiplexer, MultiplexerCapabilities
 
-# Every backend the contract should hold for. Unregistered names skip.
 CANDIDATE_BACKENDS = ["tmux", "herdr"]
 
-# The full method surface every backend must expose (Protocol + transitional).
 CONTRACT_METHODS = (
     "ensure_session",
     "list_windows",
@@ -53,7 +40,7 @@ def _backend_or_skip(name: str) -> Multiplexer:
         return get_multiplexer(name)
     except UnknownMultiplexerError:
         pytest.skip(f"multiplexer backend {name!r} not registered")
-    except (OSError, RuntimeError) as exc:  # e.g. herdr socket unavailable
+    except (OSError, RuntimeError) as exc:
         pytest.skip(f"multiplexer backend {name!r} unavailable: {exc}")
 
 
@@ -75,15 +62,12 @@ def test_backend_exposes_every_contract_method(backend: Multiplexer) -> None:
 
 
 def test_backend_watch_events_is_async_generator(backend: Multiplexer) -> None:
-    # watch_events streams (async generator), so it is checked here rather than
-    # in CONTRACT_METHODS (which asserts plain coroutine functions).
     assert inspect.isasyncgenfunction(backend.watch_events), (
         "watch_events must be an async generator"
     )
 
 
 async def test_tmux_watch_events_yields_nothing() -> None:
-    """tmux has no event stream — watch_events is an empty async iterator."""
     events = [event async for event in get_multiplexer("tmux").watch_events([])]
     assert events == []
 
@@ -102,7 +86,6 @@ def test_backend_capabilities_shape(backend: Multiplexer) -> None:
 
 
 def test_tmux_capability_values() -> None:
-    """tmux capability flags are pinned (design "MultiplexerCapabilities")."""
     caps = get_multiplexer("tmux").capabilities
     assert caps.name == "tmux"
     assert caps.ids_stable_across_restart is True
@@ -115,13 +98,11 @@ def test_tmux_capability_values() -> None:
 
 
 async def test_tmux_agent_status_returns_none() -> None:
-    """tmux has no native agent status — agent_status() always returns None."""
     status = await get_multiplexer("tmux").agent_status("@0")
     assert status is None
 
 
 async def test_tmux_create_worktree_window_unsupported() -> None:
-    """tmux has no native worktrees — create_worktree_window() fails cleanly."""
     ok, msg, name, win_id = await get_multiplexer("tmux").create_worktree_window(
         "/repo", "/repo.worktrees/x", "ccg/x"
     )
@@ -131,11 +112,6 @@ async def test_tmux_create_worktree_window_unsupported() -> None:
 
 
 def test_herdr_capability_values() -> None:
-    """herdr capability flags are pinned (design "MultiplexerCapabilities").
-
-    Resolving the backend touches no socket (the constructor is I/O-free), so
-    this runs in the unit suite even without a running herdr.
-    """
     caps = get_multiplexer("herdr").capabilities
     assert caps.name == "herdr"
     assert caps.ids_stable_across_restart is False

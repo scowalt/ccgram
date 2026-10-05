@@ -1,10 +1,3 @@
-"""Characterization tests locking Claude-specific behaviors.
-
-These tests document current Claude Code integration behavior that is
-specific to the Claude provider — NOT covered by the generic contract
-tests in test_provider_contracts.py.
-"""
-
 import pytest
 
 from ccgram.cc_commands import CC_BUILTINS
@@ -19,8 +12,6 @@ from ccgram.expandable_quote import EXPANDABLE_QUOTE_END, EXPANDABLE_QUOTE_START
 from ccgram.providers.claude import ClaudeProvider
 from ccgram.transcript_parser import TranscriptParser
 
-# ── Hook payload format ──────────────────────────────────────────────────
-
 
 class TestClaudeHookPayloadFormat:
     def test_uuid_validation_accepts_valid(self) -> None:
@@ -31,16 +22,13 @@ class TestClaudeHookPayloadFormat:
         [
             "",
             "not-a-uuid",
-            "A1B2C3D4-E5F6-7890-ABCD-EF1234567890",  # uppercase rejected
-            "a1b2c3d4e5f6-7890-abcd-ef1234567890",  # missing dash
-            "a1b2c3d4-e5f6-7890-abcd-ef123456789",  # too short
+            "A1B2C3D4-E5F6-7890-ABCD-EF1234567890",
+            "a1b2c3d4e5f6-7890-abcd-ef1234567890",
+            "a1b2c3d4-e5f6-7890-abcd-ef123456789",
         ],
     )
     def test_uuid_validation_rejects_invalid(self, invalid: str) -> None:
         assert UUID_RE.match(invalid) is None
-
-
-# ── ClaudeProvider-specific method tests ─────────────────────────────────
 
 
 class TestClaudeProviderMethods:
@@ -87,9 +75,6 @@ class TestClaudeProviderMethods:
         assert result is not None
         assert "Reading file" in result.raw_text
         assert result.is_interactive is False
-
-
-# ── Transcript format ────────────────────────────────────────────────────
 
 
 class TestClaudeTranscriptFormat:
@@ -141,9 +126,6 @@ class TestClaudeTranscriptFormat:
         assert len(result) == 1
 
 
-# ── Terminal signatures ──────────────────────────────────────────────────
-
-
 class TestClaudeTerminalSignatures:
     def test_exact_spinner_charset(self) -> None:
         expected = frozenset(["·", "✻", "✽", "✶", "✳", "✢"])
@@ -182,14 +164,8 @@ class TestClaudeTerminalSignatures:
         assert result.name == "ExitPlanMode"
 
 
-# ── Command discovery ────────────────────────────────────────────────────
-
-
 class TestClaudeCommandDiscovery:
     def test_cc_builtins_include_core_commands(self) -> None:
-        # Core CC commands that have shipped for multiple versions and are
-        # exercised by other tests. The full set may grow as the docs evolve;
-        # see code.claude.com/docs/en/commands.
         core = {
             "clear",
             "compact",
@@ -205,7 +181,6 @@ class TestClaudeCommandDiscovery:
             "remote-control",
             "status",
             "tasks",
-            # All 12 picker commands — must remain in CC_BUILTINS.
             "agents",
             "copy",
             "diff",
@@ -219,7 +194,6 @@ class TestClaudeCommandDiscovery:
         assert core <= set(CC_BUILTINS.keys())
 
     def test_cc_builtins_exclude_bot_native_collisions(self) -> None:
-        # /resume collides with bot-native /resume (handlers/recovery/resume_command.py)
         assert "resume" not in CC_BUILTINS
 
     def test_claude_builtins_do_not_advertise_new(self) -> None:

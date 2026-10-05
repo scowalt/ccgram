@@ -1,33 +1,3 @@
-# archfit architecture-drift config for ccgram.
-#
-# Design notes (2026-06-27 review + current code):
-# - VOLATILITY is the coupling lever, not owner. The current design docs record
-#   the calibrated book result: declaring subdomain+volatility moved mean book
-#   balance 2.9 -> 6.0 and critical edges 387 -> 62. Declaring `owner` left
-#   distance unchanged (archfit distance is code_structure-based), so owner is
-#   a hygiene label only.
-# - `owner: alexei-led` remains declared on every module for hygiene (single
-#   owner; silences omit-owner warnings) — NOT to influence coupling.
-# - Subdomain/volatility are architect-inferred labels. Current map in docs and
-#   config is aligned to the code/tests: core=session/window-state and handler
-#   orchestration; supporting=provider/multiplexer adapters plus transcript and
-#   miniapp; generic=config, utils, provider detection, protocol facades, and
-#   concrete backends. Confirm labels against churn when design changes.
-# - The pytest audits are the enforced drift gate. `archfit` is the whole-graph
-#   mirror and advisory gate: keep `no-import-cycles` as warn because the repo
-#   intentionally uses lazy imports that runtime tests accept.
-# - The config below is intended for full scans and delta scans. Keep it aligned
-#   with the current package map before running `archfit analyze --full` or
-#   `archfit analyze --base <ref>`.
-#
-# Solo-developer / distance note (Balanced Coupling):
-#   Distance is socio-technical — different-TEAM ownership RAISES it. A single
-#   owner adds ZERO ownership distance, so here distance reduces to code
-#   structure + runtime. Declaring yourself as owner is correct and honest, but
-#   it cannot lower coupling: the only levers are reduce strength (add a
-#   contract), reduce structural distance (co-locate), or accept low volatility.
-#   Because you personally absorb every cascade, honest `volatility` is the right
-#   primary signal — it tells you which couplings will actually bite.
 version: 1
 languages:
   python:
@@ -36,30 +6,20 @@ languages:
     enabled: false
   typescript:
     enabled: false
-# Minimum severity for BC coupling advisories: low|medium|high|critical
 coupling:
   min_severity: medium
-  # Inferred-volatility cascade (Balanced Coupling, book Ch9; archfit >=0.8). A
-  # stable module that is functional/intrusive-coupled to a `core` module inherits
-  # high volatility — it gets dragged into change whenever the core does. This is
-  # exactly ccgram's shape: modules wired to the live-session core (session_state,
-  # handlers, window_state) co-evolve with it. Enabling this surfaces that inherited
-  # volatility instead of under-rating quiet modules wired to a churning core.
   volatility_cascade: true
-# Skip non-Python assets from extraction (incl. the jscpd clone scan). Without
-# this, font-license text + miniapp JS dominate clone findings as false cohesion
-# risk. .gitnexus/.codegraph index dirs are auto-ignored by archfit.
 exclude:
   - '**/fonts/**'
   - '**/miniapp/static/**'
-  - '**/pkg/mod/**' # stray Go module cache at repo root (untracked cruft; safe to `rm -rf pkg/`)
+  - '**/pkg/mod/**'  
 analyzers:
   scip:
     enabled: true
   syntax:
     enabled: true
   clones:
-    enabled: true # jscpd — powers duplication signal (kept honest by exclusions)
+    enabled: true  
 ai:
   provider: anthropic
   model: claude-opus-4-8
@@ -67,14 +27,13 @@ layers:
   - core
   - adapter
 modules:
-  # --- Adapter: subpackages ---
   handlers:
     paths:
       - ccgram.handlers
       - ccgram.handlers.*
     layer: adapter
     owner: alexei-led
-    subdomain: core # the orchestration that makes ccgram ccgram
+    subdomain: core  
     volatility: high
   providers:
     paths:
@@ -82,9 +41,8 @@ modules:
       - ccgram.providers.*
     layer: adapter
     owner: alexei-led
-    subdomain: supporting # adapters to external agent CLIs
+    subdomain: supporting  
     volatility: medium
-  # --- Core: subpackages ---
   hooks:
     paths:
       - ccgram.hooks
@@ -99,7 +57,7 @@ modules:
       - ccgram.llm.*
     layer: core
     owner: alexei-led
-    subdomain: generic # LLM client plumbing
+    subdomain: generic  
     volatility: low
   miniapp:
     paths:
@@ -133,12 +91,6 @@ modules:
     owner: alexei-led
     subdomain: core
     volatility: medium
-  # --- Core: live-session read contract ---
-  # Mirrors window_state_ports for the volatile session-state cluster.
-  # Handlers read frozen LiveSessionSnapshot projections via free functions;
-  # direct imports of claude_task_state / get_claude_task_snapshot / idle_tracker
-  # from handlers are banned. Write authority stays in session_lifecycle.
-  # Fitness gate: tests/ccgram/test_session_state_ports_audit.py.
   session_state_ports:
     paths:
       - ccgram.session_state_ports
@@ -147,10 +99,6 @@ modules:
     owner: alexei-led
     subdomain: core
     volatility: medium
-  # --- Core: session and lifecycle management (the live-session core) ---
-  # Highest-fan-in volatile target cluster from the review (claude_task_state,
-  # session, session_monitor, monitor_state). The 62 residual critical edges
-  # land here — the genuine coupling hotspot, candidate for a read-contract.
   session_state:
     paths:
       - ccgram.session
@@ -165,12 +113,11 @@ modules:
       - ccgram.state_persistence
       - ccgram.monitor_events
       - ccgram.monitor_state
-      - ccgram.event_stream_monitor # supervises multiplexer.watch_events → agent_status_cache / death
+      - ccgram.event_stream_monitor  
     layer: core
     owner: alexei-led
     subdomain: core
     volatility: high
-  # --- Core: window state and queries ---
   window_state:
     paths:
       - ccgram.window_query
@@ -181,7 +128,6 @@ modules:
     owner: alexei-led
     subdomain: core
     volatility: medium
-  # --- Core: transcript reading and terminal parsing ---
   transcript:
     paths:
       - ccgram.transcript_parser
@@ -192,9 +138,8 @@ modules:
       - ccgram.last_unit
     layer: core
     owner: alexei-led
-    subdomain: supporting # follows external transcript formats
+    subdomain: supporting  
     volatility: medium
-  # --- Core: config, shared utilities, and domain formatting ---
   domain_config:
     paths:
       - ccgram
@@ -208,9 +153,8 @@ modules:
       - ccgram.tool_format
     layer: core
     owner: alexei-led
-    subdomain: generic # stable shared infra (config fan-in ~72)
+    subdomain: generic  
     volatility: low
-  # --- Adapter: Telegram protocol and bot ---
   telegram_adapter:
     paths:
       - ccgram.telegram_client
@@ -224,50 +168,29 @@ modules:
     owner: alexei-led
     subdomain: supporting
     volatility: medium
-  # --- Core: multiplexer contract (pure Protocol + value types) ---
-  # The backend-neutral seam callers depend on. Generic subdomain; functional
-  # volatility low, implementation volatility medium (one backend became two;
-  # herdr is young). The public boundary is this module — callers import
-  # `ccgram.multiplexer` (proxy) / `ccgram.multiplexer.base` and the neutral
-  # helpers, never a concrete backend. `base` importing no backend is the F3
-  # core-purity audit (test_import_no_cycles); the proxy's wiring import of
-  # `registry` is the seam's sanctioned job (F1 exempts `multiplexer/**`).
   multiplexer:
     paths:
-      - ccgram.multiplexer # proxy facade (neutral)
-      - ccgram.multiplexer.base # Protocol + capabilities + value types
+      - ccgram.multiplexer  
+      - ccgram.multiplexer.base  
       - ccgram.multiplexer.vim_state
       - ccgram.multiplexer.window_ops
       - ccgram.multiplexer.self_identify
-      - ccgram.multiplexer.agent_status_cache # backend-neutral push-status cache (mirrors vim_state)
-      - ccgram.multiplexer.topic_mapping # backend-neutral window→topic projection helper
+      - ccgram.multiplexer.agent_status_cache  
+      - ccgram.multiplexer.topic_mapping  
     layer: core
     owner: alexei-led
     subdomain: generic
-    volatility: low # functional; implementation medium (two backends)
-  # --- Adapter: concrete multiplexer backends (private internals) ---
-  # tmux/herdr socket + JSON shapes stay quarantined here. No caller may import
-  # these — enforced by the F1 pytest audit (test_multiplexer_boundary) and by
-  # the no-*-to-mux-backends rules below. These backends also own the
-  # foreground/tty internals: the tmux backend is the only sanctioned home for
-  # `pane_tty` reads + `ps -t`, exposed solely through `Multiplexer.foreground()`.
-  # That no-tty boundary is enforced by tests/ccgram/test_no_tty_outside_backend.py.
+    volatility: low  
   multiplexer_backends:
     paths:
       - ccgram.multiplexer.tmux
       - ccgram.multiplexer.herdr
-      - ccgram.multiplexer.herdr_events # herdr-only unix-socket event-stream reader
+      - ccgram.multiplexer.herdr_events  
       - ccgram.multiplexer.registry
     layer: adapter
     owner: alexei-led
     subdomain: generic
-    volatility: medium # implementation: herdr protocol / id scheme may change
-  # --- Adapter: provider-detection classifier (foreground -> provider name) ---
-  # The backend-neutral half of foreground detection. `process_detection` only
-  # classifies a neutral `ForegroundInfo.argv` it receives from
-  # `Multiplexer.foreground()` — no tty, no `ps`. The sanctioned consumer is the
-  # providers facade (`detect_provider_from_pane`); handlers must route through
-  # that facade, not import the classifier internals (no-tty drift gate below).
+    volatility: medium  
   provider_detection:
     paths:
       - ccgram.providers.process_detection
@@ -275,7 +198,6 @@ modules:
     owner: alexei-led
     subdomain: generic
     volatility: low
-  # --- Adapter: terminal infrastructure ---
   terminal_adapter:
     paths:
       - ccgram.thread_router
@@ -284,7 +206,6 @@ modules:
     owner: alexei-led
     subdomain: supporting
     volatility: low
-  # --- Adapter: application entry points and CLI ---
   app_bootstrap:
     paths:
       - ccgram.main
@@ -295,18 +216,9 @@ modules:
       - ccgram.hook
     layer: adapter
     owner: alexei-led
-    subdomain: generic # composition root / wiring
+    subdomain: generic  
     volatility: low
 rules:
-  # IMPORTANT — forbidden_dependency `from`/`to` are PATH GLOBS (e.g.
-  # `ccgram.handlers**`), NOT module-group names. Using a module name (`handlers`)
-  # silently matches nothing and the rule never fires.
-  # The pytest test_multiplexer_boundary audit stays the COMPREHENSIVE in-process
-  # gate (all callers, both import forms, allow-list); these glob rules mirror the
-  # highest-risk source->backend edges as a fast archfit drift signal.
-  #
-  # Multiplexer seam: no caller may import a concrete backend (tmux/herdr/registry);
-  # callers go through the neutral `ccgram.multiplexer` proxy / `.base` contract.
   - id: no-handlers-to-tmux
     type: forbidden_dependency
     from: ccgram.handlers**
@@ -332,16 +244,11 @@ rules:
     from: ccgram.providers**
     to: ccgram.multiplexer.herdr
     gate: fail
-  # No-tty drift gate: handlers learn the foreground process through the
-  # `detect_provider_from_pane` facade, never by importing the classifier
-  # directly. Mirrors the pytest test_no_tty_outside_backend audit.
   - id: no-handlers-to-provider-detection
     type: forbidden_dependency
     from: ccgram.handlers**
     to: ccgram.providers.process_detection
     gate: fail
-  # Advisory (see header): archfit counts lazy/in-function imports as cycle
-  # edges; the runtime gate is the clean-interpreter test_import_no_cycles.
   - id: no-import-cycles
     type: cycle
     gate: warn

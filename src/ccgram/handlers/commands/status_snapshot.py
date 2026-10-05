@@ -1,16 +1,3 @@
-"""Status-snapshot fallback for /status and /stats slash commands.
-
-Some providers (notably Codex) do not always reply natively to /status
-or /stats, so ccgram synthesises a one-shot status snapshot from the
-transcript when the provider doesn't write its own output. The probe
-captures the transcript size before the send, waits briefly, and only
-falls back if no provider-native output appeared in the delta.
-
-Public surface is the two helpers used by ``forward.py``:
-  - _status_snapshot_probe_offset(): pre-send transcript byte offset
-  - _maybe_send_status_snapshot(): post-send transcript reader + reply
-"""
-
 from __future__ import annotations
 
 
@@ -26,7 +13,6 @@ _CODEX_STATUS_FALLBACK_DELAY_SECONDS = 1.2
 
 
 def _status_snapshot_probe_offset(window_id: str, cc_slash: str) -> int | None:
-    """Return transcript file offset before sending a /status(/stats) command."""
     command = cc_slash.split(None, 1)[0].lower()
     if command not in ("/status", "/stats"):
         return None
@@ -55,7 +41,6 @@ async def _maybe_send_status_snapshot(
     *,
     since_offset: int | None = None,
 ) -> None:
-    """Send transcript-based status snapshot fallback for /status and /stats."""
     command = cc_slash.split(None, 1)[0].lower()
     if command not in ("/status", "/stats"):
         return

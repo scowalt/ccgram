@@ -1,12 +1,3 @@
-"""Integration tests for manual tmux window -> Telegram topic sync (TASK-033).
-
-Verifies the full chain: session_map update -> SessionMonitor detection ->
-_handle_new_window callback -> topic creation -> binding established.
-Unlike unit tests in test_handle_new_window.py, these tests wire the monitor's
-detection logic through to _handle_new_window with a real SessionManager
-(disk I/O mocked) to verify end-to-end state changes.
-"""
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,7 +12,6 @@ from ccgram.session_monitor import NewWindowEvent, SessionMonitor
 
 @pytest.fixture
 def sm(monkeypatch: pytest.MonkeyPatch) -> SessionManager:
-    """SessionManager with disk I/O disabled."""
     thread_router.reset()
     monkeypatch.setattr(SessionManager, "_load_state", lambda self: None)
     monkeypatch.setattr(SessionManager, "_save_state", lambda self: None)
@@ -44,8 +34,6 @@ def _make_topic(thread_id: int = 999) -> MagicMock:
 
 
 class TestNewWindowSyncWithBindings:
-    """Full flow: existing bindings provide target group, monitor detects new window."""
-
     async def test_monitor_detect_triggers_topic_and_binding(
         self, monitor: SessionMonitor, sm: SessionManager
     ) -> None:
@@ -175,8 +163,6 @@ class TestNewWindowSyncWithBindings:
 
 
 class TestNewWindowSyncColdStart:
-    """Cold-start: no existing bindings, CCGRAM_GROUP_ID drives topic creation."""
-
     async def test_cold_start_with_group_id_creates_and_binds(
         self, monitor: SessionMonitor, sm: SessionManager
     ) -> None:
@@ -262,8 +248,6 @@ class TestNewWindowSyncColdStart:
 
 
 class TestNewWindowSyncEdgeCases:
-    """Edge cases in the sync flow."""
-
     async def test_already_bound_window_skips_topic_creation(
         self, monitor: SessionMonitor, sm: SessionManager
     ) -> None:

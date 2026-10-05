@@ -1,5 +1,3 @@
-"""Tests for topic_creation_draft.py — module helpers."""
-
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -27,9 +25,6 @@ def _make_context(user_data: dict | None = None) -> MagicMock:
     return ctx
 
 
-# ── _browser_flow_stale ──────────────────────────────────────────────────────
-
-
 class TestBrowserFlowStale:
     def test_stale_when_no_pending_thread(self) -> None:
         context = _make_context({})
@@ -46,9 +41,6 @@ class TestBrowserFlowStale:
     def test_stale_when_user_data_is_none(self) -> None:
         context = _make_context(None)
         assert _browser_flow_stale(_make_update(42), context) is True
-
-
-# ── _required_selected_path ──────────────────────────────────────────────────
 
 
 class TestRequiredSelectedPath:

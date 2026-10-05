@@ -124,9 +124,7 @@ class TestFormatToolLine:
         assert "**read**" in result
 
     def test_backticks_in_input_replaced_with_quotes(self) -> None:
-        """Input backticks must be neutralized to avoid breaking inline-mono wrap."""
         result = format_tool_line("Bash", "run `make`")
-        # Output has exactly two backticks — the wrapping pair around the arg.
         assert result.count("`") == 2
         assert result == "\U0001f4bb **bash**: `run 'make'`"
 

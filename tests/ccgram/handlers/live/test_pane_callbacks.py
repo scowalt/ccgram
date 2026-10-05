@@ -1,15 +1,3 @@
-"""Tests for pane subscribe / rename callbacks and pane-output forwarding.
-
-Covers:
-  - subscribe / unsubscribe toggle persists on PaneInfo.subscribed
-  - rename prompt + apply_pane_rename round-trip
-  - rename clears with "-" or empty input
-  - rename truncates over-long names
-  - keyboard builder shapes
-  - PaneStatusStrategy.scan_window forwards subscribed pane output via callback
-  - subscription cleared automatically when pane dies (reconcile drops PaneInfo)
-"""
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -132,12 +120,10 @@ class TestSubscribeToggle:
     async def test_subscribe_rejects_non_owner(self) -> None:
         _bind(1, 99, "@0")
         window_store.upsert_pane("@0", "%5", state="idle")
-        # User 2 has no binding to @0
         query = _query(f"{CB_PANE_SUBSCRIBE}@0|%5", user_id=2)
         await pane_callbacks._dispatch(_update(query, user_id=2), _ctx())
         pane = window_store.get_pane("@0", "%5")
         assert pane is not None and pane.subscribed is False
-        # Alert toast was answered
         query.answer.assert_called_once()
         assert query.answer.call_args.kwargs.get("show_alert") is True
 
@@ -149,7 +135,6 @@ class TestSubscribeToggle:
             AsyncMock(return_value=[]),
         ):
             await pane_callbacks._dispatch(_update(query), _ctx())
-        # No pane was created
         assert window_store.get_pane("@0", "%9") is None
 
     async def test_subscribe_hydrates_pane_from_tmux(self) -> None:
@@ -176,7 +161,7 @@ class TestSubscribeToggle:
 
     async def test_subscribe_rejects_malformed_data(self) -> None:
         _bind(1, 99, "@0")
-        query = _query(f"{CB_PANE_SUBSCRIBE}@0")  # missing :%pane
+        query = _query(f"{CB_PANE_SUBSCRIBE}@0")
         await pane_callbacks._dispatch(_update(query), _ctx())
         query.answer.assert_called_once_with("Invalid pane")
 
@@ -216,7 +201,6 @@ class TestApplyPaneRename:
         assert handled is True
         pane = window_store.get_pane("@0", "%5")
         assert pane is not None and pane.name == "api-gateway"
-        # Pending state cleared so the next message routes normally.
         assert PANE_RENAME_WINDOW_ID not in ud
 
     async def test_dash_clears_existing_name(self) -> None:
@@ -245,7 +229,6 @@ class TestApplyPaneRename:
         handled = await apply_pane_rename(ud, 99, "x" * 200, msg)
         assert handled is True
         pane = window_store.get_pane("@0", "%5")
-        # Name not assigned — user must resend a shorter version.
         assert pane is not None and pane.name is None
         msg.reply_text.assert_awaited_once()
         reply_text = msg.reply_text.call_args.args[0]
@@ -265,7 +248,6 @@ class TestApplyPaneRename:
         msg = MagicMock()
         handled = await apply_pane_rename(ud, 100, "anything", msg)
         assert handled is False
-        # Pending state preserved for the original thread
         assert ud[PANE_RENAME_THREAD_ID] == 99
 
     async def test_handles_none_user_data(self) -> None:
@@ -398,9 +380,6 @@ class TestSubscribedOutputForwarding:
         strategy: PaneStatusStrategy,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # Disable per-pane forward rate limit so back-to-back scans both
-        # forward when content changes. The rate limit is exercised
-        # separately in `test_rate_limits_back_to_back_forwards`.
         monkeypatch.setattr(PaneStatusStrategy, "PANE_FORWARD_MIN_INTERVAL", 0.0)
         window_store.upsert_pane("@0", "%2", state="idle", subscribed=True)
         bot = AsyncMock(spec=Bot)
@@ -439,9 +418,6 @@ class TestSubscribedOutputForwarding:
     async def test_rate_limits_back_to_back_forwards(
         self, strategy: PaneStatusStrategy
     ) -> None:
-        # With the default 5s minimum interval, the second scan within
-        # the same monotonic window must NOT forward even when content
-        # genuinely changed — protects Telegram from busy-pane floods.
         window_store.upsert_pane("@0", "%2", state="idle", subscribed=True)
         bot = AsyncMock(spec=Bot)
         on_pane_output = AsyncMock()
@@ -479,7 +455,6 @@ class TestSubscribedOutputForwarding:
     async def test_dead_pane_drops_subscription(
         self, strategy: PaneStatusStrategy
     ) -> None:
-        # Subscribed pane that disappears in the next scan
         window_store.upsert_pane("@0", "%2", state="idle", subscribed=True)
         bot = AsyncMock(spec=Bot)
         on_pane_output = AsyncMock()
@@ -500,9 +475,7 @@ class TestSubscribedOutputForwarding:
                 on_blocked=AsyncMock(),
                 on_pane_output=on_pane_output,
             )
-        # PaneInfo for %2 — and its subscribed flag — is gone
         assert window_store.get_pane("@0", "%2") is None
-        # Hash cache also evicted
         assert "%2" not in strategy._pane_content_hash
 
 
@@ -555,6 +528,6 @@ class TestLifecycleToggle:
 
     async def test_toggle_rejects_missing_window_id(self) -> None:
         _bind(1, 99, "@0")
-        query = _query(CB_PANE_LIFECYCLE_TOGGLE)  # no window_id suffix
+        query = _query(CB_PANE_LIFECYCLE_TOGGLE)
         await pane_callbacks._dispatch(_update(query), _ctx())
         query.answer.assert_called_once_with("Invalid window")

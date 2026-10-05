@@ -1,26 +1,14 @@
-"""Shared fixtures for integration tests.
-
-Provides reusable fixtures for state directories, config patching,
-and session_map/events.jsonl file management.
-"""
-
 import json
 import time
 from pathlib import Path
 
 import pytest
 
-# Trigger SessionManager construction so the window_store / thread_router /
-# session_map_sync proxies are wired before any integration test imports
-# session_monitor or related modules in isolation.  When the whole suite runs,
-# some other test usually imports ccgram.session first; explicit import here
-# guarantees per-file isolation.
-import ccgram.session  # noqa: F401  (import-for-side-effects)
+import ccgram.session  # noqa: F401
 
 
 @pytest.fixture(autouse=True)
 def _default_replace_prompt_mode():
-    """Default to replace mode so existing tests using ccgram:N❯ markers pass."""
     from ccgram.config import config
 
     original = config.prompt_mode
@@ -31,7 +19,6 @@ def _default_replace_prompt_mode():
 
 @pytest.fixture
 def state_dir(tmp_path, monkeypatch):
-    """Temp directory with empty state files and config patched to use it."""
     (tmp_path / "session_map.json").write_text("{}")
     (tmp_path / "events.jsonl").write_text("")
     (tmp_path / "state.json").write_text("{}")
@@ -51,7 +38,6 @@ def state_dir(tmp_path, monkeypatch):
 
 @pytest.fixture
 def write_session_map(state_dir):
-    """Factory: write entries to session_map.json."""
 
     def _write(entries: dict) -> Path:
         path = state_dir / "session_map.json"
@@ -63,7 +49,6 @@ def write_session_map(state_dir):
 
 @pytest.fixture
 def append_event(state_dir):
-    """Factory: append a hook event line to events.jsonl."""
 
     def _append(
         event_type: str,

@@ -1,5 +1,3 @@
-"""Tests for window_query — read-only free functions over window_store."""
-
 from __future__ import annotations
 
 import pytest

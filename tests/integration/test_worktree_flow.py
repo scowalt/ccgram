@@ -231,8 +231,6 @@ async def test_create_window_failure_clears_worktree_state(
 async def test_herdr_delegates_worktree_creation(
     session_manager: SessionManager, git_repo: Path
 ) -> None:
-    # native_worktrees backend: _create_window_and_bind routes through
-    # create_worktree_window (one herdr `worktree create`), never create_window.
     worktree_path = str(git_repo.parent / "repo.worktrees" / "ccg-feature")
     user_data = {
         PENDING_WORKTREE_REPO: str(git_repo),
@@ -280,7 +278,6 @@ async def test_herdr_delegates_worktree_creation(
             ),
         )
 
-    # Delegated to herdr; the git create_window path is never used.
     mock_tmux.create_worktree_window.assert_awaited_once()
     call = mock_tmux.create_worktree_window.await_args
     assert call is not None
@@ -328,7 +325,6 @@ async def test_new_worktree_untracked_subdir_falls_back_to_root(
     mock_tr: MagicMock, git_repo: Path
 ) -> None:
     mock_tr.get_window_for_thread.return_value = None
-    # Subdir exists on disk but is NOT committed → absent in fresh HEAD checkout.
     (git_repo / "scratch").mkdir()
     subdir = git_repo / "scratch"
 

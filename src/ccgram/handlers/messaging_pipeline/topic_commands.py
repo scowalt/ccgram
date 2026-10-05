@@ -1,11 +1,3 @@
-"""Per-topic message-pipeline toggles — ``/verbose`` and ``/toolcalls``.
-
-These commands flip per-window state held by ``SessionManager``: the
-``batch_mode`` (used by the tool-use batching state machine in
-``tool_batch.py``) and the ``tool_call_visibility`` (used by the queue
-worker when filtering tool messages).
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -22,7 +14,6 @@ if TYPE_CHECKING:
 
 
 async def verbose_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Toggle tool-call batching for this topic."""
     user = update.effective_user
     if not user or not config.is_user_allowed(user.id):
         return
@@ -69,7 +60,6 @@ async def verbose_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -
 async def toolcalls_command(
     update: Update, _context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Cycle tool-call visibility for this topic: default → shown → hidden → default."""
     user = update.effective_user
     if not user or not config.is_user_allowed(user.id):
         return

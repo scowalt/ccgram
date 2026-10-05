@@ -1,19 +1,3 @@
-"""Shared utility functions used across multiple CCGram modules.
-
-Provides:
-  - ccgram_dir(): resolve config directory from CCGRAM_DIR env var.
-  - tmux_session_name(): resolve tmux session name from env.
-  - atomic_write_json(): crash-safe JSON file writes via temp+rename.
-  - read_cwd_from_jsonl(): extract the cwd field from the first JSONL entry.
-  - read_session_metadata_from_jsonl(): single-pass extraction of (cwd, summary).
-  - task_done_callback(): log unhandled exceptions from background asyncio tasks.
-  - log_throttled(): suppress repeated identical debug messages per key.
-  - detect_tmux_context(): auto-detect tmux session name and own window ID.
-  - check_duplicate_ccgram(): check if another ccgram is running in the session.
-  - is_general_topic(): check if a message is in the General (default) forum topic.
-  - handle_general_topic_message(): pin-once-then-react for General topic messages.
-"""
-
 import asyncio
 import contextlib
 import json
@@ -31,7 +15,6 @@ from telegram.error import TelegramError
 
 logger = structlog.get_logger()
 
-# --- Log throttling -----------------------------------------------------------
 
 _throttle_state: dict[str, tuple[float, str]] = {}
 
@@ -44,17 +27,6 @@ def log_throttled(
     cooldown: float = 300.0,
     _clock: Callable[[], float] = time.monotonic,
 ) -> None:
-    """Log at debug level, suppressing repeated identical messages per key.
-
-    First occurrence always logs. Subsequent calls with the same *key* and
-    identical formatted message are suppressed until *cooldown* seconds elapse.
-    A changed message resets the timer and logs immediately.
-
-    Not thread-safe: the read-check-write of ``_throttle_state`` is unlocked, so
-    all callers must run on the asyncio event loop (never from asyncio.to_thread
-    or a threadpool). Use distinct, bounded keys — entries persist until
-    log_throttle_sweep() evicts them.
-    """
     formatted = msg % args if args else msg
     now = _clock()
     prev = _throttle_state.get(key)
@@ -65,7 +37,6 @@ def log_throttled(
 
 
 def log_throttle_reset(prefix: str) -> None:
-    """Clear throttle state for keys starting with *prefix*."""
     to_remove = [k for k in _throttle_state if k.startswith(prefix)]
     for k in to_remove:
         del _throttle_state[k]
@@ -75,12 +46,6 @@ def log_throttle_sweep(
     max_age: float = 600.0,
     _clock: Callable[[], float] = time.monotonic,
 ) -> int:
-    """Remove throttle entries older than *max_age* seconds.
-
-    Returns the number of entries removed.  Intended to be called
-    periodically (e.g. every 60 s from the poll loop) to prevent
-    unbounded growth of ``_throttle_state``.
-    """
     now = _clock()
     stale = [k for k, (ts, _) in _throttle_state.items() if now - ts >= max_age]
     for k in stale:
@@ -90,14 +55,12 @@ def log_throttle_sweep(
 
 CCGRAM_DIR_ENV = "CCGRAM_DIR"
 
-# Maximum number of JSONL lines to scan when extracting session metadata.
 _SCAN_LINES = 20
 
 _SUMMARY_MAX_CHARS = 80
 
 
 def ccgram_dir() -> Path:
-    """Resolve config directory from CCGRAM_DIR env var or default ~/.ccgram."""
     raw = os.environ.get(CCGRAM_DIR_ENV, "")
     if raw:
         return Path(raw)
@@ -105,15 +68,6 @@ def ccgram_dir() -> Path:
 
 
 def load_ccgram_env() -> None:
-    """Load ``.env`` files into ``os.environ``: local cwd, then ``$CCGRAM_DIR``.
-
-    Mirrors ``Config``'s load order so the bot-token-free CLIs (``status``,
-    ``doctor``) honor ``CCGRAM_*`` (e.g. ``CCGRAM_MULTIPLEXER``) set only in
-    ``~/.ccgram/.env`` — not just the exported shell environment. ``load_dotenv``
-    defaults to ``override=False`` (already-set env wins, local ``.env`` wins
-    over the config-dir one). Idempotent.
-    """
-    # Lazy: dotenv is only needed by CLIs that read config without Config
     from dotenv import load_dotenv
 
     for env_path in (Path(".env"), ccgram_dir() / ".env"):
@@ -122,21 +76,13 @@ def load_ccgram_env() -> None:
 
 
 def tmux_session_name() -> str:
-    """Get tmux session name from TMUX_SESSION_NAME env var or default 'ccgram'."""
     return os.environ.get("TMUX_SESSION_NAME", "ccgram")
 
 
 def atomic_write_json(path: Path, data: Any, indent: int = 2) -> None:
-    """Write JSON data to a file atomically.
-
-    Writes to a temporary file in the same directory, then renames it
-    to the target path. This prevents data corruption if the process
-    is interrupted mid-write.
-    """
     path.parent.mkdir(parents=True, exist_ok=True)
     content = json.dumps(data, indent=indent)
 
-    # Write to temp file in same directory (same filesystem for atomic rename)
     fd, tmp_path = tempfile.mkstemp(
         dir=str(path.parent), suffix=".tmp", prefix=f".{path.name}."
     )
@@ -153,16 +99,11 @@ def atomic_write_json(path: Path, data: Any, indent: int = 2) -> None:
 
 
 def read_cwd_from_jsonl(file_path: str | Path) -> str:
-    """Read the cwd field from the first JSONL entry that has one.
-
-    Scans up to _SCAN_LINES lines. Shared by session.py and session_monitor.py.
-    """
     cwd, _ = read_session_metadata_from_jsonl(file_path)
     return cwd
 
 
 def _extract_user_text(msg: dict[str, object]) -> str:
-    """Extract display text from a user message's content field."""
     content = msg.get("content", "")
     if isinstance(content, list):
         for block in content:
@@ -176,7 +117,6 @@ def _extract_user_text(msg: dict[str, object]) -> str:
 
 
 def _extract_metadata_from_entry(data: dict, cwd: str, summary: str) -> tuple[str, str]:
-    """Extract cwd and summary fields from a single parsed JSONL entry."""
     if not cwd:
         found_cwd = data.get("cwd")
         if found_cwd and isinstance(found_cwd, str):
@@ -189,11 +129,6 @@ def _extract_metadata_from_entry(data: dict, cwd: str, summary: str) -> tuple[st
 
 
 def read_session_metadata_from_jsonl(file_path: str | Path) -> tuple[str, str]:
-    """Extract cwd and summary from a JSONL transcript in a single file read.
-
-    Scans up to _SCAN_LINES lines. Returns (cwd, summary) where either
-    may be empty if not found.
-    """
     cwd = ""
     summary = ""
     try:
@@ -219,16 +154,10 @@ def read_session_metadata_from_jsonl(file_path: str | Path) -> tuple[str, str]:
 
 
 def detect_tmux_context() -> tuple[str | None, str | None]:
-    """Detect tmux session name and own window ID in a single tmux call.
-
-    Returns (session_name, own_window_id). Either may be None.
-    Requires $TMUX to be set (running inside tmux).
-    """
     if not os.environ.get("TMUX"):
         return None, None
     pane_id = os.environ.get("TMUX_PANE")
     if not pane_id:
-        # TMUX set but no TMUX_PANE — can only get session name
         try:
             result = subprocess.run(
                 ["tmux", "display-message", "-p", "#{session_name}"],
@@ -242,7 +171,6 @@ def detect_tmux_context() -> tuple[str | None, str | None]:
             return (name or None), None
         except subprocess.TimeoutExpired, FileNotFoundError:
             return None, None
-    # Single call to get both session name and window ID
     try:
         result = subprocess.run(
             [
@@ -268,13 +196,8 @@ def detect_tmux_context() -> tuple[str | None, str | None]:
 
 
 def check_duplicate_ccgram(session_name: str) -> str | None:
-    """Check if another ccgram is running in the session.
-
-    Returns error message if duplicate found, None if clear.
-    """
     own_pane = os.environ.get("TMUX_PANE", "")
     if not own_pane:
-        # Cannot reliably exclude self — skip duplicate check
         return None
     try:
         result = subprocess.run(
@@ -311,11 +234,6 @@ def check_duplicate_ccgram(session_name: str) -> str | None:
 
 
 def assert_sendable(file_path: str | Path) -> None:
-    """Block sending files from ccgram's own state directory.
-
-    Prevents accidental leakage of tokens, session maps, or config
-    via any outbound file-sending path.
-    """
     try:
         real = Path(file_path).resolve()
         state_real = ccgram_dir().resolve()
@@ -326,10 +244,8 @@ def assert_sendable(file_path: str | Path) -> None:
 
 
 def shorten_path(full_path: str, cwd: str | None) -> str:
-    """Return path relative to cwd if it's a subpath, else return as-is."""
     if not cwd or not full_path:
         return full_path
-    # Normalize trailing slashes
     cwd = cwd.rstrip("/")
     if full_path.startswith(cwd + "/"):
         return os.path.relpath(full_path, cwd)
@@ -337,11 +253,6 @@ def shorten_path(full_path: str, cwd: str | None) -> str:
 
 
 def task_done_callback(task: asyncio.Task[None]) -> None:
-    """Log unhandled exceptions from background asyncio tasks.
-
-    Attach to any fire-and-forget task via ``task.add_done_callback(task_done_callback)``.
-    Suppresses CancelledError (normal shutdown).
-    """
     if task.cancelled():
         return
     exc = task.exception()
@@ -349,19 +260,10 @@ def task_done_callback(task: asyncio.Task[None]) -> None:
         logger.error("Background task %s failed", task.get_name(), exc_info=exc)
 
 
-# --- General topic pin-once-then-react ------------------------------------
-
 _general_topic_pin_cache: dict[int, bool] = {}
 
 
 def is_general_topic(message: Message) -> bool:
-    """Return True if the message is in the General (default) forum topic.
-
-    In Telegram forum groups, messages sent directly in the General topic
-    (not as replies) may have message_thread_id=None instead of 1.
-    We check chat.is_forum to distinguish General-topic messages from
-    non-forum contexts.
-    """
     thread_id = getattr(message, "message_thread_id", None)
     is_forum = getattr(message.chat, "is_forum", False) if message.chat else False
     return is_forum and (thread_id is None or thread_id == 1)
@@ -370,12 +272,6 @@ def is_general_topic(message: Message) -> bool:
 async def handle_general_topic_message(
     bot: Bot, message: Message, chat_id: int
 ) -> None:
-    """Handle messages in General topic: pin hint once, then react only.
-
-    On first General-topic message per chat, sends a warning and pins it.
-    Subsequent messages get a silent 🤔 reaction instead.
-    """
-    # Check cache first to avoid unnecessary API calls
     if not _general_topic_pin_cache.get(chat_id):
         try:
             chat_info = await bot.get_chat(chat_id)
@@ -386,11 +282,9 @@ async def handle_general_topic_message(
             pass
 
     if _general_topic_pin_cache.get(chat_id):
-        # Already pinned — just react silently
         with contextlib.suppress(TelegramError):
             await message.set_reaction("🤔")
     else:
-        # Set cache before attempt to guarantee one-shot behavior even if pin fails
         _general_topic_pin_cache[chat_id] = True
         try:
             hint = await message.reply_text(

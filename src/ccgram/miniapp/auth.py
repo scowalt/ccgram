@@ -1,19 +1,3 @@
-"""Mini App authentication — HMAC-signed tokens and WebApp initData checks.
-
-Two independent verification paths:
-
-1. **Window tokens** — short-lived HMAC-SHA256 signed payloads minted by
-   ``sign_token`` for inline-button URLs. Format ``base64url(payload).base64url(sig)``
-   where payload is JSON ``{w, u, exp}``. The signing key is derived from the
-   bot token and a fixed namespace, so a stolen bot token (already disastrous)
-   is the only way to forge.
-
-2. **Telegram WebApp initData** — ``validate_init_data`` implements the spec at
-   https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
-   using the legacy HMAC scheme: ``secret_key = HMAC_SHA256("WebAppData", bot_token)``,
-   then ``hash = HMAC_SHA256(secret_key, sorted_data_check_string)``.
-"""
-
 from __future__ import annotations
 
 import base64
@@ -28,17 +12,15 @@ from urllib.parse import parse_qsl
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-# Authentication date freshness limit for initData (seconds).
 _INIT_DATA_MAX_AGE = 86400
 
-# Default token TTL when minting (seconds).
 DEFAULT_TOKEN_TTL = 3600
 
 _TOKEN_NAMESPACE = b"ccgram-miniapp/v1"
 
 
 class InvalidTokenError(Exception):
-    """Raised when a token is malformed, expired, or has a bad signature."""
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,11 +44,6 @@ def _b64url_decode(token: str) -> bytes:
 
 
 def _signing_key(bot_token: str) -> bytes:
-    """Derive an HMAC key for window tokens from the bot token.
-
-    Distinct from the WebApp ``initData`` key so a bug in one path can't be
-    replayed against the other.
-    """
     if not bot_token:
         raise InvalidTokenError("bot_token is empty")
     return hmac.new(
@@ -82,7 +59,6 @@ def sign_token(
     ttl: int = DEFAULT_TOKEN_TTL,
     now: float | None = None,
 ) -> str:
-    """Mint a signed token for the given window/user with TTL seconds of validity."""
     issued = int(time.time() if now is None else now)
     payload = {"w": window_id, "u": int(user_id), "exp": issued + int(ttl)}
     body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
@@ -96,10 +72,6 @@ def verify_token(
     bot_token: str,
     now: float | None = None,
 ) -> TokenPayload:
-    """Verify token signature and expiry; return decoded payload.
-
-    Raises ``InvalidTokenError`` on any failure (bad format, bad signature, expired).
-    """
     if not token or token.count(".") != 1:
         raise InvalidTokenError("malformed token")
     body_b64, sig_b64 = token.split(".", 1)
@@ -144,13 +116,6 @@ def validate_init_data(
     max_age: int = _INIT_DATA_MAX_AGE,
     now: float | None = None,
 ) -> dict[str, str]:
-    """Verify Telegram WebApp ``initData`` per the legacy HMAC spec.
-
-    ``init_data`` is the URL-encoded query string Telegram passes via
-    ``Telegram.WebApp.initData``. Returns the parsed parameters on success.
-    Raises ``InvalidTokenError`` on signature mismatch, missing hash, or stale
-    ``auth_date``.
-    """
     if not init_data:
         raise InvalidTokenError("empty initData")
     params = dict(parse_qsl(init_data, keep_blank_values=True))
@@ -179,12 +144,6 @@ def validate_init_data(
 
 
 def init_data_user_id(params: Mapping[str, str]) -> int:
-    """Extract the Telegram user id from validated ``initData`` params.
-
-    The ``user`` field is a JSON-encoded Telegram User object; we only need
-    its ``id``. Raises :class:`InvalidTokenError` when the field is missing
-    or malformed.
-    """
     raw = params.get("user")
     if not raw:
         raise InvalidTokenError("initData missing user")
@@ -202,16 +161,6 @@ def authorize_api_request(
     init_data: str | None,
     now: float | None = None,
 ) -> TokenPayload:
-    """Verify a path token AND the accompanying Telegram ``initData``.
-
-    The bearer token alone proves the URL was issued by the bot, but it
-    travels in the URL and may leak. Telegram's ``initData`` is signed by
-    the bot token inside the WebApp container and binds the request to the
-    actual Telegram user. Requiring both — and matching the user ids —
-    closes the URL-leak window.
-
-    Raises :class:`InvalidTokenError` on any failure.
-    """
     payload = verify_token(token, bot_token=bot_token, now=now)
     if not init_data:
         raise InvalidTokenError("missing initData")

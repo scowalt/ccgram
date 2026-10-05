@@ -1,5 +1,3 @@
-"""Unit tests for OpenAICompatTranscriber — mocks httpx.AsyncClient."""
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -10,7 +8,6 @@ from ccgram.whisper.httpx_transcriber import OpenAICompatTranscriber
 
 @pytest.fixture
 def _mock_httpx():
-    """Provide a mock httpx async client and response for transcription tests."""
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
     mock_response.json.return_value = {"text": "hello"}
@@ -28,8 +25,6 @@ def _mock_httpx():
 
 
 class TestTranscribe:
-    """Tests for OpenAICompatTranscriber.transcribe()."""
-
     @pytest.mark.usefixtures("_mock_httpx")
     async def test_success(self, _mock_httpx: tuple[AsyncMock, MagicMock]) -> None:
         mock_client, mock_response = _mock_httpx

@@ -1,11 +1,3 @@
-"""Per-topic message queue management for ordered message delivery.
-
-Queue primitives (FIFO ordering, merging, coalescing) and the worker loop
-that dispatches tasks to ``tool_batch`` and ``status_bubble``.  Status I/O,
-task-list formatting, and keyboard rendering live in ``status_bubble``;
-tool-use batching lives in ``tool_batch``.
-"""
-
 import asyncio
 import contextlib
 import time
@@ -56,27 +48,23 @@ from .tool_batch import (
 
 logger = structlog.get_logger()
 
-MERGE_MAX_LENGTH = 3800  # Leave room within Telegram's 4096 char message limit
+MERGE_MAX_LENGTH = 3800
 _QUEUE_WAIT_WARN_SECS = 1.0
 _TASK_RUN_WARN_SECS = 1.0
 
 QueueKey = tuple[int, int]
 
 
-# Per-topic message queues and worker tasks
 _message_queues: dict[QueueKey, asyncio.Queue[MessageTask]] = {}
 _queue_workers: dict[QueueKey, asyncio.Task[None]] = {}
-_queue_locks: dict[QueueKey, asyncio.Lock] = {}  # Protect drain/refill operations
+_queue_locks: dict[QueueKey, asyncio.Lock] = {}
 
-# Map (tool_use_id, user_id, thread_key) -> telegram message_id
-# for editing tool_use messages with results
 _tool_msg_ids: dict[tuple[str, int, int], int] = {}
 
-_CAPTION_MAX_LENGTH = 1024  # Telegram Bot API caption limit
+_CAPTION_MAX_LENGTH = 1024
 
 
 def _truncate_caption(text: str) -> str:
-    """Truncate at last whitespace boundary under the Telegram caption limit."""
     if len(text) <= _CAPTION_MAX_LENGTH:
         return text
     truncated = text[: _CAPTION_MAX_LENGTH - 1]
@@ -133,7 +121,6 @@ async def _send_tts_voice(
 
 
 def _queue_key(user_id: int, thread_id: int | None = None) -> QueueKey:
-    """Build the queue key for a user's topic."""
     return (user_id, thread_key(thread_id))
 
 
@@ -141,7 +128,6 @@ def get_message_queue(
     user_id: int,
     thread_id: int | None = None,
 ) -> asyncio.Queue[MessageTask] | None:
-    """Get the message queue for a user's topic (if it exists)."""
     return _message_queues.get(_queue_key(user_id, thread_id))
 
 
@@ -150,16 +136,11 @@ def get_or_create_queue(
     user_id: int,
     thread_id: int | None = None,
 ) -> asyncio.Queue[MessageTask]:
-    """Get or create message queue and worker for a user's topic.
-
-    Also detects dead workers and respawns them so messages are not lost.
-    """
     key = _queue_key(user_id, thread_id)
     if key not in _message_queues:
         _message_queues[key] = asyncio.Queue()
         _queue_locks[key] = asyncio.Lock()
 
-    # Respawn dead workers (can happen if an uncaught exception killed the task)
     existing = _queue_workers.get(key)
     if existing is None or existing.done():
         if existing is not None:
@@ -177,11 +158,6 @@ def get_or_create_queue(
 
 
 def _drain_queue(queue: asyncio.Queue[MessageTask]) -> list[MessageTask]:
-    """Drain all items from the queue and return them as a list.
-
-    Destructive: the queue is empty after this call. Caller is responsible
-    for re-enqueueing any items that should not be discarded.
-    """
     items: list[MessageTask] = []
     while not queue.empty():
         try:
@@ -193,7 +169,6 @@ def _drain_queue(queue: asyncio.Queue[MessageTask]) -> list[MessageTask]:
 
 
 def _can_merge_tasks(base: ContentTask, candidate: MessageTask) -> bool:
-    """Check if two content tasks can be merged."""
     if not isinstance(candidate, ContentTask):
         return False
     if base.window_id != candidate.window_id:
@@ -208,16 +183,6 @@ async def _merge_content_tasks(
     first: ContentTask,
     lock: asyncio.Lock,
 ) -> tuple[ContentTask, int]:
-    """Merge consecutive content tasks from queue.
-
-    Returns: (merged_task, merge_count) where merge_count is the number of
-    additional tasks merged (0 if no merging occurred).
-
-    Note on queue counter management:
-        put_nowait() on re-enqueued items increments the internal task counter
-        again; task_done() compensates so the net count stays correct.
-        Without this compensation, queue.join() would wait indefinitely.
-    """
     merged_parts = list(first.parts)
     current_length = sum(len(p) for p in merged_parts)
     merge_count = 0
@@ -267,11 +232,6 @@ async def _coalesce_status_updates(
     first: StatusUpdateTask,
     lock: asyncio.Lock,
 ) -> tuple[StatusUpdateTask, int]:
-    """Keep only the latest pending status_update for the same topic/window.
-
-    Returns: (selected_task, dropped_count) where dropped_count is the number
-    of queued tasks removed and already accounted for.
-    """
     selected = first
     dropped = 0
     key = (thread_key(first.thread_id), first.window_id)
@@ -305,10 +265,6 @@ async def _handle_content_task(
     queue: asyncio.Queue[MessageTask],
     lock: asyncio.Lock,
 ) -> int:
-    """Route a content task through batching or normal processing.
-
-    Returns the number of additional merged tasks (caller must call task_done for each).
-    """
     if task.content_type in ("tool_use", "tool_result") and is_tool_calls_hidden(
         task.window_id
     ):
@@ -330,7 +286,6 @@ async def _handle_content_task(
 
 
 def _is_ghost_window_task_at_enqueue(window_id: str) -> bool:
-    """Return True if the window is no longer bound to any topic."""
     if window_id and not thread_router.has_window(window_id):
         logger.debug("Skipping enqueue for unbound window %s", window_id)
         return True
@@ -340,7 +295,6 @@ def _is_ghost_window_task_at_enqueue(window_id: str) -> bool:
 async def _flush_batch_for_task(
     user_id: int, task: MessageTask, client: TelegramClient
 ) -> None:
-    """Flush any active batch for the topic that owns this task."""
     tkey = thread_key(task.thread_id)
     if has_active_batch(user_id, tkey):
         await flush_batch(client, user_id, tkey)
@@ -353,19 +307,11 @@ async def _dispatch(
     queue: asyncio.Queue[MessageTask],
     lock: asyncio.Lock,
 ) -> int:
-    """Dispatch a task by type. Returns extra task_done count for merged tasks."""
     match task:
         case ContentTask() as ct:
             return await _handle_content_task(client, user_id, ct, queue, lock)
         case StatusUpdateTask() as st:
-            # Suppress status polls while an ephemeral tool batch owns the
-            # bubble — the batch itself is the activity indicator. Flushing
-            # to insert a status bubble causes a visible flicker (formatted
-            # tool calls vanish, plain status appears, then the assistant
-            # text replaces that).
             if has_ephemeral_active_batch(user_id, thread_key(st.thread_id)):
-                # Drop any siblings the coalescer would have consumed so
-                # the next poll cycle sees a clean queue.
                 _, dropped = await _coalesce_status_updates(queue, st, lock)
                 for _ in range(dropped):
                     queue.task_done()
@@ -388,7 +334,6 @@ async def _dispatch(
 async def _message_queue_worker(
     client: TelegramClient, user_id: int, thread_id_or_0: int
 ) -> None:
-    """Process message tasks for one user/topic sequentially."""
     key = _queue_key(user_id, thread_id_or_0)
     queue = _message_queues[key]
     lock = _queue_locks[key]
@@ -451,7 +396,7 @@ async def _message_queue_worker(
                             retry_secs,
                         )
                         await asyncio.sleep(retry_secs)
-            except (TelegramError, OSError):  # fmt: skip
+            except TelegramError, OSError:
                 logger.exception(
                     "Error processing message task for user %s (thread %s)",
                     user_id,
@@ -477,7 +422,6 @@ async def _message_queue_worker(
 async def _process_content_task(
     client: TelegramClient, user_id: int, task: ContentTask
 ) -> None:
-    """Process a content message task."""
     tkey = thread_key(task.thread_id)
     chat_id = thread_router.resolve_chat_id(user_id, task.thread_id)
 
@@ -549,7 +493,6 @@ async def enqueue_content_message(
     role: MessageRole = "assistant",
     thread_id: int | None = None,
 ) -> None:
-    """Enqueue a content message task."""
     if _is_ghost_window_task_at_enqueue(window_id):
         return
     queue = get_or_create_queue(client, user_id, thread_id)
@@ -583,7 +526,6 @@ async def enqueue_status_update(
     status_text: str | None,
     thread_id: int | None = None,
 ) -> None:
-    """Enqueue status update or clear."""
     queue = get_or_create_queue(client, user_id, thread_id)
 
     if status_text is not None:
@@ -613,10 +555,6 @@ async def enqueue_status_update(
 
 @topic_state.register("topic")
 def clear_tool_msg_ids_for_topic(user_id: int, thread_id: int | None = None) -> None:
-    """Clear tool message ID tracking for a specific topic.
-
-    Removes all entries in _tool_msg_ids that match the given user and thread.
-    """
     tkey = thread_key(thread_id)
     keys_to_remove = [
         key for key in _tool_msg_ids if key[1] == user_id and key[2] == tkey
@@ -626,7 +564,6 @@ def clear_tool_msg_ids_for_topic(user_id: int, thread_id: int | None = None) -> 
 
 
 async def shutdown_workers() -> None:
-    """Stop all queue workers (called during client shutdown)."""
     for _, worker in list(_queue_workers.items()):
         worker.cancel()
         with contextlib.suppress(asyncio.CancelledError):

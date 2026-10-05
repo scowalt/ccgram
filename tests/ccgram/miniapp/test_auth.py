@@ -58,7 +58,6 @@ def test_verify_rejects_malformed(bad):
 def test_verify_rejects_tampered_payload():
     tok = sign_token(bot_token=BOT, window_id=WID, user_id=UID, now=NOW)
     body, sig = tok.split(".")
-    # Flip a byte in body — sig won't match.
     tampered = body[:-1] + ("A" if body[-1] != "A" else "B") + "." + sig
     with pytest.raises(InvalidTokenError, match="signature"):
         verify_token(tampered, bot_token=BOT, now=NOW + 10)
@@ -70,7 +69,6 @@ def test_signing_key_rejects_empty_bot_token():
 
 
 def _make_init_data(bot_token: str, params: dict[str, str]) -> str:
-    """Build a signed initData string per the WebApp legacy HMAC spec."""
     pairs = sorted(params.items())
     data_check = "\n".join(f"{k}={v}" for k, v in pairs)
     secret = hmac.new(b"WebAppData", bot_token.encode("utf-8"), hashlib.sha256).digest()

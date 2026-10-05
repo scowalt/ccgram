@@ -1,17 +1,3 @@
-"""Sessions dashboard — /sessions command showing all bound sessions.
-
-Displays a summary of all thread-bound sessions for the current user
-with alive/dead status indicators, per-session action buttons (Esc,
-Screenshot, Kill with two-step confirmation), cwd details, and
-refresh/new-session actions.
-
-Key functions:
-  - sessions_command(): /sessions command handler
-  - handle_sessions_refresh(): refresh button callback
-  - handle_sessions_kill(): first Kill tap — show confirmation
-  - handle_sessions_kill_confirm(): second tap — kill and unbind
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -53,7 +39,6 @@ _NEW_BTN = InlineKeyboardButton("\u2795 New Session", callback_data=CB_SESSIONS_
 
 
 async def _build_dashboard(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
-    """Build dashboard text and keyboard for a user's sessions."""
     bindings = thread_router.get_all_thread_windows(user_id)
 
     if not bindings:
@@ -74,7 +59,6 @@ async def _build_dashboard(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
         alive = window_id in live_ids
         status = "\U0001f7e2" if alive else "\u26ab"
 
-        # Session line with provider + mode tags and cwd detail
         provider_tag = f" [{view.provider_name}]" if view and view.provider_name else ""
         mode_tag = " [YOLO]" if view and view.approval_mode == "yolo" else ""
         line = f"{status} {display_name}{provider_tag}{mode_tag}"
@@ -105,7 +89,6 @@ async def _build_dashboard(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
 
 
 async def sessions_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /sessions — show dashboard of all bound sessions."""
     user = update.effective_user
     if not user or not update.message:
         return
@@ -119,7 +102,6 @@ async def sessions_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) 
 
 
 async def handle_sessions_refresh(query: CallbackQuery, user_id: int) -> None:
-    """Handle refresh button — re-render the dashboard in-place."""
     text, keyboard = await _build_dashboard(user_id)
     await safe_edit(query, text, reply_markup=keyboard)
 
@@ -127,7 +109,6 @@ async def handle_sessions_refresh(query: CallbackQuery, user_id: int) -> None:
 async def handle_sessions_kill(
     query: CallbackQuery, _user_id: int, window_id: str
 ) -> None:
-    """First Kill tap — show confirmation prompt."""
     display = thread_router.get_display_name(window_id)
     keyboard = InlineKeyboardMarkup(
         [
@@ -150,15 +131,12 @@ async def handle_sessions_kill(
 async def handle_sessions_kill_confirm(
     query: CallbackQuery, user_id: int, window_id: str, client: TelegramClient
 ) -> None:
-    """Second tap — kill the tmux window, unbind all users, refresh dashboard."""
     display = thread_router.get_display_name(window_id)
 
     w = await tmux_manager.find_window_by_id(window_id)
     if w:
         await tmux_manager.kill_window(w.window_id)
 
-    # Clean up BEFORE unbind — resolve_chat_id needs group_chat_ids
-    # which unbind_thread deletes
     for uid, tid, bound_wid in list(thread_router.iter_thread_bindings()):
         if bound_wid == window_id:
             await clear_topic_state(uid, tid, client, window_id=window_id)
@@ -171,7 +149,6 @@ async def handle_sessions_kill_confirm(
         user_id,
     )
 
-    # Re-render dashboard
     text, keyboard = await _build_dashboard(user_id)
     await safe_edit(
         query, f"\U0001f5d1 Killed '{display}'\n\n{text}", reply_markup=keyboard

@@ -1,20 +1,8 @@
-// Multi-pane grid surface — fetches /api/panes/<token>, lays panes out as a
-// responsive grid (1/2/4-up), and connects one websocket per pane to render
-// a small live terminal preview. Click a tile to expand into a focused
-// single-pane view; click again (or the "Back" link) to return to the grid.
-//
-// Subscription lifecycle: each tile owns one xterm.js Terminal + WebSocket;
-// closing the grid (or focusing one tile) tears the others down so we never
-// hold more sockets than tiles currently visible.
 
 (function () {
     "use strict";
 
     const REFRESH_INTERVAL_MS = 5000;
-    // The refresh loop below already polls /api/panes/<token> at this cadence
-    // and treats HTTP 403 as the authoritative auth-failure signal. Per-tile
-    // WebSockets therefore back off transport failures forever — the refresh
-    // loop will tear them down within one tick if the server is rejecting us.
     const XTERM_CSS = "https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css";
     const XTERM_JS = "https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js";
     const FIT_JS = "https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js";
@@ -34,7 +22,6 @@
         return raw ? { "X-Telegram-Init-Data": raw } : {};
     }
 
-    // Server WS close codes for auth failures (mirror terminal.py).
     const WS_AUTH_CODES = new Set([4001, 4002, 4003]);
 
     function wsUrlFor(token, paneId) {
@@ -72,12 +59,6 @@
         });
     }
 
-    // Single shared promise that resolves once xterm.js + fit-addon are
-    // available on window. Both terminal.js and panes.js reuse the same
-    // global so the second caller never re-issues the script tags or races
-    // the first loader. A rejected promise is evicted so the next caller
-    // can retry — otherwise a transient CDN blip would brick every later
-    // xterm consumer for the rest of the page lifetime.
     function ensureXtermLoaded() {
         if (window.__ccgramXtermReady) return window.__ccgramXtermReady;
         if (window.Terminal && window.FitAddon && window.FitAddon.FitAddon) {
@@ -169,7 +150,7 @@
         const fit = new FitAddon();
         term.loadAddon(fit);
         term.open(termEl);
-        try { fit.fit(); } catch (e) { /* tile may be 0×0 momentarily */ }
+        try { fit.fit(); } catch (e) {   }
 
         let closed = false;
         let reconnectDelay = 500;
@@ -180,14 +161,9 @@
             ws = new WebSocket(wsUrlFor(token, paneId));
             ws.onopen = () => {
                 reconnectDelay = 500;
-                // Server reads initData from the first WS frame. The
-                // browser WebSocket API can't carry custom headers, and
-                // putting initData in the URL would leak it into access
-                // logs alongside the token.
                 try {
                     ws.send(JSON.stringify({ init_data: initDataRaw() }));
                 } catch (e) {
-                    // Socket already gone — onclose will drive reconnect.
                 }
             };
             ws.onmessage = (ev) => {
@@ -199,18 +175,13 @@
                 }
                 reconnectDelay = 500;
             };
-            ws.onerror = () => { /* close handler will follow */ };
+            ws.onerror = () => {   };
             ws.onclose = (ev) => {
                 if (closed) return;
-                // Server-driven auth-failure codes are authoritative —
-                // stop immediately so we don't churn through retries with
-                // bad credentials.
                 if (ev && WS_AUTH_CODES.has(ev.code)) {
                     closed = true;
                     return;
                 }
-                // The refresh loop's HTTP 403 detection covers the rest;
-                // here we just back off and keep retrying transport blips.
                 setTimeout(() => {
                     if (!closed) connect();
                 }, reconnectDelay);
@@ -222,11 +193,11 @@
         return {
             close() {
                 closed = true;
-                try { if (ws) ws.close(); } catch (e) { /* ignore */ }
-                try { term.dispose(); } catch (e) { /* ignore */ }
+                try { if (ws) ws.close(); } catch (e) {   }
+                try { term.dispose(); } catch (e) {   }
             },
             refit() {
-                try { fit.fit(); } catch (e) { /* ignore */ }
+                try { fit.fit(); } catch (e) {   }
             },
         };
     }
@@ -244,8 +215,6 @@
             attachTerminal(term, token, pane.pane_id, statusEl).then((handle) => {
                 if (!handle) return;
                 if (tornDown) {
-                    // Teardown happened while attach was pending — close
-                    // the late-arriving handle so we don't leak the WS.
                     handle.close();
                     return;
                 }
@@ -324,8 +293,6 @@
             return;
         }
 
-        // Hide the grid entirely when only one pane exists — the main terminal
-        // viewer above already covers that case.
         if (panes.length <= 1) {
             container.style.display = "none";
             return;
@@ -345,10 +312,6 @@
 
         showGrid();
 
-        // Per-pane fingerprint covers every property visible in tile/header:
-        // rename, command, state, active flag, subscription badge. Used both
-        // to decide whether the grid needs rebuilding and whether a focused
-        // pane's header needs refreshing.
         const fingerprintPane = (p) => [
             p.pane_id,
             p.active ? "1" : "0",
@@ -384,7 +347,6 @@
                         (p) => p.pane_id === focusedPaneId
                     );
                     if (!focusedPane) {
-                        // Focused pane disappeared — fall back to the grid.
                         showGrid();
                         return;
                     }
@@ -395,10 +357,6 @@
                         !previous ||
                         fingerprintPane(previous) !== fingerprintPane(focusedPane)
                     ) {
-                        // Focused pane's own metadata changed — re-render so
-                        // the header label/state badge stay fresh. Other
-                        // panes' changes are invisible in focused view, so
-                        // leave the WebSocket untouched in that case.
                         if (active) active.teardown();
                         active = renderFocused(
                             container, focusedPane, token, statusEl, showGrid
@@ -418,7 +376,6 @@
                             "Authentication expired — reopen from Telegram.";
                     }
                 }
-                /* otherwise transient — try again */
             }
         }, REFRESH_INTERVAL_MS);
 

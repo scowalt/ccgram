@@ -1,10 +1,3 @@
-"""Integration tests for shell provider Telegram → Shell → Telegram flow.
-
-Tests the complete round-trip: command routing, execution, output capture,
-and relay back to Telegram. Uses mock bot + mock tmux with real
-shell_commands/shell_capture logic.
-"""
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

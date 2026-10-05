@@ -23,9 +23,6 @@ def _clear_failed_windows():
 
 
 class TestDetectProviderFromPane:
-    """``detect_provider_from_pane`` resolves the foreground process through
-    the multiplexer seam (``Multiplexer.foreground``) — never a tty/ps path."""
-
     @pytest.fixture(autouse=True)
     def _clear_cache(self):
         _pgid_cache.clear()

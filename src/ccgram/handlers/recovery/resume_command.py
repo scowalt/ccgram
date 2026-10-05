@@ -1,18 +1,3 @@
-"""Resume command — browse and resume past Claude Code sessions.
-
-Implements /resume: scans session data under ~/.claude/projects/, supporting
-both legacy sessions-index.json and bare JSONL files (Claude Code >= Feb 2026).
-Groups sessions by project directory and shows a paginated inline keyboard.
-On selection, creates a tmux window with `claude --resume <id>` and binds
-the current topic.
-
-Key functions:
-  - resume_command: /resume handler
-  - handle_resume_command_callback: callback dispatcher for resume UI
-  - scan_all_sessions: discover all resumable sessions across all projects
-  - format_session_entry: shared label renderer for session pickers
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -59,8 +44,6 @@ _IndexParseError = (json.JSONDecodeError, OSError)
 
 @dataclass
 class ResumeEntry:
-    """A resumable session discovered from project directories."""
-
     session_id: str
     summary: str
     cwd: str
@@ -72,11 +55,6 @@ _SECONDS_PER_DAY = 86400
 
 
 def _relative_time(mtime: float, *, now: float | None = None) -> str:
-    """Return a short relative-time label like ``today``, ``yesterday``,
-    ``3d ago``, or ``never`` when no mtime is known.
-
-    ``now`` is injectable so tests can pin the reference time.
-    """
     if mtime <= 0:
         return "never"
     current = now if now is not None else time.time()
@@ -90,12 +68,6 @@ def _relative_time(mtime: float, *, now: float | None = None) -> str:
 
 
 def _index_msg_count(entry: dict) -> int | None:
-    """Pull a message-count hint from a sessions-index entry, if present.
-
-    Several Claude Code index versions emit a count under different keys; we
-    accept any of them. Returns None when no usable hint exists, so callers
-    can omit the count from the rendered label.
-    """
     for key in ("messageCount", "msgCount", "msg_count", "messages"):
         value = entry.get(key)
         if isinstance(value, int) and value > 0:
@@ -111,14 +83,6 @@ def format_session_entry(
     msg_count: int | None = None,
     now: float | None = None,
 ) -> str:
-    """Render a session-picker row.
-
-    Output: ``"{relative_time} · {summary[:40]} · {sid_last4}"`` plus
-    ``" · {msg_count} msgs"`` when ``msg_count`` is supplied. Summary is
-    stripped of newlines and truncated; falls back to the first 12 chars of
-    ``session_id`` when empty. ``last4`` is the trailing 4 chars of the
-    session id (``????`` if missing).
-    """
     rel = _relative_time(mtime, now=now)
     text = (summary or "").strip().split("\n", 1)[0][:40]
     if not text:
@@ -131,14 +95,6 @@ def format_session_entry(
 
 
 def scan_all_sessions() -> list[ResumeEntry]:
-    """Scan project directories for resumable sessions.
-
-    Supports both legacy sessions-index.json and bare JSONL files
-    (Claude Code >= Feb 2026 no longer writes index files).
-
-    Returns entries sorted by file mtime (most recent first),
-    deduplicated by session_id.
-    """
     if not config.claude_projects_path.exists():
         return []
 
@@ -149,12 +105,10 @@ def scan_all_sessions() -> list[ResumeEntry]:
         if not project_dir.is_dir():
             continue
 
-        # Try legacy sessions-index.json first
         index_file = project_dir / "sessions-index.json"
         if index_file.exists():
             _scan_index_file(index_file, seen_ids, candidates)
 
-        # Pick up bare JSONL files (no index required)
         _scan_bare_jsonl(project_dir, seen_ids, candidates)
 
     candidates.sort(key=lambda c: c[0], reverse=True)
@@ -166,7 +120,6 @@ def _scan_index_file(
     seen_ids: set[str],
     candidates: list[tuple[float, ResumeEntry]],
 ) -> None:
-    """Scan a sessions-index.json for resumable sessions."""
     try:
         index_data = json.loads(index_file.read_text(encoding="utf-8"))
     except _IndexParseError:
@@ -204,7 +157,6 @@ def _scan_bare_jsonl(
     seen_ids: set[str],
     candidates: list[tuple[float, ResumeEntry]],
 ) -> None:
-    """Scan bare JSONL files not covered by a sessions-index."""
     try:
         jsonl_iter = project_dir.glob("*.jsonl")
     except OSError:
@@ -234,7 +186,6 @@ def _build_resume_keyboard(
     sessions: list[dict[str, str]],
     page: int = 0,
 ) -> InlineKeyboardMarkup:
-    """Build inline keyboard for resume session picker with pagination."""
     total = len(sessions)
     start = page * _SESSIONS_PER_PAGE
     end = min(start + _SESSIONS_PER_PAGE, total)
@@ -245,7 +196,6 @@ def _build_resume_keyboard(
     for idx_offset, entry in enumerate(page_sessions):
         global_idx = start + idx_offset
         cwd = entry.get("cwd", "")
-        # Show project header when cwd changes
         if cwd != current_cwd:
             current_cwd = cwd
             short_path = Path(cwd).name if cwd else "unknown"
@@ -278,7 +228,6 @@ def _build_resume_keyboard(
             ]
         )
 
-    # Pagination row
     nav_buttons: list[InlineKeyboardButton] = []
     if page > 0:
         nav_buttons.append(
@@ -304,7 +253,6 @@ def _build_resume_keyboard(
 
 
 async def resume_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /resume — show all resumable sessions grouped by project."""
     if not update.message:
         return
 
@@ -320,7 +268,6 @@ async def resume_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
-    # Check resume capability using per-window provider (or global fallback)
     window_id = thread_router.get_window_for_thread(user.id, thread_id)
     provider = (
         get_provider_for_window(
@@ -370,7 +317,6 @@ async def handle_resume_command_callback(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Dispatch resume command callbacks."""
     if data.startswith(CB_RESUME_PICK):
         await _handle_pick(query, user_id, data, update, context)
     elif data.startswith(CB_RESUME_PAGE):
@@ -385,14 +331,9 @@ async def _create_resume_window(
     session_id: str,
     cwd: str,
 ) -> tuple[bool, str, str, str]:
-    """Unbind old window, create a new one with resume args.
-
-    Returns (success, message, window_name, window_id).
-    """
     old_window_id = thread_router.get_window_for_thread(user_id, thread_id)
     if old_window_id:
         thread_router.unbind_thread(user_id, thread_id)
-        # Lazy: polling_state cycle — same path as recovery_callbacks.
         from ..polling.polling_state import lifecycle_strategy
 
         lifecycle_strategy.clear_dead_notification(user_id, thread_id)
@@ -430,7 +371,6 @@ async def _handle_pick(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle session selection from the resume picker."""
     idx_str = data[len(CB_RESUME_PICK) :]
     try:
         idx = int(idx_str)
@@ -471,12 +411,10 @@ async def _handle_pick(
         user_id, thread_id, created_wid, window_name=created_wname
     )
 
-    # Store group chat_id for routing
     chat = query.message.chat if query.message else None
     if chat and chat.type in ("group", "supergroup"):
         thread_router.set_group_chat_id(user_id, thread_id, chat.id)
 
-    # Rename topic to match the window
     client = PTBTelegramClient(context.bot)
     try:
         await client.edit_forum_topic(
@@ -505,7 +443,6 @@ async def _handle_page(
     _update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle pagination in resume picker."""
     page_str = data[len(CB_RESUME_PAGE) :]
     try:
         page = int(page_str)
@@ -531,20 +468,15 @@ async def _handle_cancel(
     query: CallbackQuery,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle cancel in resume picker."""
     _clear_resume_state(context.user_data)
     await safe_edit(query, "Resume cancelled.")
     await query.answer("Cancelled")
 
 
 def _clear_resume_state(user_data: dict | None) -> None:
-    """Remove resume-related keys from user_data."""
     if user_data is None:
         return
     user_data.pop(RESUME_SESSIONS, None)
-
-
-# --- Registry dispatch entry point ---
 
 
 @register(CB_RESUME_PICK, CB_RESUME_PAGE, CB_RESUME_CANCEL)

@@ -1,5 +1,3 @@
-"""Tests for session-map reconciliation behavior."""
-
 from ccgram.idle_tracker import IdleTracker
 from ccgram.session_lifecycle import SessionLifecycle
 

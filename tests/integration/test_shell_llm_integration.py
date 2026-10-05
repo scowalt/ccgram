@@ -1,14 +1,3 @@
-"""Integration tests for shell provider with real LLM API calls.
-
-Two test classes:
-  - TestLLMRoundTrip: verify API round-trip returns valid CommandResult
-  - TestLLMCommandExecution: generate commands AND execute them to verify
-    the LLM produces correct, runnable shell commands
-
-Run with: make test-integration-llm
-Requires: CCGRAM_LLM_PROVIDER + appropriate API key (in ~/.ccgram/.env or env)
-"""
-
 import asyncio
 from pathlib import Path
 
@@ -19,13 +8,11 @@ from ccgram.llm.base import CommandResult
 
 pytestmark = [pytest.mark.integration, pytest.mark.llm]
 
-# Read real config (test conftest redirects CCGRAM_DIR to a temp dir)
 _REAL_ENV = dotenv_values(Path.home() / ".ccgram" / ".env")
 
 
 @pytest.fixture
 def completer(monkeypatch):
-    """Create an LLM completer from real ~/.ccgram/.env, skip if unavailable."""
     provider = _REAL_ENV.get("CCGRAM_LLM_PROVIDER", "")
     if not provider:
         pytest.skip("No LLM provider in ~/.ccgram/.env")
@@ -57,7 +44,6 @@ def completer(monkeypatch):
 
 
 async def _run(command: str, cwd: Path | None = None, timeout: float = 10) -> str:
-    """Execute a shell command and return stdout. Raises on non-zero exit."""
     proc = await asyncio.create_subprocess_shell(
         command,
         stdout=asyncio.subprocess.PIPE,
@@ -70,12 +56,7 @@ async def _run(command: str, cwd: Path | None = None, timeout: float = 10) -> st
     return stdout.decode()
 
 
-# ── Round-trip tests (structure only) ────────────────────────────────────
-
-
 class TestLLMRoundTrip:
-    """Verify LLM API round-trip produces valid CommandResult."""
-
     async def test_simple_command_generation(self, completer) -> None:
         result = await completer.generate_command(
             "list all files in the current directory including hidden ones",
@@ -116,14 +97,8 @@ class TestLLMRoundTrip:
         assert result.command
 
 
-# ── Execute-and-verify tests ────────────────────────────────────────────
-
-
 class TestLLMCommandExecution:
-    """Generate commands via LLM, execute them, and verify output."""
-
     async def test_list_files(self, completer, tmp_path: Path) -> None:
-        """Simple ls — LLM generates a listing command, output contains files."""
         (tmp_path / "alpha.txt").write_text("a")
         (tmp_path / "beta.txt").write_text("b")
         (tmp_path / "gamma.log").write_text("g")
@@ -139,7 +114,6 @@ class TestLLMCommandExecution:
         assert "beta.txt" in output
 
     async def test_piped_count(self, completer, tmp_path: Path) -> None:
-        """Pipe pipeline — count files matching a pattern."""
         for i in range(7):
             (tmp_path / f"mod_{i}.py").write_text(f"# {i}")
         (tmp_path / "readme.md").write_text("# hi")
@@ -155,7 +129,6 @@ class TestLLMCommandExecution:
         assert "7" in output.strip()
 
     async def test_python_one_liner(self, completer, tmp_path: Path) -> None:
-        """Python -c — LLM generates a python one-liner, output is correct."""
         result = await completer.generate_command(
             "use python3 to calculate and print the sum of integers from 1 to 10",
             shell="bash",
@@ -167,7 +140,6 @@ class TestLLMCommandExecution:
         assert "55" in output.strip()
 
     async def test_file_creation(self, completer, tmp_path: Path) -> None:
-        """Write to file — command creates a file with specified content."""
         result = await completer.generate_command(
             "create a file called greeting.txt containing exactly 'hello world'",
             cwd=str(tmp_path),
@@ -180,7 +152,6 @@ class TestLLMCommandExecution:
         assert "hello world" in greeting.read_text().lower()
 
     async def test_sort_dedup_pipeline(self, completer, tmp_path: Path) -> None:
-        """Multi-pipe: sort | uniq on a file with duplicates."""
         data = "banana\napple\ncherry\napple\nbanana\ndate\n"
         (tmp_path / "fruits.txt").write_text(data)
 
@@ -196,7 +167,6 @@ class TestLLMCommandExecution:
         assert lines == sorted(lines)
 
     async def test_grep_pattern(self, completer, tmp_path: Path) -> None:
-        """grep — search files for a pattern."""
         (tmp_path / "app.py").write_text("import os\nDEBUG = True\nprint('hi')\n")
         (tmp_path / "lib.py").write_text("import sys\nDEBUG = False\nlog('ok')\n")
         (tmp_path / "readme.md").write_text("# No debug here\n")
@@ -212,7 +182,6 @@ class TestLLMCommandExecution:
         assert "DEBUG = False" in output
 
     async def test_python_json_processing(self, completer, tmp_path: Path) -> None:
-        """Python script — parse JSON and extract fields."""
         import json
 
         data = [
@@ -234,7 +203,6 @@ class TestLLMCommandExecution:
         assert "Charlie" in output
 
     async def test_shell_arithmetic(self, completer, tmp_path: Path) -> None:
-        """Shell math — basic arithmetic via shell or python."""
         result = await completer.generate_command(
             "calculate 17 * 31 and print only the result",
             shell="bash",
@@ -246,7 +214,6 @@ class TestLLMCommandExecution:
     async def test_multiline_script_via_heredoc(
         self, completer, tmp_path: Path
     ) -> None:
-        """Multi-step: create directory structure and list it."""
         result = await completer.generate_command(
             "create directories src/utils and src/models, "
             "then create an empty __init__.py in each, "

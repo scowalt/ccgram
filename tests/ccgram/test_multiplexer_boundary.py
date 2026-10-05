@@ -1,23 +1,3 @@
-"""F1 boundary audit — callers depend only on the ``multiplexer`` seam.
-
-The multiplexer seam (design "Integration contracts") lets callers depend on
-the ``Multiplexer`` Protocol/proxy without importing a concrete backend. This
-audit walks every ``.py`` under ``src/ccgram`` and fails if any non-exempt
-module imports:
-
-- a concrete backend (``ccgram.multiplexer.tmux`` / ``ccgram.multiplexer.herdr``),
-- the libtmux client (``libtmux``), or
-- the deleted legacy ``ccgram.tmux_manager`` module.
-
-Callers may import the neutral seam surface — ``ccgram.multiplexer`` (proxy),
-``ccgram.multiplexer.base`` (Protocol + value types), ``multiplexer.vim_state``,
-``multiplexer.window_ops`` — none of which pull in a backend.
-
-Exempt: everything under ``multiplexer/**`` (the backends and their wiring),
-``bootstrap.py`` (wires the proxy from config), and ``main.py`` (needs the tmux
-session object directly).
-"""
-
 from __future__ import annotations
 
 import ast
@@ -27,8 +7,6 @@ import pytest
 
 SRC_ROOT = Path(__file__).resolve().parents[2] / "src" / "ccgram"
 
-# Modules a caller must not reach for directly. A reported module name M is
-# forbidden when M equals a prefix or starts with ``prefix + "."``.
 FORBIDDEN_PREFIXES: tuple[str, ...] = (
     "ccgram.multiplexer.tmux",
     "ccgram.multiplexer.herdr",
@@ -36,7 +14,6 @@ FORBIDDEN_PREFIXES: tuple[str, ...] = (
     "libtmux",
 )
 
-# Files allowed to import a concrete backend.
 EXEMPT_FILES: frozenset[Path] = frozenset(
     {
         SRC_ROOT / "bootstrap.py",
@@ -53,18 +30,16 @@ def _is_forbidden(module: str) -> bool:
 
 
 def _package_parts(path: Path) -> list[str]:
-    """Dotted parts of the package *containing* ``path`` (under src)."""
     rel = path.relative_to(SRC_ROOT.parent).with_suffix("")
     parts = list(rel.parts)
     if parts and parts[-1] == "__init__":
         parts.pop()
     else:
-        parts.pop()  # drop the module filename → containing package
+        parts.pop()
     return parts
 
 
 def _resolve(path: Path, level: int, module: str | None) -> str:
-    """Resolve a (possibly relative) import to an absolute dotted module."""
     if level == 0:
         return module or ""
     pkg = _package_parts(path)
@@ -75,7 +50,6 @@ def _resolve(path: Path, level: int, module: str | None) -> str:
 
 
 def _forbidden_imports_in_source(source: str, path: Path) -> list[str]:
-    """Return forbidden module names imported by *source* (resolved absolute)."""
     tree = ast.parse(source)
     found: list[str] = []
     for node in ast.walk(tree):
@@ -87,7 +61,6 @@ def _forbidden_imports_in_source(source: str, path: Path) -> list[str]:
             resolved = _resolve(path, node.level or 0, node.module)
             if _is_forbidden(resolved):
                 found.append(resolved)
-            # ``from <pkg> import tmux`` — the imported name is a submodule.
             else:
                 for alias in node.names:
                     candidate = f"{resolved}.{alias.name}" if resolved else alias.name
@@ -115,9 +88,6 @@ def test_no_caller_imports_a_concrete_backend(path: Path) -> None:
         "Depend on the ``multiplexer`` proxy / ``multiplexer.base`` Protocol "
         "instead of a backend, libtmux, or the deleted tmux_manager module."
     )
-
-
-# ── Self-test: the audit catches a planted violation ───────────────────
 
 
 def test_audit_flags_a_planted_direct_backend_import() -> None:
@@ -150,9 +120,6 @@ def test_audit_allows_the_neutral_seam_surface() -> None:
     assert offenders == []
 
 
-# ── New topic-creation submodules use only the seam, not concrete backends ──
-
-
 NEW_TOPIC_MODULES: tuple[str, ...] = (
     "topic_creation_draft",
     "provider_mode_callbacks",
@@ -165,7 +132,6 @@ NEW_TOPIC_MODULES: tuple[str, ...] = (
 def test_new_topic_submodule_does_not_import_concrete_backend(
     module_name: str,
 ) -> None:
-    """Topic-creation submodules must depend only on the multiplexer seam."""
     path = SRC_ROOT / "handlers" / "topics" / f"{module_name}.py"
     assert path.exists(), f"Expected {path} to exist"
     offenders = _forbidden_imports_in_source(path.read_text(), path)
@@ -176,8 +142,6 @@ def test_new_topic_submodule_does_not_import_concrete_backend(
 
 
 def test_window_launch_service_does_not_import_window_store() -> None:
-    """window_launch_service imports CCGRAM_CREATED_WINDOW_ORIGIN (a constant),
-    not the window_store singleton — confirmed by AST check."""
     import ast
 
     path = SRC_ROOT / "handlers" / "topics" / "window_launch_service.py"

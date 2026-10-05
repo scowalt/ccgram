@@ -1,12 +1,3 @@
-"""Regression: session_map.json provider_name cross-checked against transcript path.
-
-When session_map.json carries a stale ``provider_name`` (e.g. ``codex`` from
-a previous run in the same tmux window) and the transcript path points to a
-different provider's session directory, transcript-path detection wins. Without
-this guard, the polling loop overwrites the in-memory state every cycle and
-``transcript_reader`` spams "Provider mismatch" warnings forever.
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -95,7 +86,6 @@ def test_session_map_provider_kept_when_transcript_path_is_ambiguous(
         "@1", _info("session-a", transcript, provider_name="codex")
     )
 
-    # No path-based inference possible → trust session_map's claim.
     assert store.window_states["@1"].provider_name == "codex"
 
 
@@ -104,12 +94,6 @@ def test_repeated_sync_with_stale_claim_is_idempotent_and_silent(
     store: WindowStateStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Once state.provider_name is corrected, a stale session_map claim must
-    not re-trigger the warning or flip state again on subsequent polls.
-
-    Patches ``logger.warning`` directly because the module uses structlog and
-    pytest's ``caplog`` only sees the stdlib ``logging`` pipeline.
-    """
     claude_dir = tmp_path / ".claude" / "projects" / "repo"
     claude_dir.mkdir(parents=True)
     transcript = claude_dir / "session.jsonl"
@@ -150,8 +134,6 @@ def test_repeated_sync_with_stale_claim_is_idempotent_and_silent(
     ],
 )
 def test_detect_provider_from_transcript_path(path: str, expected: str) -> None:
-    """Claude wrapper config dirs (.claude-team, .claude.local, ...) must
-    detect as claude. Non-claude-prefixed wrappers stay unrecognised."""
     from ccgram.providers import detect_provider_from_transcript_path
 
     assert detect_provider_from_transcript_path(path) == expected
@@ -162,11 +144,6 @@ def test_claude_wrapper_transcript_path_silences_session_map_cross_check(
     store: WindowStateStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Process detection sets provider=claude (claude-team wrapper basename),
-    but session_map.json still claims codex. Path-based inference must
-    classify .claude-team/projects as claude so the cross-check silently
-    keeps state=claude instead of flipping back to codex every poll.
-    """
     transcript = tmp_path / ".claude-team" / "projects" / "repo" / "abc.jsonl"
     transcript.parent.mkdir(parents=True)
     transcript.write_text("{}\n")
@@ -203,8 +180,6 @@ def test_claude_wrapper_transcript_path_silences_session_map_cross_check(
 def test_existing_transcript_path_used_when_info_omits_it(
     tmp_path: Path, store: WindowStateStore
 ) -> None:
-    """If info["transcript_path"] is empty but state already knows the path,
-    the existing path is the cross-check source."""
     claude_dir = tmp_path / ".claude" / "projects" / "repo"
     claude_dir.mkdir(parents=True)
     transcript = claude_dir / "session.jsonl"

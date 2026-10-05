@@ -38,11 +38,6 @@ from ccgram.telegram_draft import mark_draft_unavailable, reset_draft_state
 
 @pytest.fixture
 def batch_env():
-    """Force DraftStream into legacy mode and patch DraftStream collaborators.
-
-    Returns ``(bot, mock_send, mock_clear)`` where ``mock_send`` is the
-    bot.send_message AsyncMock that DraftStream.start() drives in legacy mode.
-    """
     reset_draft_state()
     mark_draft_unavailable("test")
     try:
@@ -82,10 +77,8 @@ class TestFormatBatchMessage:
     def test_single_entry(self) -> None:
         entries = [ToolBatchEntry(tool_use_id="t1", tool_use_text="Read src/foo.py")]
         result = format_batch_message(entries)
-        # No code-block fence \u2014 plain text with inline mono on summaries only.
         assert not result.startswith("```")
         assert "Read src/foo.py" in result
-        # No status glyphs, no count header.
         assert "\u23f3" not in result
         assert "\u2705" not in result
         assert "\u274c" not in result
@@ -101,7 +94,6 @@ class TestFormatBatchMessage:
         ]
         result = format_batch_message(entries)
         assert "Read src/foo.py" in result
-        # tool_result_text is intentionally not rendered.
         assert "42 lines" not in result
         assert "\u23bf" not in result
 
@@ -356,7 +348,6 @@ class TestSessionManagerBatchMode:
         assert mgr.get_batch_mode("@0") == expected
 
     def test_cycle_full_circle(self, mgr: SessionManager) -> None:
-        # Default is "ephemeral"; cycle goes ephemeral -> verbose -> batched -> ephemeral.
         mgr.cycle_batch_mode("@0")
         assert mgr.get_batch_mode("@0") == "verbose"
         mgr.cycle_batch_mode("@0")
@@ -370,7 +361,7 @@ class TestSessionManagerBatchMode:
         monkeypatch.setattr(
             SessionManager, "_save_state", lambda self: save_calls.append(1)
         )
-        mgr.set_batch_mode("@0", "verbose")  # same mode
+        mgr.set_batch_mode("@0", "verbose")
         assert len(save_calls) == 0
 
     def test_get_invalid_stored_mode_returns_default(self, mgr: SessionManager) -> None:
@@ -440,7 +431,6 @@ class TestProcessBatchTask:
                 tool_name="TaskCreate",
             ),
         )
-        # DraftStream.start (legacy) drives bot.send_message with kwargs.
         sent_text = mock_send.await_args.kwargs["text"]
 
         assert sent_text.startswith("Creating 1 task\u2026\n")
@@ -661,8 +651,6 @@ class TestHandleContentTask:
 class TestFlushBatch:
     @pytest.fixture(autouse=True)
     def _force_batched_mode(self, monkeypatch):
-        # The new ephemeral default would route flush_batch to delete_message;
-        # these tests exercise the batched-mode edit/send path.
         monkeypatch.setattr(
             "ccgram.handlers.messaging_pipeline.tool_batch.is_ephemeral_tools",
             lambda _wid: False,
@@ -684,7 +672,7 @@ class TestFlushBatch:
 
     async def test_flush_noop_when_no_batch(self) -> None:
         bot = AsyncMock()
-        await flush_batch(bot, 1, 10)  # should not raise
+        await flush_batch(bot, 1, 10)
 
     @patch("ccgram.handlers.messaging_pipeline.tool_batch.thread_router")
     async def test_flush_edits_final_message(self, mock_tr) -> None:
@@ -777,7 +765,7 @@ class TestBatchIsolation:
 
 class TestShutdownClearsBatches:
     async def test_shutdown_clears_active_batches(self) -> None:
-        await shutdown_workers()  # ensure clean state from previous tests
+        await shutdown_workers()
         _active_batches[(1, 0)] = ToolBatch(window_id="@0", thread_id=0)
         _active_batches[(2, 5)] = ToolBatch(window_id="@1", thread_id=5)
         await shutdown_workers()
@@ -854,7 +842,7 @@ class TestTopicCleanupClearsBatch:
         assert (1, 10) not in _active_batches
 
     def test_clear_batch_for_topic_noop(self) -> None:
-        clear_batch_for_topic(1, 999)  # should not raise
+        clear_batch_for_topic(1, 999)
 
     def test_clear_batch_none_thread(self) -> None:
         _active_batches[(1, 0)] = ToolBatch(window_id="@0", thread_id=0)
@@ -876,8 +864,6 @@ class TestFlushSendFallback:
     )
     @patch("ccgram.handlers.messaging_pipeline.tool_batch.thread_router")
     async def test_flush_sends_when_no_telegram_msg_id(self, mock_tr) -> None:
-        # No prior message and no draft → flush_batch opens a fresh
-        # DraftStream, which uses bot.send_message in legacy mode.
         reset_draft_state()
         mark_draft_unavailable("test")
         try:
@@ -948,15 +934,6 @@ class TestBatchResultTruncation:
 
 
 class TestDispatcherSuppressesStatusOnEphemeralBatch:
-    """Status updates must NOT flush an active ephemeral tool batch.
-
-    Repro for the visible-flicker bug: while tool calls are streaming, a
-    1s status poll would delete the formatted tool bubble and insert a
-    status bubble (with no-markdown text, so it looks plain) in its
-    position — appearing as the tool bubble "flipping to plain text".
-    The dispatcher must drop the StatusUpdateTask in this case.
-    """
-
     def setup_method(self) -> None:
         _active_batches.clear()
 
@@ -966,7 +943,6 @@ class TestDispatcherSuppressesStatusOnEphemeralBatch:
     async def test_status_update_dropped_when_ephemeral_batch_active(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Ephemeral batch owns the bubble for (user=1, thread=10).
         monkeypatch.setattr(
             "ccgram.handlers.messaging_pipeline.tool_batch.is_ephemeral_tools",
             lambda _wid: True,
@@ -994,7 +970,6 @@ class TestDispatcherSuppressesStatusOnEphemeralBatch:
         assert result == 0
         flushed.assert_not_called()
         processed.assert_not_called()
-        # Batch still on screen.
         assert (1, 10) in _active_batches
 
     async def test_status_update_processed_when_no_batch(
@@ -1022,9 +997,6 @@ class TestDispatcherSuppressesStatusOnEphemeralBatch:
     async def test_status_update_processed_when_batch_non_ephemeral(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Non-ephemeral (batched/verbose) batches don't get suppression —
-        # those modes leave the batch on screen after flush instead of
-        # deleting it, so the flicker doesn't happen.
         monkeypatch.setattr(
             "ccgram.handlers.messaging_pipeline.tool_batch.is_ephemeral_tools",
             lambda _wid: False,

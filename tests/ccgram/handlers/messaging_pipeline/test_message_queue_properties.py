@@ -1,5 +1,3 @@
-"""Property-based tests for message queue merge logic."""
-
 import asyncio
 
 from hypothesis import given, settings
@@ -18,7 +16,6 @@ from ccgram.handlers.messaging_pipeline.message_task import (
     StatusUpdateTask,
 )
 
-# --- Strategies ---
 
 _mergeable_types: st.SearchStrategy[ContentType] = st.sampled_from(["text"])
 _unmergeable_types: st.SearchStrategy[ContentType] = st.sampled_from(
@@ -40,9 +37,6 @@ def _content_task(
         parts=parts or ("hello",),
         content_type=content_type,
     )
-
-
-# --- _can_merge_tasks unit properties ---
 
 
 @given(ct=_mergeable_types)
@@ -75,9 +69,6 @@ def test_different_windows_block_merge(w1: str, w2: str) -> None:
     base = _content_task(window_id=w1)
     candidate = _content_task(window_id=w2)
     assert _can_merge_tasks(base, candidate) is False
-
-
-# --- _merge_content_tasks property tests ---
 
 
 @given(
@@ -161,9 +152,6 @@ async def test_different_window_breaks_chain(window_ids: list[str]) -> None:
             break
         expected_merges += 1
     assert count == expected_merges
-
-
-# --- Edge case tests ---
 
 
 async def test_all_unmergeable_no_merge() -> None:

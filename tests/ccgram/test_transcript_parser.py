@@ -550,12 +550,9 @@ class TestParseEntries:
         user_entries = [e for e in result if e.role == "user"]
         assert len(user_entries) == 0
 
-    # ── Characterization tests: edge cases and cross-entry state ─────────────
-
     def test_local_command_invoke_carry_to_next_entry(
         self, make_jsonl_entry, make_text_block
     ):
-        # Two-entry test: invoke sets last_cmd_name, stdout entry consumes it.
         invoke_xml = "<command-name>/foo</command-name>"
         stdout_xml = (
             "<command-name>/foo</command-name>"
@@ -566,7 +563,6 @@ class TestParseEntries:
             make_jsonl_entry("user", [make_text_block(stdout_xml)]),
         ]
         result, _ = TranscriptParser.parse_entries(entries)
-        # The invoke entry is consumed (not emitted); only the stdout entry emits.
         assert len(result) == 1
         assert result[0].content_type == "local_command"
         assert "/foo" in result[0].text
@@ -575,10 +571,7 @@ class TestParseEntries:
     def test_local_command_stdout_uses_prior_invoke_name(
         self, make_jsonl_entry, make_text_block
     ):
-        # Invoke entry has no stdout; following entry has stdout but tool_name
-        # may differ — last_cmd_name from invoke should be carried forward.
         invoke_xml = "<command-name>/bar</command-name>"
-        # Stdout entry without repeating command-name: parser falls back to last_cmd_name
         stdout_only_xml = "<local-command-stdout>result</local-command-stdout>"
         entries = [
             make_jsonl_entry("user", [make_text_block(invoke_xml)]),
@@ -588,14 +581,11 @@ class TestParseEntries:
         assert len(result) == 1
         cmd_entry = result[0]
         assert cmd_entry.content_type == "local_command"
-        # cmd comes from last_cmd_name carry
         assert "/bar" in cmd_entry.text
 
     def test_flushed_pending_tools_have_null_timestamp_and_tool_name(
         self, make_jsonl_entry, make_tool_use_block
     ):
-        # In one-shot mode (pending_tools=None), unmatched tool_use gets flushed
-        # at the end with timestamp=None and tool_name=None (per lines 723-731).
         entries = [
             make_jsonl_entry(
                 "assistant",
@@ -605,11 +595,9 @@ class TestParseEntries:
         ]
         result, _ = TranscriptParser.parse_entries(entries, pending_tools=None)
         tool_entries = [e for e in result if e.tool_use_id == "t99"]
-        # First entry: encounter-time (has timestamp and tool_name)
         encounter = tool_entries[0]
         assert encounter.timestamp is not None
         assert encounter.tool_name == "Bash"
-        # Second entry: flushed copy (timestamp=None, tool_name=None)
         flushed = tool_entries[1]
         assert flushed.timestamp is None
         assert flushed.tool_name is None
@@ -617,8 +605,6 @@ class TestParseEntries:
     def test_thinking_empty_with_prior_text_emits_nothing(
         self, make_jsonl_entry, make_text_block, make_thinking_block
     ):
-        # Empty thinking block in same entry that already has a text block:
-        # has_text=True, so empty thinking is silently skipped.
         entries = [
             make_jsonl_entry(
                 "assistant",
@@ -635,7 +621,6 @@ class TestParseEntries:
     def test_thinking_empty_without_prior_text_emits_placeholder(
         self, make_jsonl_entry, make_thinking_block
     ):
-        # Empty thinking with no prior text block in the entry → "(thinking)"
         entries = [make_jsonl_entry("assistant", [make_thinking_block("")])]
         result, _ = TranscriptParser.parse_entries(entries)
         assert len(result) == 1
@@ -645,8 +630,6 @@ class TestParseEntries:
     def test_tool_result_unknown_id_with_text_emits_formatted_result(
         self, make_jsonl_entry, make_tool_result_block
     ):
-        # tool_result with no matching pending tool_use_id and non-empty text
-        # → emits formatted result entry (tool_name=None branch, line 684).
         entries = [
             make_jsonl_entry(
                 "user",
@@ -661,7 +644,6 @@ class TestParseEntries:
     def test_tool_result_unknown_id_empty_text_emits_nothing(
         self, make_jsonl_entry, make_tool_result_block
     ):
-        # No pending match, empty result, not error/interrupted → nothing emitted.
         entries = [
             make_jsonl_entry(
                 "user",
@@ -674,9 +656,6 @@ class TestParseEntries:
     def test_notebook_edit_no_diff(
         self, make_jsonl_entry, make_tool_use_block, make_tool_result_block
     ):
-        # NotebookEdit stores input_data but the diff path only fires for "Edit".
-        # NotebookEdit falls through to _format_tool_result_text, which wraps
-        # the result text in an expandable quote — no +N/−N diff stats.
         nb_input = {
             "notebook_path": "nb.ipynb",
             "old_string": "old",
@@ -694,7 +673,6 @@ class TestParseEntries:
         ]
         result, _ = TranscriptParser.parse_entries(entries)
         tr = next(e for e in result if e.content_type == "tool_result")
-        # No diff stats (+N/−N) — NotebookEdit does not run the Edit diff path.
         assert "+1" not in tr.text
         assert "−1" not in tr.text
 
@@ -750,8 +728,6 @@ class TestParseEntries:
         make_tool_use_block,
         make_tool_result_block,
     ):
-        """Multi-entry two-call sequence exercising carry-over state threading."""
-        # First call: assistant text + two tool_uses; user resolves one tool_result
         call1_entries = [
             make_jsonl_entry(
                 "assistant",
@@ -775,9 +751,7 @@ class TestParseEntries:
             call1_entries, pending_tools={}
         )
 
-        # tb is unresolved → should still be pending
         assert "tb" in pending1
-        # ta resolved → should NOT be pending
         assert "ta" not in pending1
 
         roles_types1 = [(e.role, e.content_type) for e in result1]
@@ -786,7 +760,6 @@ class TestParseEntries:
         assert ("assistant", "tool_result") in roles_types1
         assert ("user", "text") in roles_types1
 
-        # Second call: carries pending tb, resolves it
         call2_entries = [
             make_jsonl_entry(
                 "user",

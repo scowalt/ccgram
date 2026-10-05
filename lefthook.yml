@@ -1,0 +1,4 @@
+pre-commit:
+  commands:
+    no-comments:
+      run: uv run --no-project --python 3.14 --with-requirements .comment-policy/requirements.txt python .comment-policy/check.py --staged

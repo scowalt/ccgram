@@ -1,15 +1,3 @@
-"""Mini App backend — optional aiohttp web surface for Telegram WebApps.
-
-The Mini App is gated on ``CCGRAM_MINIAPP_BASE_URL``. When unset, neither the
-HTTP server nor the inline launch button are exposed. When set, the server
-serves a single-page app from ``static/`` and opens token-scoped routes per
-window.
-
-Sub-modules:
-- ``auth``: HMAC-signed window tokens + Telegram WebApp ``initData`` validation
-- ``server``: aiohttp app factory + lifecycle helpers (``start_server``, ``stop_server``)
-"""
-
 from .auth import (
     InvalidTokenError,
     TokenPayload,

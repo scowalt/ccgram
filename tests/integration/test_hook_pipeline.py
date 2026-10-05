@@ -1,10 +1,3 @@
-"""Integration tests for hook event offset persistence across monitor instances.
-
-Tests that byte offsets survive monitor restarts and that multiple event types
-are dispatched correctly through the full pipeline. Basic read/skip/truncate
-behaviors are covered by unit tests in test_session_monitor_events.py.
-"""
-
 import pytest
 
 from ccgram.providers.base import HookEvent

@@ -1,13 +1,3 @@
-"""Message history display with pagination.
-
-Provides history viewing functionality for Claude Code sessions:
-  - _build_history_keyboard: Build inline keyboard for page navigation
-  - send_history: Send or edit message history with pagination support
-  - history_command: ``/history`` Telegram command handler
-
-Supports both full history and unread message range views.
-"""
-
 from __future__ import annotations
 import structlog
 from datetime import datetime
@@ -33,12 +23,11 @@ logger = structlog.get_logger()
 
 
 def _format_timestamp(ts: str | None) -> str:
-    """Format an ISO timestamp string to HH:MM, or return empty string."""
     if not ts:
         return ""
     try:
         return datetime.fromisoformat(ts).strftime("%H:%M")
-    except (ValueError, TypeError):  # fmt: skip
+    except ValueError, TypeError:
         return ""
 
 
@@ -49,11 +38,6 @@ def _build_history_keyboard(
     start_byte: int = 0,
     end_byte: int = 0,
 ) -> InlineKeyboardMarkup | None:
-    """Build inline keyboard for history pagination.
-
-    Callback format: hp:<page>:<window_id>:<start>:<end> or hn:<page>:<window_id>:<start>:<end>
-    When start=0 and end=0, it means full history (no byte range filter).
-    """
     if total_pages <= 1:
         return None
 
@@ -99,23 +83,7 @@ async def send_history(
     client: TelegramClient | None = None,
     message_thread_id: int | None = None,
 ) -> None:
-    """Send or edit message history for a window's session.
-
-    Args:
-        target: Message object (for reply) or CallbackQuery (for edit).
-        window_id: Tmux window ID (resolved to session via window_states).
-        offset: Page index (0-based). -1 means last page (for full history)
-                or first page (for unread range).
-        edit: If True, edit existing message instead of sending new one.
-        start_byte: Start byte offset (0 = from beginning).
-        end_byte: End byte offset (0 = to end of file).
-        user_id: User ID for updating read offset (required for unread mode).
-        client: Telegram client for direct send mode (when edit=False and
-            client is provided).
-        message_thread_id: Telegram topic thread_id for targeted send.
-    """
     display_name = thread_router.get_display_name(window_id)
-    # Determine if this is unread mode (specific byte range)
     is_unread = start_byte > 0 or end_byte > 0
     logger.debug(
         "send_history: window_id=%s (%s), offset=%d, is_unread=%s, byte_range=%d-%d",
@@ -153,23 +121,18 @@ async def send_history(
             ts = msg.get("timestamp")
             hh_mm = _format_timestamp(ts)
 
-            # Add separator with time
             if hh_mm:
                 lines.append(f"───── {hh_mm} ─────")
             else:
                 lines.append("─────────────")
 
-            # Format message content
             msg_text = msg["text"]
             content_type = msg.get("content_type", "text")
             msg_role = msg.get("role", "assistant")
 
-            # Strip expandable quote sentinels for history view
             msg_text = msg_text.replace(_start, "").replace(_end, "")
 
-            # Add prefix based on role/type
             if msg_role == "user":
-                # User message with emoji prefix (no newline)
                 lines.append(f"👤 {msg_text}")
             elif content_type == "thinking":
                 lines.append(f"\U0001f9e0 Thinking\u2026\n{msg_text}")
@@ -178,7 +141,6 @@ async def send_history(
         full_text = "\n\n".join(lines)
         pages = split_message(full_text, max_length=4096)
 
-        # Default to last page (newest messages) for both history and unread
         if offset < 0:
             offset = len(pages) - 1
         page_index = max(0, min(offset, len(pages) - 1))
@@ -196,7 +158,6 @@ async def send_history(
     if edit:
         await safe_edit(target, text, reply_markup=keyboard)
     elif client is not None and user_id is not None:
-        # Direct send mode (for unread catch-up after window switch)
         await safe_send(
             client,
             thread_router.resolve_chat_id(user_id, message_thread_id),
@@ -207,13 +168,11 @@ async def send_history(
     else:
         await safe_reply(target, text, reply_markup=keyboard)
 
-    # Update user's read offset after viewing unread
     if is_unread and user_id is not None and end_byte > 0:
         user_preferences.update_user_window_offset(user_id, window_id, end_byte)
 
 
 async def history_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show message history for the active session or bound thread."""
     user = update.effective_user
     if not user or not config.is_user_allowed(user.id):
         return

@@ -1,5 +1,3 @@
-"""Tests for hooks.state_files — versioned state-file contracts."""
-
 import pytest
 
 from ccgram.hooks.state_files import (
@@ -13,11 +11,6 @@ from ccgram.hooks.state_files import (
     serialize_event_record,
     serialize_session_map_entry,
 )
-
-
-# ---------------------------------------------------------------------------
-# parse_event_record
-# ---------------------------------------------------------------------------
 
 
 class TestParseEventRecord:
@@ -40,7 +33,6 @@ class TestParseEventRecord:
         assert rec.ts == 1234567890.0
 
     def test_legacy_versionless_accepted_as_v1(self) -> None:
-        """Records with no schema_version field parse as v1 (legacy compat)."""
         raw = {
             "ts": 1.0,
             "event": "Stop",
@@ -150,11 +142,6 @@ class TestParseEventRecord:
         assert rec.data == {}
 
 
-# ---------------------------------------------------------------------------
-# serialize_event_record
-# ---------------------------------------------------------------------------
-
-
 class TestSerializeEventRecord:
     def test_includes_schema_version(self) -> None:
         d = serialize_event_record("Stop", "abc-123", "ccgram:@0", {})
@@ -181,11 +168,6 @@ class TestSerializeEventRecord:
         assert rec.data == {"x": 1}
         assert rec.ts == 1.5
         assert rec.schema_version == 1
-
-
-# ---------------------------------------------------------------------------
-# parse_session_map_entry
-# ---------------------------------------------------------------------------
 
 
 class TestParseSessionMapEntry:
@@ -279,11 +261,6 @@ class TestParseSessionMapEntry:
         assert entry.window_name == ""
         assert entry.transcript_path == ""
         assert entry.provider_name == ""
-
-
-# ---------------------------------------------------------------------------
-# serialize_session_map_entry
-# ---------------------------------------------------------------------------
 
 
 class TestSerializeSessionMapEntry:

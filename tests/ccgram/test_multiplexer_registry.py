@@ -1,6 +1,3 @@
-"""Task 3 tests: registry resolution, the module-level proxy, and the config
-``CCGRAM_MULTIPLEXER`` switch (tmux-only)."""
-
 from __future__ import annotations
 
 from typing import cast
@@ -24,15 +21,12 @@ from ccgram.multiplexer.registry import (
 
 @pytest.fixture(autouse=True)
 def _unwire_multiplexer():
-    """Each test starts with the proxy unwired and leaves it unwired."""
     mux_pkg._reset_multiplexer_for_testing()
     yield
     mux_pkg._reset_multiplexer_for_testing()
 
 
 class _FakeBackend:
-    """Minimal stand-in to prove the proxy forwards attribute access."""
-
     @property
     def capabilities(self) -> str:
         return "fake-caps"
@@ -53,7 +47,6 @@ class TestRegistryResolution:
         assert backend.capabilities.name == "tmux"
 
     def test_get_herdr_returns_herdr_backend(self) -> None:
-        # Construction is I/O-free, so this resolves without a running herdr.
         backend = get_multiplexer("herdr")
         assert backend.capabilities.name == "herdr"
 

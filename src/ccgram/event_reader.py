@@ -1,12 +1,3 @@
-"""Incremental event-reader for the Claude Code hook event log (events.jsonl).
-
-Pure I/O: reads new lines from events.jsonl by byte offset, parses them as
-HookEvent objects, and returns both the events and the new offset. The caller
-is responsible for persisting the offset (e.g., in MonitorState).
-
-Key function: read_new_events().
-"""
-
 import json
 from pathlib import Path
 
@@ -22,11 +13,6 @@ logger = structlog.get_logger()
 async def read_new_events(
     path: Path, current_offset: int
 ) -> tuple[list[HookEvent], int]:
-    """Read new hook events from events.jsonl starting at current_offset.
-
-    Returns (events, new_offset). On error returns ([], current_offset).
-    Detects file truncation and resets offset to 0 automatically.
-    """
     if not path.exists():
         return [], current_offset
 

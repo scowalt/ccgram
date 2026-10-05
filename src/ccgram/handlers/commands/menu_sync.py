@@ -1,19 +1,3 @@
-"""Provider command menu cache + scoped registration.
-
-Handles per-user / per-chat / global Telegram command menus for the
-active provider, plus the periodic refresh job. Owns the bounded LRU
-caches that prevent unbounded growth across long-running deployments.
-
-Core responsibilities:
-  - sync_scoped_provider_menu(): keep the visible /-menu in sync with the
-    topic's provider, falling back chat → global on permission errors
-  - sync_scoped_menu_for_text_context(): same but triggered by inbound
-    plain text in a bound topic
-  - setup_menu_refresh_job(): periodic global menu refresh
-  - _build_provider_command_metadata(): translate AgentProvider commands
-    into a Telegram-name → original-name mapping used by forward.py
-"""
-
 from __future__ import annotations
 
 
@@ -47,16 +31,12 @@ logger = structlog.get_logger()
 
 _CommandRefreshError = (TelegramError, OSError)
 
-# --- Menu cache state ---
 
 _scoped_provider_menu: OrderedDict[tuple[int, int], str] = OrderedDict()
 _chat_scoped_provider_menu: OrderedDict[int, str] = OrderedDict()
 _global_provider_menu: str | None = None
 _MAX_SCOPED_PROVIDER_MENU_ENTRIES = 512
 _MAX_CHAT_PROVIDER_MENU_ENTRIES = 256
-
-
-# --- Bounded LRU helpers ---
 
 
 def _set_bounded_cache_entry[K, V](
@@ -84,13 +64,9 @@ def _get_lru_cache_entry[K, V](
     return value
 
 
-# --- Provider command metadata ---
-
-
 def _build_provider_command_metadata(
     provider: AgentProvider,
 ) -> dict[str, str]:
-    """Map Telegram-friendly /-name (e.g. ``spec_work``) → provider native (``spec:work``)."""
     mapping: dict[str, str] = {}
     for cmd in discover_provider_commands(provider):
         if cmd.telegram_name and cmd.telegram_name not in mapping:
@@ -98,15 +74,11 @@ def _build_provider_command_metadata(
     return mapping
 
 
-# --- Scoped command menu sync ---
-
-
 async def sync_scoped_provider_menu(
     message: Message,
     user_id: int,
     provider: AgentProvider,
 ) -> None:
-    """Update per-user command menu for the current chat/provider context."""
     global _global_provider_menu
 
     chat_id = message.chat.id
@@ -192,7 +164,6 @@ async def sync_scoped_provider_menu(
 
 
 async def sync_scoped_menu_for_text_context(update: Update, user_id: int) -> None:
-    """Sync scoped menu when a bound topic receives plain text."""
     message = update.message
     if not message:
         return
@@ -209,18 +180,15 @@ async def sync_scoped_menu_for_text_context(update: Update, user_id: int) -> Non
 
 
 def get_global_provider_menu() -> str | None:
-    """Return the current global provider menu name."""
     return _global_provider_menu
 
 
 def set_global_provider_menu(provider_name: str) -> None:
-    """Set the global provider menu name."""
     global _global_provider_menu
     _global_provider_menu = provider_name
 
 
 def setup_menu_refresh_job(application: "Application") -> None:
-    """Register the periodic command menu refresh job."""
     global _global_provider_menu
 
     default_provider = get_provider()
@@ -234,8 +202,6 @@ def setup_menu_refresh_job(application: "Application") -> None:
                 await register_commands(context.bot, provider=refreshed_provider)
                 _global_provider_menu = refreshed_provider.capabilities.name
             except _CommandRefreshError:
-                # Recoverable: the previous menu stays in place, so this is a
-                # warning, not an ERROR-level exception.
                 logger.warning(
                     "Failed to refresh CC commands, keeping previous menu",
                     exc_info=True,

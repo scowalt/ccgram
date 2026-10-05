@@ -1,24 +1,3 @@
-"""Pi coding agent provider — https://pi.dev behind AgentProvider.
-
-Pi is a Node.js-based CLI with JSONL session transcripts (v3 format). With the
-cc-thingz hook-runner extension, lifecycle hooks provide instant status signals;
-transcript discovery remains the fallback and message source of truth. Discovery
-scans ``~/.pi/agent/sessions/`` for the newest transcript whose header ``cwd``
-matches the window working directory.
-
-Session path:  ``~/.pi/agent/sessions/--<encoded-cwd>--/<timestamp>_<uuid>.jsonl``
-
-CWD encoding strips leading slashes, replaces ``/``, ``\\``, and ``:`` with
-``-``, then wraps with ``--`` delimiters.  The canonical session id lives in
-the header line ``{"type":"session","id":"<uuid>","cwd":"...","version":3}``
-— the filename prefix is just a timestamp.
-
-Resume strategy: always use ``--session <path>``.  ``--resume`` opens pi's
-interactive picker, which ccgram can't drive over ``send_keys``.  Pi accepts
-both a transcript path and a (partial) UUID for ``--session``, so we route
-everything through it after ``shlex.quote`` for safety.
-"""
-
 from __future__ import annotations
 
 import shlex
@@ -52,30 +31,19 @@ def _pi_sessions_dir() -> Path:
     return Path.home() / ".pi" / "agent" / "sessions"
 
 
-# Cap transcript age when the pane is dead — guards against picking up an
-# unrelated historical transcript for the same cwd.
 _STALE_TRANSCRIPT_MAX_AGE_SECS = 120.0
 
-# How many recent session files to inspect when searching for a cwd match.
 _DISCOVERY_SCAN_LIMIT = 20
 
 
 def encode_cwd_dirname(cwd: str) -> str:
-    """Encode a working directory into pi's session subdirectory name.
-
-    Matches pi's own encoding: strip leading slash, then replace ``/``, ``\\``
-    and ``:`` with ``-``, then wrap with ``--``.  Root (``/``) renders as
-    ``----`` to stay round-trippable.
-    """
     stripped = cwd.lstrip("/\\")
-    # Also drop trailing separators so "/tmp/foo/" and "/tmp/foo" collide correctly.
     stripped = stripped.rstrip("/\\")
     encoded = stripped.replace("/", "-").replace("\\", "-").replace(":", "-")
     return f"--{encoded}--"
 
 
 def _candidate_transcripts(cwd: str) -> list[tuple[float, Path]]:
-    """Return ``(mtime, path)`` tuples for this cwd's sessions, newest first."""
     session_dir = _pi_sessions_dir() / encode_cwd_dirname(cwd)
     if not session_dir.is_dir():
         return []
@@ -100,7 +68,6 @@ def _parse_message_entry(
     pending: Pending,
     timestamp: str | None = None,
 ) -> tuple[list[AgentMessage], Pending]:
-    """Dispatch one envelope's inner ``message`` to the role-specific parser."""
     if role == "user":
         return parse_user(msg, timestamp=timestamp), pending
     if role == "assistant":
@@ -109,13 +76,10 @@ def _parse_message_entry(
         return parse_tool_result(msg, pending, timestamp=timestamp)
     if role == "bashExecution":
         return parse_bash_execution(msg, timestamp=timestamp), pending
-    # branchSummary, compactionSummary, custom → no relay output for v1
     return [], pending
 
 
 class PiProvider(JsonlProvider):
-    """AgentProvider implementation for the pi coding agent CLI."""
-
     _CAPS = ProviderCapabilities(
         name="pi",
         launch_command="pi",
@@ -127,8 +91,6 @@ class PiProvider(JsonlProvider):
         builtin_commands=tuple(_PI_TELEGRAM_BUILTINS.keys()),
         supports_user_command_discovery=False,
         supports_status_snapshot=False,
-        # Pickers verified by sending each command to a live pi process and
-        # inspecting tmux capture-pane output (see PR #93 follow-up).
         tui_picker_commands=frozenset(
             {"model", "login", "fork", "clone", "scoped-models", "settings"}
         ),
@@ -136,21 +98,16 @@ class PiProvider(JsonlProvider):
 
     _BUILTINS = _PI_TELEGRAM_BUILTINS
 
-    # ── Launch ───────────────────────────────────────────────────────────
-
     def make_launch_args(
         self,
         resume_id: str | None = None,
         use_continue: bool = False,
     ) -> str:
-        """Build CLI args.  Prefers ``--session`` (non-interactive)."""
         if resume_id:
             return f"--session {shlex.quote(resume_id)}"
         if use_continue:
             return "--continue"
         return ""
-
-    # ── Terminal status ──────────────────────────────────────────────────
 
     def parse_terminal_status(
         self,
@@ -168,14 +125,7 @@ class PiProvider(JsonlProvider):
             )
         return None
 
-    # ── Transcript parsing ───────────────────────────────────────────────
-
     def parse_transcript_line(self, line: str) -> dict[str, Any] | None:
-        """Unwrap pi's ``message`` envelope into a flat dict keyed by role.
-
-        For session/model_change/etc. entries the raw dict passes through so
-        ``apply_task_entries`` and friends can still inspect them.
-        """
         raw = parse_jsonl_line(line)
         if raw is None:
             return None
@@ -196,7 +146,7 @@ class PiProvider(JsonlProvider):
         self,
         entries: list[dict[str, Any]],
         pending_tools: dict[str, Any],
-        cwd: str | None = None,  # noqa: ARG002 — kept for protocol compat
+        cwd: str | None = None,  # noqa: ARG002
     ) -> tuple[list[AgentMessage], dict[str, Any]]:
         messages: list[AgentMessage] = []
         pending = normalize_pending(pending_tools)
@@ -215,7 +165,6 @@ class PiProvider(JsonlProvider):
         return messages, dict(pending)
 
     def is_user_transcript_entry(self, entry: dict[str, Any]) -> bool:
-        """Check if this Pi entry is a human turn."""
         entry_type = entry.get("type")
         if entry_type == "user":
             return True
@@ -225,7 +174,6 @@ class PiProvider(JsonlProvider):
         return message.get("role") == "user"
 
     def parse_history_entry(self, entry: dict[str, Any]) -> AgentMessage | None:
-        """Parse a raw or flattened Pi transcript entry for history display."""
         entry_type = entry.get("type")
         if entry_type not in ("user", "assistant", "message"):
             return None
@@ -259,11 +207,6 @@ class PiProvider(JsonlProvider):
             timestamp=timestamp if isinstance(timestamp, str) else None,
         )
 
-    # `parse_transcript_line` flattens Pi envelopes for monitor reads; raw
-    # session resolution still uses the overrides above.
-
-    # ── Discovery ────────────────────────────────────────────────────────
-
     def discover_transcript(
         self,
         cwd: str,
@@ -273,7 +216,6 @@ class PiProvider(JsonlProvider):
         exclude_session_ids: set[str] | None = None,  # noqa: ARG002
         exclude_transcript_paths: set[str] | None = None,  # noqa: ARG002
     ) -> SessionStartEvent | None:
-        """Return the newest pi transcript whose header cwd matches."""
         if not cwd:
             return None
 
@@ -301,7 +243,10 @@ class PiProvider(JsonlProvider):
             if header_cwd != resolved_target:
                 continue
             session_id = header["id"]
-            if session_id in claimed_session_ids or str(path) in claimed_transcript_paths:
+            if (
+                session_id in claimed_session_ids
+                or str(path) in claimed_transcript_paths
+            ):
                 continue
             return SessionStartEvent(
                 session_id=session_id,
@@ -310,8 +255,6 @@ class PiProvider(JsonlProvider):
                 window_key=window_key,
             )
         return None
-
-    # ── Commands ─────────────────────────────────────────────────────────
 
     def discover_commands(self, base_dir: str) -> list[DiscoveredCommand]:
         return discover_pi_commands(base_dir)

@@ -1,13 +1,3 @@
-"""I/O readers for window_tick — gather pane state, build TickContext.
-
-Pure inputs in (``window_id``, ``TmuxWindow``, captured pane text), data
-out (``StatusUpdate``, ``TickContext``). No Telegram side effects; the
-only mutating call is ``terminal_poll_state.is_recently_active`` which
-marks the window as having seen status when the transcript is recently
-active — that side effect must run in the coordinator before
-``decide_tick`` so it isn't re-derived.
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -67,7 +57,6 @@ def _check_vim_insert(
 
 
 def _get_last_activity_ts(window_id: str) -> float | None:
-    """Read last transcript activity timestamp from the session monitor."""
     session_id = window_query.get_session_id_for_window(window_id)
     if not session_id:
         return None
@@ -100,25 +89,12 @@ async def _resolve_status(
     status = provider.parse_terminal_status(clean_text, pane_title=pane_title)
     if status is not None:
         return status
-    # Gap-fill: backends with native agent status (herdr) report a busy state
-    # for non-Claude agents whose terminal chrome the scrapers can't read.
     return await _native_agent_status(window_id)
 
 
 async def _native_agent_status(window_id: str) -> StatusUpdate | None:
-    """Synthesize a busy StatusUpdate from the backend's native agent status.
-
-    Only on ``native_agent_status`` backends (herdr). Surfaces ``working`` and
-    ``blocked`` (agent waiting for input) when terminal scraping yielded
-    nothing; ``idle`` / ``done`` / ``unknown`` return None so the existing
-    activity-based idle/done logic stays in control.
-    """
     if not tmux_manager.capabilities.native_agent_status:
         return None
-    # Push-primary: read the event-stream cache (no subprocess). On a cold cache
-    # (just-bound, before the first push — or a backend without an event stream)
-    # fall back to one ``agent_status`` subprocess call. On event-stream backends
-    # the push keeps the cache warm, so the per-tick subprocess is skipped.
     native = agent_status_cache.get_status(window_id)
     if native is None:
         native = await tmux_manager.agent_status(window_id)
@@ -138,14 +114,6 @@ def build_context(
     status: StatusUpdate | None,
     runtime: "PollingRuntime | None" = None,
 ) -> TickContext:
-    """Build the TickContext that ``decide_tick`` will consume.
-
-    Caller must have already called ``_resolve_status`` (so cached pyte
-    state is up to date) and dispatched any interactive-UI side effect.
-    The ``is_recently_active`` calculation has a side effect
-    (``mark_seen_status``) — keeping it inside this builder rather than
-    inside ``decide_tick`` preserves the existing behaviour.
-    """
     ps = runtime.poll_state if runtime is not None else terminal_poll_state
     last_activity_ts = _get_last_activity_ts(window_id)
     is_recently_active = ps.is_recently_active(window_id, last_activity_ts)

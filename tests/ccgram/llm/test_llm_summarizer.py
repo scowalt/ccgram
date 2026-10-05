@@ -1,5 +1,3 @@
-"""Tests for LLM completion summarizer."""
-
 import json
 from unittest.mock import AsyncMock, patch
 

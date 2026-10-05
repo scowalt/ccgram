@@ -23,11 +23,6 @@ from ccgram.telegram_draft import mark_draft_unavailable, reset_draft_state
 
 
 class TestHasEphemeralActiveBatch:
-    """Helper used by the dispatcher to suppress status updates while an
-    ephemeral batch owns the bubble (prevents the visible flicker where the
-    formatted tool bubble is deleted, a plain status bubble takes its place,
-    and the assistant text replaces that)."""
-
     def setup_method(self) -> None:
         _active_batches.clear()
 
@@ -98,15 +93,11 @@ class TestNoImportFromMessageQueue:
 
 
 class TestDraftStreamIntegration:
-    """Verify tool_batch routes send/edit through DraftStream (legacy mode)."""
-
     @pytest.fixture(autouse=True)
     def _setup_draft_state(self, monkeypatch: pytest.MonkeyPatch):
         reset_draft_state()
-        # Force legacy DraftStream mode for deterministic bot.* assertions.
         mark_draft_unavailable("test")
         _active_batches.clear()
-        # Avoid real wall-clock rate-limiting in unit tests.
         monkeypatch.setattr(
             "ccgram.handlers.messaging_pipeline.tool_batch._rate_limit_chat",
             AsyncMock(return_value=None),
@@ -115,13 +106,10 @@ class TestDraftStreamIntegration:
             "ccgram.handlers.messaging_pipeline.tool_batch.thread_router",
             MagicMock(resolve_chat_id=MagicMock(return_value=42)),
         )
-        # No status bubble to clear.
         monkeypatch.setattr(
             "ccgram.handlers.messaging_pipeline.tool_batch.get_batch_mode",
             lambda _wid: "batched",
         )
-        # is_ephemeral_tools is imported directly; with the new ephemeral
-        # default it would route through safe_send instead of DraftStream.
         monkeypatch.setattr(
             "ccgram.handlers.messaging_pipeline.tool_batch.is_ephemeral_tools",
             lambda _wid: False,
@@ -141,7 +129,6 @@ class TestDraftStreamIntegration:
     async def test_first_tool_use_starts_draft_stream(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # No status bubble to dismiss.
         monkeypatch.setattr(
             "ccgram.handlers.status.status_bubble.clear_status_message",
             AsyncMock(return_value=None),
@@ -164,12 +151,6 @@ class TestDraftStreamIntegration:
     async def test_noop_re_render_does_not_re_edit(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Result arrival doesn't change rendered text — must not re-edit.
-
-        Re-editing with identical text would trigger Telegram's "Message is
-        not modified" error and the legacy fallback path would strip the
-        entities, leaving the bubble visibly unformatted.
-        """
         monkeypatch.setattr(
             "ccgram.handlers.status.status_bubble.clear_status_message",
             AsyncMock(return_value=None),
@@ -182,8 +163,6 @@ class TestDraftStreamIntegration:
         )
         await _send_or_edit_batch(bot, 1, batch, 42, 10, 10)
 
-        # Standard entries don't render tool_result_text — re-render produces
-        # identical text and the edit must be skipped.
         batch.entries[0].tool_result_text = "42 lines"
         await _send_or_edit_batch(bot, 1, batch, 42, 10, 10)
 
@@ -193,7 +172,6 @@ class TestDraftStreamIntegration:
     async def test_second_call_edits_when_text_changes(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A second entry arriving genuinely changes the rendered text → real edit."""
         monkeypatch.setattr(
             "ccgram.handlers.status.status_bubble.clear_status_message",
             AsyncMock(return_value=None),
@@ -231,7 +209,6 @@ class TestDraftStreamIntegration:
 
         await flush_batch(bot, user_id=1, thread_id_or_0=10)
 
-        # Draft is closed, removed from active.
         assert batch.draft.closed is True
         assert (1, 10) not in _active_batches
 
@@ -265,7 +242,6 @@ class TestDedupConsecutiveEntries:
         lines = _format_mixed_batch_lines(entries)
         assert len(lines) == 1
         assert " ×3" in lines[0]
-        # result text is intentionally not rendered in the new format.
         assert "12 lines" not in lines[0]
 
     def test_mixed_status_same_tool_use_text_not_merged(self) -> None:

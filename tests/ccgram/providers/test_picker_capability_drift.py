@@ -8,7 +8,6 @@ from ccgram.providers.registry import registry
 
 
 def _all_providers() -> list[AgentProvider]:
-    """Enumerate every registered provider — picks up new providers without code edits."""
     _ensure_registered()
     return [registry.get(name) for name in registry.provider_names()]
 
@@ -45,6 +44,5 @@ def test_picker_commands_subset_of_builtin_commands(provider) -> None:
 
 
 def test_shell_has_no_picker_commands() -> None:
-    """Shell forwards raw commands; no TUI picker can fire there."""
     shell = registry.get("shell")
     assert shell.capabilities.tui_picker_commands == frozenset()

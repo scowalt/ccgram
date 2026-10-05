@@ -1,12 +1,3 @@
-"""Tests for multiplexer/base.py — Task 1 fitness gate (F3).
-
-Covers:
-- Value type construction and field defaults.
-- MultiplexerCapabilities construction and immutability.
-- Multiplexer Protocol structural checks.
-- F3: multiplexer.base imports no I/O module (no subprocess, libtmux, asyncio.subprocess).
-"""
-
 from __future__ import annotations
 
 import ast
@@ -24,8 +15,6 @@ from ccgram.multiplexer.base import (
     PaneInfo,
     WindowRef,
 )
-
-# ── Value type construction ────────────────────────────────────────────
 
 
 class TestWindowRef:
@@ -103,7 +92,7 @@ class TestForegroundInfo:
         )
         assert f.pid == 1234
         assert f.argv == ["claude", "--continue"]
-        assert f.tty == ""  # default
+        assert f.tty == ""
 
     def test_with_tty(self) -> None:
         f = ForegroundInfo(pid=42, pgid=42, argv=["bash"], cwd="/", tty="/dev/ttys001")
@@ -115,9 +104,6 @@ class TestPaneDims:
         d = PaneDims(width=220, height=50)
         assert d.width == 220
         assert d.height == 50
-
-
-# ── MultiplexerCapabilities ────────────────────────────────────────────
 
 
 class TestMultiplexerCapabilities:
@@ -167,11 +153,9 @@ class TestMultiplexerCapabilities:
 
     def test_immutable(self) -> None:
         caps = self._tmux_caps()
-        with pytest.raises(Exception):  # frozen dataclass raises FrozenInstanceError
+        with pytest.raises(Exception):
             caps.name = "other"  # type: ignore[misc]
 
-
-# ── F3: multiplexer.base imports no I/O module ────────────────────────
 
 _FORBIDDEN_IO_MODULES = frozenset(
     {
@@ -191,7 +175,6 @@ _BASE_PATH = (
 
 
 def _collect_imports(path: Path) -> list[str]:
-    """Return all module names imported at module level in *path*."""
     source = path.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(path))
     names: list[str] = []
@@ -205,10 +188,6 @@ def _collect_imports(path: Path) -> list[str]:
 
 
 def test_f3_base_imports_no_io_module() -> None:
-    """multiplexer.base must not import any I/O or backend library.
-
-    This is the F3 fitness assertion: the core contract layer is pure.
-    """
     imports = _collect_imports(_BASE_PATH)
     violations = [m for m in imports if m in _FORBIDDEN_IO_MODULES]
     assert not violations, (
@@ -218,7 +197,6 @@ def test_f3_base_imports_no_io_module() -> None:
 
 
 def test_f3_base_imports_no_backend_submodule() -> None:
-    """multiplexer.base must not import any concrete backend module."""
     imports = _collect_imports(_BASE_PATH)
     backend_imports = [
         m
@@ -233,25 +211,16 @@ def test_f3_base_imports_no_backend_submodule() -> None:
     )
 
 
-# ── Protocol structural check ──────────────────────────────────────────
-
-
 def test_multiplexer_is_runtime_checkable() -> None:
-    """Multiplexer must be @runtime_checkable for isinstance checks."""
 
-    # A class with all required methods satisfies the Protocol structurally.
-    # We verify the protocol itself has the @runtime_checkable decorator by
-    # confirming isinstance() doesn't raise TypeError.
     class _Fake:
         pass
 
-    # Should not raise — just returns False for a non-implementing class.
     result = isinstance(_Fake(), Multiplexer)
-    assert result is False  # doesn't implement it, but the check itself works
+    assert result is False
 
 
 def test_multiplexer_protocol_has_expected_methods() -> None:
-    """All contract methods declared in the design are present on Multiplexer."""
     expected = {
         "capabilities",
         "ensure_session",
@@ -274,12 +243,7 @@ def test_multiplexer_protocol_has_expected_methods() -> None:
     assert not missing, f"Multiplexer Protocol is missing methods: {missing}"
 
 
-# ── Clean-import check ─────────────────────────────────────────────────
-
-
 def test_multiplexer_base_clean_import() -> None:
-    """Importing ccgram.multiplexer.base in a warm interpreter must succeed."""
-    # Force re-import to ensure we test the actual module state.
     mod = importlib.import_module("ccgram.multiplexer.base")
     assert hasattr(mod, "Multiplexer")
     assert hasattr(mod, "MultiplexerCapabilities")

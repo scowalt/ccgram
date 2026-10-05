@@ -1,9 +1,3 @@
-"""Shared fixtures for ccgram unit tests.
-
-Provides factories for building JSONL entries, content blocks,
-and sample pane text for terminal parser tests.
-"""
-
 import os
 import time
 
@@ -12,13 +6,6 @@ import pytest
 
 @pytest.fixture(autouse=True)
 async def _shutdown_queue_workers():
-    """Kill background queue workers created as side-effects of handler calls.
-
-    Tests that call real handler code (forward_command_handler, handle_text_message,
-    update_status_message) may trigger enqueue_status_update → get_or_create_queue,
-    which spawns an infinite asyncio worker task.  Without cleanup the event loop
-    waits for these pending tasks, causing 30 s hangs on Linux CI.
-    """
     yield
     from ccgram.handlers.messaging_pipeline.message_queue import (
         _queue_workers,
@@ -31,7 +18,6 @@ async def _shutdown_queue_workers():
 
 @pytest.fixture(autouse=True)
 def _clean_provider_env(monkeypatch):
-    """Remove CCGRAM_*_COMMAND env vars so tests use provider defaults."""
     for key in list(os.environ):
         if key.startswith("CCGRAM_") and key.endswith("_COMMAND"):
             monkeypatch.delenv(key)
@@ -39,7 +25,6 @@ def _clean_provider_env(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _default_replace_prompt_mode():
-    """Default to replace mode so existing tests using ccgram:N❯ markers pass."""
     from ccgram.config import config
 
     original = config.prompt_mode
@@ -50,7 +35,6 @@ def _default_replace_prompt_mode():
 
 @pytest.fixture
 def _wrap_mode():
-    """Switch to wrap prompt mode for the test."""
     from ccgram.config import config
 
     original = config.prompt_mode
@@ -61,23 +45,14 @@ def _wrap_mode():
 
 @pytest.fixture(autouse=True)
 def _clean_proxy_env(monkeypatch):
-    """Remove proxy env vars that cause PTB's Application builder to fail.
-
-    PTB auto-detects socks proxies from all_proxy/ftp_proxy/etc. and tries to
-    import httpx[socks], which may not be installed in the test environment.
-    """
     for key in list(os.environ):
         lower = key.lower()
         if "proxy" in lower and key not in ("NO_PROXY", "no_proxy"):
             monkeypatch.delenv(key, raising=False)
 
 
-# ── JSONL entry factories ────────────────────────────────────────────────
-
-
 @pytest.fixture
 def make_jsonl_entry():
-    """Factory: build a raw JSONL dict (pre-parse_line)."""
 
     def _make(
         msg_type: str = "assistant",
@@ -104,7 +79,6 @@ def make_jsonl_entry():
 
 @pytest.fixture
 def make_text_block():
-    """Factory: build a text content block."""
 
     def _make(text: str) -> dict:
         return {"type": "text", "text": text}
@@ -114,7 +88,6 @@ def make_text_block():
 
 @pytest.fixture
 def make_tool_use_block():
-    """Factory: build a tool_use content block."""
 
     def _make(
         tool_id: str = "tool_1",
@@ -133,7 +106,6 @@ def make_tool_use_block():
 
 @pytest.fixture
 def make_tool_result_block():
-    """Factory: build a tool_result content block."""
 
     def _make(
         tool_use_id: str = "tool_1",
@@ -155,15 +127,11 @@ def make_tool_result_block():
 
 @pytest.fixture
 def make_thinking_block():
-    """Factory: build a thinking content block."""
 
     def _make(thinking: str = "deep thoughts") -> dict:
         return {"type": "thinking", "thinking": thinking}
 
     return _make
-
-
-# ── Sample pane text for terminal parser ─────────────────────────────────
 
 
 @pytest.fixture

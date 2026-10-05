@@ -1,9 +1,3 @@
-"""Pi command discovery for Telegram-exposed slash commands.
-
-Discovers Telegram-suitable Pi commands from the built-in command set plus
-on-disk skills, prompt templates, and extension commands.
-"""
-
 from __future__ import annotations
 
 import os
@@ -26,21 +20,12 @@ _PI_EXTENSION_COMMAND_RE = re.compile(
     r"pi\.registerCommand\(\s*[\"'](?P<name>[^\"']+)[\"']",
 )
 
-# Telegram-friendly Pi built-ins from https://pi.dev/docs/latest/usage.
-# The forward path lets users send *any* /-command through to the provider,
-# so this list is purely for discovery (/commands listing, menu autocomplete).
-# Modal-TUI flows like /model and /settings are navigated with the inline toolbar.
-#
-# NOTE: /resume remains excluded because it collides with ccgram's bot-native
-# session picker (handlers/recovery/resume_command.py). /clear is accepted as a
-# hidden compatibility alias in forward.py, but Pi's documented reset command is /new.
 _PI_TELEGRAM_BUILTINS: dict[str, str] = {
     "/changelog": "Show version history",
     "/clone": "Duplicate the active branch into a new session",
     "/compact": "Compact conversation context",
     "/copy": "Copy last assistant message to clipboard",
     "/export": "Export session to HTML",
-    # ccgram synthetic command: sends Pi's Alt+Enter follow-up shortcut.
     "/followup": "Queue a follow-up message after current work finishes",
     "/fork": "Fork session from an earlier user message",
     "/hotkeys": "Show keyboard shortcuts",
@@ -60,7 +45,6 @@ _PI_TELEGRAM_BUILTINS: dict[str, str] = {
 
 
 def telegram_builtins() -> list[DiscoveredCommand]:
-    """Return the Telegram-safe Pi built-in commands."""
     return [
         DiscoveredCommand(name=name, description=desc, source="builtin")
         for name, desc in _PI_TELEGRAM_BUILTINS.items()
@@ -127,7 +111,6 @@ def _discover_skill_roots(base_dir: Path) -> list[Path]:
 
 
 def _scan_skill_root(root: Path) -> list[DiscoveredCommand]:
-    """Scan a single skill root directory for commands."""
     if not root.is_dir():
         return []
     allow_root_markdown = root.name == "skills" and root.parent.name in {
@@ -200,11 +183,6 @@ _EXTENSION_SUFFIXES = frozenset({".ts", ".js", ".mjs", ".cjs"})
 
 
 def _extension_candidates(entry: Path) -> list[Path]:
-    """Collect script files from a single extension root entry.
-
-    ``os.walk`` is used instead of ``rglob`` so skip dirs are pruned before
-    descent — avoids walking ``node_modules``, ``dist``, etc. on large trees.
-    """
     if entry.is_file() and entry.suffix.lower() in _EXTENSION_SUFFIXES:
         return [entry]
     if not entry.is_dir():
@@ -225,7 +203,6 @@ def _extension_candidates(entry: Path) -> list[Path]:
 
 
 def _extract_commands_from_file(path: Path) -> list[DiscoveredCommand]:
-    """Extract registered command names from a single extension file."""
     text = _safe_read_text(path)
     if not text:
         return []
@@ -266,7 +243,6 @@ def _discover_extension_commands(base_dir: str) -> list[DiscoveredCommand]:
 
 
 def discover_pi_commands(base_dir: str) -> list[DiscoveredCommand]:
-    """Discover Telegram-suitable Pi commands from filesystem sources."""
     commands = []
     commands.extend(telegram_builtins())
     commands.extend(_discover_skills(base_dir))

@@ -1,5 +1,3 @@
-"""Tests for /commands handler in handlers/commands/__init__.py."""
-
 from typing import TYPE_CHECKING, cast
 from types import SimpleNamespace
 

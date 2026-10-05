@@ -1,5 +1,3 @@
-"""Tests for idle_tracker — per-session activity timestamps."""
-
 import time
 
 from ccgram.idle_tracker import IdleTracker

@@ -1,8 +1,3 @@
-// Live terminal surface — connects to /ws/terminal/<token>, renders ANSI
-// frames into an xterm.js instance, and re-fits on viewport changes.
-//
-// Read-only in v3.0: keystrokes are not forwarded; user input is deferred
-// to v3.1.
 
 (function () {
     "use strict";
@@ -33,11 +28,6 @@
         });
     }
 
-    // Shared global promise so panes.js and terminal.js never race when both
-    // need xterm. First caller wins; subsequent callers reuse the same
-    // in-flight or resolved promise. A rejected promise is evicted so the
-    // next caller can retry — otherwise a transient CDN blip would brick
-    // every later xterm consumer for the rest of the page lifetime.
     function ensureXtermLoaded() {
         if (window.__ccgramXtermReady) return window.__ccgramXtermReady;
         if (window.Terminal && window.FitAddon && window.FitAddon.FitAddon) {
@@ -72,15 +62,8 @@
         return proto + "//" + window.location.host + "/ws/terminal/" + token;
     }
 
-    // The browser WebSocket API hides the HTTP status that rejected the
-    // upgrade (403 vs network blip both surface as onclose without onopen).
-    // After this many consecutive pre-open failures we disambiguate via an
-    // HTTP probe to /api/panes/<token>; only a real 403 from the probe
-    // earns a hard stop. Server-driven 4001/4002/4003 close codes are an
-    // authoritative auth signal and short-circuit this path.
     const PROBE_AFTER_FAILS = 3;
 
-    // Server WS close codes for auth failures (mirror terminal.py).
     const WS_AUTH_CODES = new Set([4001, 4002, 4003]);
 
     function initDataHeaders() {
@@ -131,9 +114,9 @@
         const fit = new FitAddon();
         term.loadAddon(fit);
         term.open(container);
-        try { fit.fit(); } catch (e) { /* ignore initial fit failures */ }
+        try { fit.fit(); } catch (e) {   }
 
-        const onResize = () => { try { fit.fit(); } catch (e) { /* ignore */ } };
+        const onResize = () => { try { fit.fit(); } catch (e) {   } };
         window.addEventListener("resize", onResize);
 
         const token = tokenFromLocation();
@@ -165,21 +148,15 @@
                 preOpenFails = 0;
                 statusEl.textContent = "Authenticating…";
                 reconnectDelay = 500;
-                // Server reads initData from the first frame after upgrade —
-                // the WebSocket browser API can't carry custom headers, and
-                // putting initData in the URL would leak it into access logs.
                 try {
                     ws.send(JSON.stringify({ init_data: initDataRaw() }));
                 } catch (e) {
-                    // Send failure here means the socket is already gone —
-                    // onclose will follow and drive reconnect.
                 }
             };
             ws.onmessage = (ev) => {
                 let msg;
                 try { msg = JSON.parse(ev.data); } catch (e) { return; }
                 if (msg.type === "frame" && typeof msg.text === "string") {
-                    // Whole-screen replacement: clear, write, no scrollback churn.
                     term.reset();
                     term.write(msg.text);
                 } else if (msg.type === "hello") {
@@ -190,8 +167,6 @@
             };
             ws.onclose = async (ev) => {
                 if (stopped) return;
-                // Server-driven auth-failure codes are authoritative — stop
-                // immediately so we don't churn through retries with bad creds.
                 if (ev && WS_AUTH_CODES.has(ev.code)) {
                     stopped = true;
                     statusEl.textContent =
@@ -201,8 +176,6 @@
                 if (!opened) {
                     preOpenFails += 1;
                     if (preOpenFails >= PROBE_AFTER_FAILS) {
-                        // The WS API hides the HTTP status — disambiguate
-                        // auth from transport via an HTTP probe.
                         const result = await probeAuth(token);
                         if (result === "auth-failed") {
                             stopped = true;
@@ -210,8 +183,6 @@
                                 "Authentication failed — reopen from Telegram.";
                             return;
                         }
-                        // Probe says auth is fine (or itself failed) — assume
-                        // transient, reset the counter and keep retrying.
                         preOpenFails = 0;
                     }
                 }
@@ -219,7 +190,6 @@
                 scheduleReconnect();
             };
             ws.onerror = () => {
-                // onclose follows; let it handle reconnect.
             };
         }
 

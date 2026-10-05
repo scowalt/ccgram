@@ -1,5 +1,3 @@
-"""Tests for provider-agnostic command catalog and discovery sources."""
-
 from pathlib import Path
 
 from ccgram.command_catalog import CommandCatalog, discover_user_defined_commands

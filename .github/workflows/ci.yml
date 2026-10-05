@@ -34,10 +34,6 @@ jobs:
         run: uv run pytest tests/ -m "not integration and not e2e" --tb=short -v --timeout=30
       - name: Integration tests
         run: uv run pytest tests/integration/ -m "not llm" --tb=short -v --timeout=30
-  # Advisory architecture-drift report (archfit). Non-blocking: it surfaces
-  # boundary/coupling drift and publishes the scorecard, but never fails the
-  # merge (continue-on-error). The enforced boundary gate is the pytest F1-F6
-  # audits in the `check` job above + the pre-push hook.
   architecture:
     name: Architecture drift (advisory)
     runs-on: ubuntu-latest

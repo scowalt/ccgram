@@ -1,23 +1,3 @@
-"""Live terminal surface — websocket that streams pane content delta-by-delta.
-
-Endpoints:
-
-- ``GET /ws/terminal/{token}`` upgrades to a websocket. Optional query string
-  ``?pane=%5`` streams the named pane (validated against the window). Without
-  it, the active pane is captured. Tokens are verified via
-  :func:`ccgram.miniapp.auth.verify_token`; the resolved ``window_id`` is the
-  only window the websocket may stream from.
-- ``GET /api/panes/{token}`` returns a JSON list of panes for the window —
-  used by the multi-pane grid surface to lay out terminal previews.
-
-Each tick the handler captures the target pane with ANSI colours via
-``TmuxManager.capture_pane`` (active) or ``capture_pane_by_id`` (specific).
-The result is hashed and only forwarded when it differs from the last frame,
-keeping bandwidth proportional to actual change instead of poll cadence.
-
-The endpoint is read-only in v3.0; client-side typing is deferred to v3.1.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -44,24 +24,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Default poll cadence between pane captures (seconds).
 DEFAULT_POLL_INTERVAL = 0.2
 
-# Hard cap on a single frame (bytes); larger captures are truncated.
 MAX_FRAME_BYTES = 64 * 1024
 
-# Application keys for dependencies injected by ``register_terminal_routes``.
 _BOT_TOKEN_KEY = web.AppKey("bot_token", str)
 _CAPTURE_KEY: web.AppKey[Callable[[str], Awaitable[str | None]]] = web.AppKey(
     "terminal_capture"
 )
-# Per-pane capture: (window_id, pane_id) -> captured text. Used by the
-# multi-pane grid for non-active panes; ``None`` falls back to the active
-# pane capture above.
 _PANE_CAPTURE_KEY: web.AppKey[Callable[[str, str], Awaitable[str | None]]] = web.AppKey(
     "terminal_pane_capture"
 )
-# Pane lister: window_id -> list of pane dicts (pane_id, active, name, state).
 _PANE_LIST_KEY: web.AppKey[Callable[[str], Awaitable[list[dict[str, Any]]]]] = (
     web.AppKey("terminal_pane_list")
 )
@@ -69,19 +42,12 @@ _POLL_INTERVAL_KEY = web.AppKey("terminal_poll_interval", float)
 
 
 async def _default_capture(window_id: str) -> str | None:
-    """Capture the active pane via the global ``TmuxManager`` singleton."""
-    # Lazy: tests substitute alternate capture callables before any
-    # request arrives; resolving the singleton inside the default
-    # factory keeps the injection seam clean.
-    # Lazy: miniapp routes resolve singletons per-request so tests can stub them
     from ...multiplexer import multiplexer as tmux_manager
 
     return await tmux_manager.capture_pane(window_id, with_ansi=True)
 
 
 async def _default_pane_capture(window_id: str, pane_id: str) -> str | None:
-    """Capture a specific pane by ID, scoped to ``window_id``."""
-    # Lazy: same DI seam as ``_default_capture``.
     from ...multiplexer import multiplexer as tmux_manager
 
     return await tmux_manager.capture_pane_by_id(
@@ -90,11 +56,8 @@ async def _default_pane_capture(window_id: str, pane_id: str) -> str | None:
 
 
 async def _default_pane_list(window_id: str) -> list[dict[str, Any]]:
-    """Enumerate panes for a window, merging tmux state + persisted projections."""
-    # Lazy: same DI seam as ``_default_capture``.
     from ...multiplexer import multiplexer as tmux_manager
 
-    # Lazy: miniapp routes resolve singletons per-request so tests can stub them
     from ...window_state_ports.pane_state import list_pane_projections
 
     panes = await tmux_manager.list_panes(window_id)
@@ -131,31 +94,19 @@ def _truncate(text: str) -> str:
 
 _INIT_DATA_HEADER = "X-Telegram-Init-Data"
 
-# WS auth wait — clients send the auth frame immediately after the upgrade
-# response. Five seconds is generous for cellular networks.
 _WS_AUTH_TIMEOUT = 5.0
 
-# WS close codes for auth failures (4000-4999 reserved for app use). Distinct
-# codes let the client tell auth failure (hard stop) from transport blips
-# (retry with backoff) without an HTTP probe round-trip.
 _WS_AUTH_TIMEOUT_CODE = 4001
 _WS_AUTH_BAD_FRAME_CODE = 4002
 _WS_AUTH_FAILED_CODE = 4003
 
 
 def _init_data_from_header(request: web.Request) -> str | None:
-    """HTTP endpoints read initData from the header — never the URL.
-
-    The header keeps the secret out of access logs and browser history.
-    The WS upgrade can't carry custom headers from the browser API, so it
-    uses a separate post-upgrade auth frame instead of a query parameter.
-    """
     raw = request.headers.get(_INIT_DATA_HEADER)
     return raw or None
 
 
 async def _send_json(ws: web.WebSocketResponse, payload: dict[str, Any]) -> bool:
-    """Send a JSON message; return False when the socket is no longer open."""
     if ws.closed:
         return False
     try:
@@ -171,12 +122,6 @@ async def _authenticate_websocket(
     bot_token: str,
     payload: TokenPayload,
 ) -> bool:
-    """Read the first WS frame and validate it as Telegram initData.
-
-    Auth-after-upgrade keeps initData out of the URL, so the path token and
-    initData never appear together in access logs. On failure the socket is
-    closed with a 4xxx code distinct enough for the client to stop retrying.
-    """
     try:
         first = await asyncio.wait_for(ws.receive(), timeout=_WS_AUTH_TIMEOUT)
     except TimeoutError:
@@ -213,8 +158,6 @@ async def _terminal_handler(request: web.Request) -> web.StreamResponse:
     pane_list = request.app[_PANE_LIST_KEY]
     interval = request.app[_POLL_INTERVAL_KEY]
 
-    # Verify the path token before upgrade. initData arrives in the first
-    # WS frame so it never lands in URLs/access logs alongside the token.
     try:
         payload = verify_token(token, bot_token=bot_token)
     except InvalidTokenError as exc:
@@ -223,13 +166,10 @@ async def _terminal_handler(request: web.Request) -> web.StreamResponse:
 
     pane_id = (request.query.get("pane") or "").strip() or None
 
-    # tmux pane ids are server-global, so an authenticated user with a token
-    # for window @3 could otherwise capture %5 even if it lives in window @7.
-    # Reject any pane_id that's not currently in the token's window.
     if pane_id is not None:
         try:
             panes = await pane_list(payload.window_id)
-        except Exception:  # noqa: BLE001 — surface as 403, never crash
+        except Exception:  # noqa: BLE001
             logger.exception(
                 "pane membership check failed for %s pane=%s",
                 payload.window_id,
@@ -259,7 +199,6 @@ async def _terminal_handler(request: web.Request) -> web.StreamResponse:
         _stream_loop(ws, payload.window_id, capture, pane_capture, pane_id, interval)
     )
     try:
-        # Drain inbound frames so a client close terminates the stream promptly.
         async for msg in ws:
             if msg.type in (WSMsgType.CLOSE, WSMsgType.ERROR):
                 break
@@ -288,7 +227,7 @@ async def _panes_handler(request: web.Request) -> web.Response:
 
     try:
         panes = await pane_list(payload.window_id)
-    except Exception:  # noqa: BLE001 — surface as 500, never crash the server
+    except Exception:  # noqa: BLE001
         logger.exception("pane list failed for %s", payload.window_id)
         return web.json_response({"error": "list failed"}, status=500)
 
@@ -306,7 +245,6 @@ async def _stream_loop(
     pane_id: str | None,
     interval: float,
 ) -> None:
-    """Background task: capture pane, emit deltas, sleep, repeat."""
     last_hash: str | None = None
     while not ws.closed:
         try:
@@ -319,8 +257,6 @@ async def _stream_loop(
                     pane_capture(window_id, pane_id), timeout=_CAPTURE_TIMEOUT
                 )
         except TimeoutError:
-            # Throttled: fires every `interval` (~0.2s) for a stuck/gone pane.
-            # The client still gets an error frame each tick; the log need not.
             log_throttled(
                 logger,
                 f"term-capture-timeout:{window_id}:{pane_id}",
@@ -331,10 +267,7 @@ async def _stream_loop(
             await _send_json(ws, {"type": "error", "message": "capture timeout"})
             await asyncio.sleep(interval)
             continue
-        except Exception:  # noqa: BLE001 — capture failure must not kill stream
-            # Throttled: same per-tick cadence. The underlying capture path
-            # (tmux_manager) already logs the specific tmux error; this is a
-            # backstop, and the client gets an error frame regardless.
+        except Exception:  # noqa: BLE001
             log_throttled(
                 logger,
                 f"term-capture-failed:{window_id}:{pane_id}",
@@ -374,14 +307,6 @@ def register_terminal_routes(
     pane_list: Callable[[str], Awaitable[list[dict[str, Any]]]] | None = None,
     poll_interval: float = DEFAULT_POLL_INTERVAL,
 ) -> None:
-    """Attach the terminal routes to ``app`` and stash dependencies.
-
-    ``capture`` is injected for tests; production leaves it ``None`` to use
-    the global ``TmuxManager`` singleton. ``pane_capture`` and ``pane_list``
-    are likewise stub-injectable to bypass tmux during tests.
-    ``poll_interval`` is clamped to a minimum of 50 ms to prevent runaway
-    loops if a caller misconfigures it.
-    """
     interval = max(0.05, float(poll_interval))
     app[_BOT_TOKEN_KEY] = bot_token
     app[_CAPTURE_KEY] = capture or _default_capture

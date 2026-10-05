@@ -1,10 +1,3 @@
-"""OpenAI-compatible chat completions via httpx for command generation.
-
-Supports any API that follows OpenAI's chat completions endpoint
-(OpenAI, Groq, Ollama, etc.) plus a thin Anthropic adapter.
-Uses raw httpx — zero new dependencies.
-"""
-
 import abc
 import json
 import platform
@@ -54,7 +47,6 @@ _DANGEROUS_RE = re.compile(
 
 
 def _is_dangerous_heuristic(command: str) -> bool:
-    """Check if a command matches known dangerous patterns."""
     return bool(_DANGEROUS_RE.search(command))
 
 
@@ -84,7 +76,6 @@ _SHELL_SYNTAX_NOTES: dict[str, str] = {
 
 
 def _build_system_prompt(shell: str = "") -> str:
-    """Build the system prompt with shell-specific syntax notes."""
     notes = _SHELL_SYNTAX_NOTES.get(shell.lower()) if shell else None
     if notes:
         return _SYSTEM_PROMPT + notes
@@ -102,7 +93,6 @@ def _build_user_message(
     recent_output: str = "",
     shell_tools: str = "",
 ) -> str:
-    """Build the user message with context."""
     parts = [description]
     context_parts: list[str] = []
     if cwd:
@@ -126,7 +116,6 @@ def _build_user_message(
 
 
 def _parse_command_result(text: str) -> CommandResult:
-    """Parse LLM response text into a CommandResult."""
     cleaned = text.strip()
     if cleaned.startswith("```"):
         lines = cleaned.split("\n")
@@ -156,14 +145,6 @@ def _parse_command_result(text: str) -> CommandResult:
 
 
 class _BaseCompleter(abc.ABC):
-    """Shared base for LLM command generators using httpx.
-
-    Subclasses provide ``_url()``, ``_headers()``, ``_payload()``, and
-    ``_extract()`` for API-specific details.  The shared ``_request()``
-    handles HTTP execution and error handling.  Creates a fresh httpx
-    client per request to avoid lifecycle issues in long-running bots.
-    """
-
     _default_base_url: str = _OPENAI_BASE_URL
 
     def __init__(
@@ -189,7 +170,6 @@ class _BaseCompleter(abc.ABC):
         recent_output: str = "",
         shell_tools: str = "",
     ) -> CommandResult:
-        """Generate a shell command from a natural language description."""
         if not os_info:
             os_info = f"{platform.system()} {platform.release()}"
         user_msg = _build_user_message(
@@ -210,7 +190,6 @@ class _BaseCompleter(abc.ABC):
         payload: dict[str, Any],
         extract: Callable[[dict[str, Any]], str],
     ) -> str:
-        """Post to LLM API and extract response text with shared error handling."""
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.post(
@@ -234,14 +213,10 @@ class _BaseCompleter(abc.ABC):
                 raise RuntimeError(msg) from exc
 
     @abc.abstractmethod
-    async def _request(self, user_msg: str, *, shell: str = "") -> str:
-        """Send the request and return the response text."""
-        ...
+    async def _request(self, user_msg: str, *, shell: str = "") -> str: ...
 
 
 class OpenAICompatCompleter(_BaseCompleter):
-    """LLM command generator using OpenAI-compatible chat completions API."""
-
     _default_base_url: str = _OPENAI_BASE_URL
 
     async def _request(self, user_msg: str, *, shell: str = "") -> str:
@@ -249,7 +224,6 @@ class OpenAICompatCompleter(_BaseCompleter):
         return await self.complete(prompt, user_msg)
 
     async def complete(self, system_prompt: str, user_message: str) -> str:
-        """Complete a text prompt using the OpenAI-compatible API."""
         payload = {
             "model": self.model,
             "messages": [
@@ -270,8 +244,6 @@ class OpenAICompatCompleter(_BaseCompleter):
 
 
 class AnthropicCompleter(_BaseCompleter):
-    """LLM command generator using the Anthropic Messages API."""
-
     _default_base_url: str = _ANTHROPIC_BASE_URL
 
     async def _request(self, user_msg: str, *, shell: str = "") -> str:
@@ -279,7 +251,6 @@ class AnthropicCompleter(_BaseCompleter):
         return await self.complete(prompt, user_msg)
 
     async def complete(self, system_prompt: str, user_message: str) -> str:
-        """Complete a text prompt using the Anthropic Messages API."""
         payload = {
             "model": self.model,
             "max_tokens": 1024,

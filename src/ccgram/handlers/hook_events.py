@@ -1,13 +1,3 @@
-"""Hook event dispatcher — routes structured events to handlers.
-
-Receives HookEvent objects from the session monitor's event reader and
-dispatches them to the appropriate handler based on event type. This
-provides instant, structured notification of agent state changes instead
-of relying solely on terminal scraping.
-
-Key function: dispatch_hook_event().
-"""
-
 import asyncio
 
 import structlog
@@ -38,14 +28,6 @@ _WINDOW_KEY_PARTS = 2
 def _resolve_users_for_window_key(
     window_key: str,
 ) -> list[tuple[int, int, str]]:
-    """Resolve window_key to list of (user_id, thread_id, window_id).
-
-    The window_key format is "<prefix>:<window_id>" (e.g. "ccgram:@0" for tmux,
-    "herdr:w2:t1" for herdr, whose window_id itself contains a colon). The prefix
-    is a single colon-free token, so we split on the FIRST colon to recover the
-    full window_id and look up thread bindings.
-    """
-    # Extract window_id from key ("ccgram:@0" -> "@0", "herdr:w2:t1" -> "w2:t1")
     parts = window_key.split(":", 1)
     if len(parts) < _WINDOW_KEY_PARTS:
         return []
@@ -59,7 +41,6 @@ def _resolve_users_for_window_key(
 
 
 async def _handle_notification(event: HookEvent, client: TelegramClient) -> None:
-    """Handle a Notification event — render interactive UI."""
     users = _resolve_users_for_window_key(event.window_key)
     if not users:
         logger.debug(
@@ -83,7 +64,6 @@ async def _handle_notification(event: HookEvent, client: TelegramClient) -> None
             )
             continue
 
-        # Skip if already in interactive mode for this window
         existing = get_interactive_window(user_id, thread_id)
         if existing == window_id:
             logger.debug(
@@ -93,10 +73,7 @@ async def _handle_notification(event: HookEvent, client: TelegramClient) -> None
             )
             continue
 
-        # Set interactive mode before rendering to prevent racing with terminal scraping
         set_interactive_mode(user_id, window_id, thread_id)
-
-        # Wait briefly for Claude Code to render the UI in the terminal
 
         await asyncio.sleep(0.3)
 
@@ -105,14 +82,11 @@ async def _handle_notification(event: HookEvent, client: TelegramClient) -> None
             clear_interactive_mode(user_id, thread_id)
 
 
-_LLM_SUMMARY_TIMEOUT = 3.0  # seconds to wait for LLM summary before falling back to the standard completion text
+_LLM_SUMMARY_TIMEOUT = 3.0
 
 
 async def _get_llm_summary(transcript_path: str) -> str | None:
-    """Try to get an LLM summary, returning None on failure."""
     try:
-        # Lazy: llm package wires httpx + provider configs; only loaded
-        # when a Stop event actually wants a summary.
         from ..llm.summarizer import summarize_completion
 
         return await summarize_completion(transcript_path)
@@ -122,15 +96,8 @@ async def _get_llm_summary(transcript_path: str) -> str | None:
 
 
 async def _is_agent_still_active(window_id: str) -> bool:
-    """Check if the terminal shows an active spinner for a window.
-
-    Used by Stop handler to avoid false "Ready" on intermediate turns
-    (e.g. agent finishing a tool_use turn but about to continue).
-    """
-    # Lazy: multiplexer imports reach monitor and handler wiring during startup.
     from ..multiplexer import multiplexer as tmux_manager
 
-    # Lazy: provider registry imports reach transcript discovery during startup.
     from ..providers import get_provider_for_window
 
     capture = getattr(tmux_manager, "capture", None)
@@ -148,12 +115,6 @@ async def _is_agent_still_active(window_id: str) -> bool:
 
 
 async def _handle_stop(event: HookEvent, client: TelegramClient) -> None:
-    """Handle a Stop event — transition status directly to idle.
-
-    Topic emoji remains poller-owned. Hook-driven idle flips can fight the
-    transcript/activity heuristic and cause active/idle rename churn on quiet
-    topics, so Stop only updates the status bubble.
-    """
 
     users = _resolve_users_for_window_key(event.window_key)
     if not users:
@@ -170,10 +131,6 @@ async def _handle_stop(event: HookEvent, client: TelegramClient) -> None:
 
     num_turns = event.data.get("num_turns", 0)
 
-    # Try LLM summary with timeout to avoid flicker (send once, not twice).
-    # If LLM is available and responds within timeout, include summary in the
-    # initial status message. Otherwise fall back to plain Ready.
-    # All users share the same window_id — fetch view once, reuse in loop.
     first_window_id = users[0][2]
     view = view_window(first_window_id)
     summary: str | None = None
@@ -186,9 +143,6 @@ async def _handle_stop(event: HookEvent, client: TelegramClient) -> None:
         except TimeoutError:
             logger.debug("LLM summary timed out after %ss", _LLM_SUMMARY_TIMEOUT)
 
-    # Guard: if the terminal still shows a spinner, the agent is between
-    # turns (e.g. executing tools after end_turn) — skip Ready and let the
-    # polling loop handle status updates.
     if first_window_id and await _is_agent_still_active(first_window_id):
         logger.debug("Hook Stop: terminal still active, deferring to poller")
         return
@@ -209,12 +163,11 @@ async def _handle_stop(event: HookEvent, client: TelegramClient) -> None:
 
 
 async def _handle_subagent_start(event: HookEvent, _client: TelegramClient) -> None:
-    """Handle SubagentStart — track active subagent count and name."""
     users = _resolve_users_for_window_key(event.window_key)
     if not users:
         return
 
-    window_id = users[0][2]  # all users share the same window_id
+    window_id = users[0][2]
     subagent_id = event.data.get("subagent_id", "")
     name = (
         (event.data.get("name") or "").strip()
@@ -232,12 +185,8 @@ async def _handle_subagent_start(event: HookEvent, _client: TelegramClient) -> N
         name,
     )
 
-    # No immediate status update — the polling loop (1s) already appends
-    # subagent count/names to the status bubble via get_subagent_names().
-
 
 async def _handle_subagent_stop(event: HookEvent, _client: TelegramClient) -> None:
-    """Handle SubagentStop — remove subagent from tracking."""
     users = _resolve_users_for_window_key(event.window_key)
     if not users:
         return
@@ -254,11 +203,8 @@ async def _handle_subagent_stop(event: HookEvent, _client: TelegramClient) -> No
         name,
     )
 
-    # No immediate status update — polling loop shows updated count within 1s.
-
 
 async def _handle_teammate_idle(event: HookEvent, client: TelegramClient) -> None:
-    """Handle TeammateIdle — notify topic that a teammate went idle."""
 
     users = _resolve_users_for_window_key(event.window_key)
     if not users:
@@ -279,10 +225,6 @@ async def _handle_teammate_idle(event: HookEvent, client: TelegramClient) -> Non
 
 
 async def _handle_stop_failure(event: HookEvent, client: TelegramClient) -> None:
-    """Handle a StopFailure event — alert on API error termination."""
-    # Lazy: messaging_pipeline.message_sender pulls in safe_reply wiring
-    # which transitively reaches hook_events for completion summaries.
-    # Lazy: messaging_pipeline imports hook_events indirectly via the dispatch chain
     from .messaging_pipeline.message_sender import rate_limit_send_message
 
     users = _resolve_users_for_window_key(event.window_key)
@@ -309,7 +251,6 @@ async def _handle_stop_failure(event: HookEvent, client: TelegramClient) -> None
 
 
 async def _handle_session_end(event: HookEvent, client: TelegramClient) -> None:
-    """Handle a SessionEnd event — clean up session lifecycle."""
 
     users = _resolve_users_for_window_key(event.window_key)
     if not users:
@@ -337,7 +278,6 @@ async def _handle_session_end(event: HookEvent, client: TelegramClient) -> None:
 
 
 async def _handle_task_completed(event: HookEvent, client: TelegramClient) -> None:
-    """Handle TaskCompleted — notify topic that a task was completed."""
 
     users = _resolve_users_for_window_key(event.window_key)
     if not users:
@@ -377,7 +317,6 @@ async def _handle_task_completed(event: HookEvent, client: TelegramClient) -> No
 
 
 async def dispatch_hook_event(event: HookEvent, client: TelegramClient) -> None:
-    """Route hook events to appropriate handlers."""
     match event.event_type:
         case "Notification":
             await _handle_notification(event, client)
@@ -408,6 +347,6 @@ async def dispatch_hook_event(event: HookEvent, client: TelegramClient) -> None:
             | "PreCompact"
             | "PostCompact"
         ):
-            pass  # Not actionable for the bot — SessionStart handled via session_map.json
+            pass
         case _:
             logger.debug("Ignoring unknown hook event type: %s", event.event_type)

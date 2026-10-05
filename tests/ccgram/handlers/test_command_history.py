@@ -1,5 +1,3 @@
-"""Tests for command history storage and recall."""
-
 import pytest
 
 from ccgram.handlers.command_history import (

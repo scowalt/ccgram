@@ -1,9 +1,3 @@
-"""Provider adapters for command hook stdin payloads.
-
-The adapters validate common fields, map native event names to ccgram's canonical
-lifecycle events, and retain only metadata safe enough for ``events.jsonl``.
-"""
-
 from __future__ import annotations
 
 import os
@@ -16,9 +10,6 @@ from .model import HookAdapter, JsonValue, NormalizedHookEvent, ProviderName
 
 _SAFE_PROVIDERS: tuple[ProviderName, ...] = ("claude", "pi", "codex", "gemini")
 
-# Event names emitted only by Gemini — used by detect_provider_from_payload
-# to distinguish Gemini payloads when transcript path is absent. SessionStart,
-# SessionEnd, and Notification are shared across providers so they don't help.
 _GEMINI_ONLY_EVENT_TYPES: tuple[str, ...] = (
     "AfterAgent",
     "BeforeAgent",
@@ -92,8 +83,6 @@ def _event(
 
 
 class ClaudeHookAdapter:
-    """Normalize Claude Code hook payloads."""
-
     provider_name: ProviderName = "claude"
     event_types: tuple[str, ...] = (
         "SessionStart",
@@ -106,9 +95,6 @@ class ClaudeHookAdapter:
         "TeammateIdle",
         "TaskCompleted",
     )
-    # Claude installs all of its event types — the install path uses
-    # ~/.claude/settings.json schema rather than the JSON-hook installer,
-    # but installable_events lets call sites read every adapter uniformly.
     installable_events: tuple[str, ...] = event_types
 
     def normalize(self, payload: dict[str, object]) -> NormalizedHookEvent | None:
@@ -129,8 +115,6 @@ class ClaudeHookAdapter:
 
 
 class PiHookAdapter:
-    """Normalize Pi hook-runner payloads."""
-
     provider_name: ProviderName = "pi"
     event_types: tuple[str, ...] = (
         "SessionStart",
@@ -142,7 +126,6 @@ class PiHookAdapter:
         "PreCompact",
         "PostCompact",
     )
-    # Pi hooks are installed by cc-thingz hook-runner, not ccgram.
     installable_events: tuple[str, ...] = ()
 
     def normalize(self, payload: dict[str, object]) -> NormalizedHookEvent | None:
@@ -178,8 +161,6 @@ class PiHookAdapter:
 
 
 class CodexHookAdapter:
-    """Normalize Codex hook payloads."""
-
     provider_name: ProviderName = "codex"
     event_types: tuple[str, ...] = (
         "SessionStart",
@@ -191,8 +172,6 @@ class CodexHookAdapter:
         "PreCompact",
         "PostCompact",
     )
-    # Only the lifecycle signals ccgram acts on — the rest are accepted by
-    # normalize() in case Codex starts emitting them with useful data.
     installable_events: tuple[str, ...] = ("SessionStart", "Stop")
 
     def normalize(self, payload: dict[str, object]) -> NormalizedHookEvent | None:
@@ -225,8 +204,6 @@ class CodexHookAdapter:
 
 
 class GeminiHookAdapter:
-    """Normalize Gemini CLI hook payloads."""
-
     provider_name: ProviderName = "gemini"
     event_types: tuple[str, ...] = (
         "SessionStart",
@@ -238,7 +215,6 @@ class GeminiHookAdapter:
         "AfterTool",
         "PreCompress",
     )
-    # AfterAgent maps to canonical Stop; the rest line up directly.
     installable_events: tuple[str, ...] = (
         "SessionStart",
         "AfterAgent",
@@ -247,9 +223,6 @@ class GeminiHookAdapter:
     )
 
     def normalize(self, payload: dict[str, object]) -> NormalizedHookEvent | None:
-        # Gemini session IDs are not UUIDs in current builds (free-form CLI
-        # tokens). Skipping UUID validation here is intentional; the empty-
-        # session_id and absolute-cwd checks in _event still apply.
         event_name = _str_field(payload, "hook_event_name")
         if event_name not in self.event_types:
             return None
@@ -331,14 +304,12 @@ _ADAPTERS: dict[ProviderName, HookAdapter] = {
 
 
 def get_hook_adapter(provider_name: str) -> HookAdapter | None:
-    """Return the hook adapter for a provider name."""
     if provider_name not in _SAFE_PROVIDERS:
         return None
     return _ADAPTERS[cast(ProviderName, provider_name)]
 
 
 def detect_provider_from_payload(payload: dict[str, object]) -> ProviderName | None:
-    """Best-effort provider detection when installed hook lacks --provider."""
     explicit = _str_field(payload, "provider_name")
     transcript_path = _str_field(payload, "transcript_path")
     event_name = _str_field(payload, "hook_event_name")
@@ -358,10 +329,6 @@ def detect_provider_from_payload(payload: dict[str, object]) -> ProviderName | N
     elif (
         _str_field(payload, "permission_mode") or _str_field(payload, "model")
     ) and "/.claude/" not in transcript_path:
-        # ``model``/``permission_mode`` are weak codex signals: Claude's Stop and
-        # Notification payloads now also carry ``model``, so without this guard a
-        # Claude session (transcript under ~/.claude/) installed with no
-        # --provider flag is misdetected as codex.
         provider = "codex"
     elif _str_field(payload, "end_reason") or (
         session_id and not UUID_RE.match(session_id)

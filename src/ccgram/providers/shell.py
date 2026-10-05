@@ -1,25 +1,8 @@
-"""Shell provider — chat-first shell interface via Telegram.
-
-Slim ``AgentProvider`` implementation. The bulk of shell-related infrastructure
-(prompt detection, marker setup, ``KNOWN_SHELLS``, ``PromptMatch``, etc.) lives
-in ``shell_infra.py``. Names are re-exported here for backward compatibility
-with handlers and tests that import from ``ccgram.providers.shell``.
-
-Two prompt modes for output isolation and exit code detection:
-- ``wrap`` (default): appends a small ``⌘N⌘`` marker after the user's
-  existing prompt, preserving Tide / Starship / Powerlevel10k / etc.
-- ``replace``: replaces the entire prompt with ``{prefix}:N❯``
-  (the legacy behaviour, opt-in via ``CCGRAM_PROMPT_MODE=replace``).
-"""
-
 from typing import Any, ClassVar
 
 from ccgram.providers._jsonl import JsonlProvider
 from ccgram.providers.base import ProviderCapabilities
 
-# Re-exports for backward compat — new code should import directly from
-# ccgram.providers.shell_infra. Listed in __all__ so star-imports continue to
-# work and tools see the public surface.
 from ccgram.providers.shell_infra import (  # noqa: F401
     KNOWN_SHELLS,
     PromptMatch,
@@ -32,8 +15,6 @@ from ccgram.providers.shell_infra import (  # noqa: F401
 
 
 class ShellProvider(JsonlProvider):
-    """AgentProvider implementation for raw shell sessions."""
-
     _CAPS: ClassVar[ProviderCapabilities] = ProviderCapabilities(
         name="shell",
         launch_command="",

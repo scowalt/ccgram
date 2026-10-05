@@ -1,10 +1,3 @@
-"""Inbound message routing — handles new assistant messages from SessionMonitor.
-
-Routes messages from the session monitor to Telegram topics: thinking-block
-gating, interactive-tool detection, offset tracking, and content queue
-management.
-"""
-
 import asyncio
 import re
 from pathlib import Path
@@ -36,11 +29,6 @@ _MIN_THINKING_LENGTH = 20
 
 
 async def handle_new_message(msg: NewMessage, client: TelegramClient) -> None:  # noqa: C901, PLR0912
-    """Handle a new assistant message — enqueue for sequential processing.
-
-    Messages are queued per-user to ensure status messages always appear last.
-    Routes via thread_bindings to deliver to the correct topic.
-    """
     if msg.role == "user" and not config.forward_user_echo:
         return
 
@@ -129,8 +117,8 @@ async def handle_new_message(msg: NewMessage, client: TelegramClient) -> None:  
                 parts=parts,
                 tool_use_id=msg.tool_use_id,
                 tool_name=msg.tool_name,
-                content_type=msg.content_type,  # type: ignore[arg-type]  # NewMessage.content_type is str, narrows at runtime
-                role=msg.role,  # type: ignore[arg-type]  # NewMessage.role is str, narrows at runtime
+                content_type=msg.content_type,  # type: ignore[arg-type]
+                role=msg.role,  # type: ignore[arg-type]
                 thread_id=thread_id,
             )
 

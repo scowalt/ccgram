@@ -1,20 +1,3 @@
-"""Slash-command forward orchestration for the active provider.
-
-Routes unknown Telegram /commands to the topic's provider session via
-tmux. This is the single entry point that ``handlers/registry.py`` wires
-into the PTB COMMAND fallback handler.
-
-Pipeline:
-  1. resolve user/topic/window/provider
-  2. translate the Telegram-friendly /-name back to the provider-native
-     name (via menu_sync._build_provider_command_metadata)
-  3. capture transcript + pane probe context
-  4. send via tmux — any /<token> is forwarded as-is; unknown commands
-     are surfaced reactively by the failure probe, not pre-rejected
-  5. spawn the failure probe + status snapshot fallbacks
-  6. handle /clear post-send cleanup (clear session, reset polling)
-"""
-
 from __future__ import annotations
 
 
@@ -64,21 +47,12 @@ _PI_NEW_COMMAND = "new"
 
 
 def _picker_hint(provider_name: str) -> str:
-    """Return the picker-hint suffix for ``provider_name``.
-
-    Inspects the resolved toolbar layout — if the user customised
-    ``toolbar.toml`` and dropped the navigation keys, emit the degraded
-    hint that just points at ``/toolbar`` rather than promising buttons
-    that don't exist.
-    """
-    # Lazy: handlers.toolbar pulls in PTB Application machinery; keep it
-    # out of forward's module-load path.
     from ..toolbar.toolbar_keyboard import get_toolbar_config
 
     try:
         layout = get_toolbar_config().for_provider(provider_name)
         present = {name for row in layout.buttons for name in row}
-    except Exception:  # noqa: BLE001 — toolbar lookup must never break forwarding
+    except Exception:  # noqa: BLE001
         present = set()
     if all(k in present for k in _NAV_KEYS):
         return "\n💡 Open /toolbar to drive the picker — 🔼 🔽 Enter Esc."
@@ -86,21 +60,18 @@ def _picker_hint(provider_name: str) -> str:
 
 
 def _default_command_args(cc_name: str, args: str, display: str) -> str:
-    """Fill provider command args that default to the current display name."""
     if args or cc_name not in ("remote-control", "rc"):
         return args
     return display
 
 
 def _provider_command_name(provider_name: str, cc_name: str) -> str:
-    """Apply provider-specific compatibility aliases before forwarding."""
     if provider_name == "pi" and cc_name.lower() == _PI_CLEAR_ALIAS_COMMAND:
         return _PI_NEW_COMMAND
     return cc_name
 
 
 def _is_session_reset_command(provider_name: str, cc_slash: str) -> bool:
-    """Return whether the forwarded command starts a fresh provider session."""
     parts = cc_slash.split(None, 1)
     command = parts[0].lstrip("/").lower()
     if len(parts) > 1:
@@ -119,7 +90,6 @@ async def _handle_pi_followup_command(
     cc_slash: str,
     thread_id: int | None,
 ) -> None:
-    """Queue a Pi follow-up message via Alt+Enter."""
     if not args:
         await safe_reply(message, "Usage: `/followup <message>`")
         return
@@ -142,7 +112,6 @@ async def _handle_session_reset_command(
     thread_id: int | None,
     provider_name: str,
 ) -> None:
-    """Handle post-send cleanup when a provider starts a fresh session."""
     if not _is_session_reset_command(provider_name, cc_slash):
         return
     logger.info("Clearing session for window %s after %s", display, cc_slash)
@@ -161,15 +130,8 @@ async def _handle_session_reset_command(
 def _arm_rc_probe_if_remote_control(
     update: Update, window_id: str, cc_name: str
 ) -> None:
-    """Arm the RC outcome probe after a forwarded /remote-control.
-
-    Claude-only: ``arm_rc_probe``'s capability gate no-ops for every
-    other provider, so no per-provider branch is needed here.
-    """
     if cc_name not in ("remote-control", "rc"):
         return
-    # Lazy: rc_probe → providers/messaging_pipeline; keep it out of
-    # forward's module-load path.
     from ..status.rc_probe import arm_rc_probe
 
     arm_rc_probe(window_id, PTBTelegramClient(update.get_bot()))
@@ -181,7 +143,6 @@ async def _capture_forward_probe_context(
     cc_slash: str,
     status_like: bool,
 ) -> tuple[str | None, int | None, str | None, int | None]:
-    """Capture pre-send probe context, skipping /status-like commands."""
     if status_like:
         return None, None, None, _status_snapshot_probe_offset(window_id, cc_slash)
     (
@@ -204,7 +165,6 @@ async def _send_forward_post_probes(
     probe_transcript_offset: int | None,
     probe_pane_before: str | None,
 ) -> None:
-    """Send post-forward status/failure probes with one status-only fast path."""
     await _maybe_send_status_snapshot(
         message,
         window_id,
@@ -229,7 +189,6 @@ async def _send_forward_post_probes(
 async def forward_command_handler(
     update: Update, _context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Forward any non-bot command as a slash command to the topic provider session."""
     user = update.effective_user
     if not user or not config.is_user_allowed(user.id):
         return
@@ -245,8 +204,6 @@ async def forward_command_handler(
     parts = cmd_text.split(None, 1)
     raw_cmd = parts[0].split("@")[0] if parts else ""
     tg_cmd = raw_cmd.lstrip("/").lower()
-    # args is forwarded verbatim to the provider via tmux send-keys -l (literal mode).
-    # Gated by config.is_user_allowed — authorised users can type anything into their own agent.
     args = parts[1] if len(parts) > 1 else ""
     window_id = thread_router.resolve_window_for_thread(user.id, thread_id)
     if not window_id:
@@ -289,8 +246,6 @@ async def forward_command_handler(
     ) = await _capture_forward_probe_context(window_id, provider, cc_slash, status_like)
 
     lifecycle_strategy.clear_probe_failures(window_id)
-    # Send to tmux FIRST — typing indicators go through the rate limiter
-    # and can block for seconds when the outbound message budget is exhausted.
     success, error_msg = await send_to_window(window_id, cc_slash)
     if not success:
         await safe_reply(update.message, f"❌ {error_msg}")
@@ -299,9 +254,6 @@ async def forward_command_handler(
     if thread_id is not None:
         record_command(user.id, thread_id, cc_slash)
     confirmation = f"⚡ [{display}] Sent: {cc_slash}"
-    # Picker hint only fires when no args were forwarded: picker commands that
-    # accept a direct value (e.g. /model gpt-5) apply it without opening the
-    # modal, so the "type /toolbar" guidance would mislead.
     if not args and cc_name.lower() in provider.capabilities.tui_picker_commands:
         confirmation += _picker_hint(provider_name)
     await safe_reply(update.message, confirmation)

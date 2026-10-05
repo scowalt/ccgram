@@ -1,10 +1,3 @@
-"""OpenAI-compatible Whisper transcription via httpx.
-
-Supports any API that follows OpenAI's audio transcription endpoint
-(e.g., OpenAI, Groq, local servers). Uses raw httpx instead of the
-openai SDK to avoid a heavy dependency for a single API call.
-"""
-
 import httpx
 
 from .base import TranscriptionResult
@@ -13,8 +6,6 @@ _OPENAI_BASE_URL = "https://api.openai.com/v1"
 
 
 class OpenAICompatTranscriber:
-    """Whisper transcriber using OpenAI-compatible API."""
-
     def __init__(
         self,
         api_key: str,
@@ -30,20 +21,6 @@ class OpenAICompatTranscriber:
     async def transcribe(
         self, audio_bytes: bytes, filename: str
     ) -> TranscriptionResult:
-        """Transcribe audio bytes using the OpenAI-compatible API.
-
-        Args:
-            audio_bytes: Raw audio file content.
-            filename: Original filename (used as the multipart upload filename so the
-                API can detect the audio format from the extension).
-
-        Returns:
-            TranscriptionResult with text and detected language.
-
-        Raises:
-            ValueError: If audio file exceeds 25 MB.
-            RuntimeError: If the API call fails.
-        """
         if len(audio_bytes) > 25 * 1024 * 1024:
             msg = "Audio file too large (max 25 MB)"
             raise ValueError(msg)

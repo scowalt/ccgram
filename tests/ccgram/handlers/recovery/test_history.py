@@ -1,5 +1,3 @@
-"""Tests for history helpers."""
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -37,8 +35,6 @@ class TestFormatTimestamp:
 
 
 class TestSendHistoryDirectSend:
-    """Direct-send mode (catch-up) routes through ``TelegramClient``."""
-
     async def test_direct_send_uses_client_protocol(self) -> None:
         client = FakeTelegramClient()
         target = MagicMock()

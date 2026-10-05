@@ -1,17 +1,3 @@
-"""Live subpackage — live terminal view, screenshot, and pane controls.
-
-Bundles the modules that own terminal-image surfaces in Telegram:
-``live_view`` (auto-refreshing screenshot loop with content-hash gating
-and timeout-based auto-stop), ``screenshot_callbacks`` (one-shot
-screenshot command, inline-key remote control, refresh, live start/stop
-callbacks plus the ``/live`` and ``/panes`` commands), and
-``pane_callbacks`` (per-pane subscribe/unsubscribe, rename, and
-lifecycle-notification toggles for multi-pane windows).
-
-Public surface re-exported here is the entry point for ``bot.py`` and
-the rest of ``handlers/``; internals stay in the per-module files.
-"""
-
 from .live_view import (
     LiveViewState,
     build_live_keyboard,

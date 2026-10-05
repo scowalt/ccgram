@@ -1,5 +1,3 @@
-"""Tests for window_resolver — ID format helpers and startup migration."""
-
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -30,12 +28,10 @@ class TestIsWindowId:
 
 
 def _ws(name: str) -> SimpleNamespace:
-    """Minimal WindowState stand-in with mutable window_name."""
     return SimpleNamespace(window_name=name)
 
 
 def _ws_sid(name: str, session_id: str) -> SimpleNamespace:
-    """WindowState stand-in carrying a durable agent session id (herdr path)."""
     return SimpleNamespace(window_name=name, session_id=session_id)
 
 
@@ -56,10 +52,6 @@ class TestResolveStaleIds:
         assert thread_bindings[100][42] == "@0"
 
     def test_stale_id_remapped_via_display_name(self) -> None:
-        # @0 is gone; tmux restarted and the same window is now @1.
-        # window_states is remapped to @1. Thread binding lookup uses display_names
-        # which has already had "@0" removed by _resolve_window_states, so the thread
-        # binding stays as "@0" (dead window preserved for /restore).
         live = [LiveWindow("@1", "proj")]
         window_states = {"@0": _ws("proj")}
         thread_bindings: dict = {100: {42: "@0"}}
@@ -75,12 +67,9 @@ class TestResolveStaleIds:
         assert "@0" not in window_states
         assert display_names.get("@1") == "proj"
         assert "@0" not in display_names
-        # Thread binding keeps stale @0 — _resolve_window_states removed it from
-        # display_names before thread resolution runs, so the dead binding is preserved.
         assert thread_bindings[100][42] == "@0"
 
     def test_dead_window_preserved_without_live_match(self) -> None:
-        # Stale ID with no live window of that name — keep for /restore
         live: list[LiveWindow] = []
         window_states = {"@0": _ws("dead-proj")}
         thread_bindings: dict = {100: {42: "@0"}}
@@ -96,7 +85,6 @@ class TestResolveStaleIds:
         assert thread_bindings[100][42] == "@0"
 
     def test_old_format_name_key_migrated_to_window_id(self) -> None:
-        # Pre-migration state: window_states keyed by name instead of @id
         live = [LiveWindow("@3", "myproject")]
         window_states = {"myproject": _ws("myproject")}
         thread_bindings: dict = {100: {7: "myproject"}}
@@ -128,7 +116,6 @@ class TestResolveStaleIds:
         assert "oldname" not in window_states
 
     def test_empty_user_bindings_pruned(self) -> None:
-        # After migration drops the only binding for a user, that user is removed
         live: list[LiveWindow] = []
         window_states: dict = {}
         thread_bindings: dict = {100: {42: "oldname"}}
@@ -143,10 +130,6 @@ class TestResolveStaleIds:
         assert 100 not in thread_bindings
 
     def test_offsets_dropped_when_display_name_already_remapped(self) -> None:
-        # _resolve_window_states runs first and removes "@0" from display_names,
-        # replacing it with "@2". When _resolve_offsets runs, it can't find a live
-        # match for "@0" (display_names no longer has it) so the offset is dropped.
-        # This is intentional — read offsets are best-effort, not critical for recovery.
         live = [LiveWindow("@2", "proj")]
         window_states = {"@0": _ws("proj")}
         thread_bindings: dict = {}
@@ -167,12 +150,7 @@ class TestResolveStaleIds:
 
 
 class TestResolveStaleIdsBySession:
-    """Re-resolution for backends with non-stable ids (herdr), keyed on the
-    durable agent session id rather than display name (ids_stable=False)."""
-
     def test_herdr_no_session_match_keeps_dead_window(self) -> None:
-        # The agent's session is not present among live tabs (hook hasn't
-        # re-fired yet) — keep the entry for /restore rather than dropping it.
         live = [LiveWindow("w3:t1", "other")]
         window_states = {"w2:t1": _ws_sid("ccgram", "S1")}
         thread_bindings: dict = {100: {42: "w2:t1"}}
@@ -194,7 +172,6 @@ class TestResolveStaleIdsBySession:
         assert thread_bindings[100][42] == "w2:t1"
 
     def test_herdr_live_id_unchanged(self) -> None:
-        # Tab id survived the restart (still live) — no remap, no churn.
         live = [LiveWindow("w2:t1", "ccgram")]
         window_states = {"w2:t1": _ws_sid("ccgram", "S1")}
         thread_bindings: dict = {100: {42: "w2:t1"}}
@@ -215,8 +192,6 @@ class TestResolveStaleIdsBySession:
         assert "w2:t1" in window_states
 
     def test_herdr_no_live_session_ids_keeps_state(self) -> None:
-        # No session map available yet (empty map) — nothing to join on, keep
-        # all state. Display-name matching is never used on the herdr path.
         live = [LiveWindow("w3:t1", "ccgram")]
         window_states = {"w2:t1": _ws_sid("ccgram", "S1")}
         thread_bindings: dict = {100: {42: "w2:t1"}}
@@ -238,8 +213,6 @@ class TestResolveStaleIdsBySession:
         assert thread_bindings[100][42] == "w2:t1"
 
     def test_herdr_skips_dead_session_map_entry(self) -> None:
-        # session_map still lists the old tab id (stale, not live) for the same
-        # session — must not re-map onto a dead id.
         live = [LiveWindow("w3:t1", "ccgram")]
         window_states = {"w2:t1": _ws_sid("ccgram", "S1")}
         thread_bindings: dict = {}
@@ -253,7 +226,6 @@ class TestResolveStaleIdsBySession:
             offsets,
             display_names,
             ids_stable=False,
-            # Only a stale w2:t1 entry; w3:t1 has no session yet.
             live_session_ids={"w2:t1": "S1"},
         )
 
@@ -261,9 +233,6 @@ class TestResolveStaleIdsBySession:
         assert "w2:t1" in window_states
 
     def test_herdr_tab_id_restart_remaps_state_binding_and_offset(self) -> None:
-        # After Task 1's tab-identity flip herdr ids are ``wN:tM`` (not ``wN:pM``).
-        # The remap logic treats ids as opaque strings, so the contract is identical —
-        # this test pins the tab-id namespace explicitly.
         live = [LiveWindow("w3:t1", "ccgram")]
         window_states = {"w2:t1": _ws_sid("ccgram", "T1")}
         thread_bindings: dict = {100: {42: "w2:t1"}}
@@ -289,8 +258,6 @@ class TestResolveStaleIdsBySession:
         assert "w2:t1" not in display_names
 
     def test_stable_path_ignores_session_ids(self) -> None:
-        # ids_stable=True must keep using display-name matching even when a
-        # live_session_ids map is supplied (tmux behavior unchanged).
         live = [LiveWindow("@1", "proj")]
         window_states = {"@0": _ws("proj")}
         thread_bindings: dict = {}

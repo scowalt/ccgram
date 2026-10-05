@@ -1,17 +1,3 @@
-"""CLI `ccgram doctor [--fix]` — validate ccgram setup.
-
-Checks environment, dependencies, and configuration without requiring
-a bot token. With --fix, auto-repairs what it can (install hook, kill orphans).
-
-Provider-aware: reads CCGRAM_PROVIDER env to determine which checks apply
-(e.g. hook checks are skipped for providers without hook support).
-No Config import needed — uses utils.ccgram_dir() and subprocess.
-``hook`` helpers (``_claude_settings_file``, ``get_installed_events``,
-``_install_hook``) are imported lazily inside ``_check_hooks`` /
-``_fix_hooks`` so ``ccgram doctor`` startup avoids the hook subprocess
-machinery on providers that have no hooks.
-"""
-
 import asyncio
 import json
 import os
@@ -35,29 +21,17 @@ _SYMBOLS = {_PASS: "\u2713", _FAIL: "\u2717", _WARN: "\u26a0"}
 _TMUX_FORMAT_PARTS = 2
 _MAIN_WINDOW_NAME = "__main__"
 
-# Multiplexer backend selection (mirrors config.multiplexer_name; doctor reads
-# the env directly to keep its "no Config import" startup contract).
 _MULTIPLEXER_ENV = "CCGRAM_MULTIPLEXER"
 _DEFAULT_MULTIPLEXER = "tmux"
 _HERDR_BACKEND = "herdr"
 
 
 def _active_multiplexer_name() -> str:
-    """Return the configured multiplexer backend name (``CCGRAM_MULTIPLEXER``)."""
     return os.environ.get(_MULTIPLEXER_ENV, _DEFAULT_MULTIPLEXER)
 
 
 def _check_multiplexer() -> tuple[str, str]:
-    """Report the configured multiplexer backend without instantiating it.
-
-    ``ccgram doctor`` must be able to report missing bot config; importing the
-    tmux backend instantiates Config and can fail before those checks run. Name
-    validation through the registry keeps doctor lightweight and leaves backend
-    reachability to the tmux/herdr-specific checks below.
-    """
     name = _active_multiplexer_name()
-    # Lazy: import the registry names only when doctor runs, and avoid backend
-    # factories so missing bot config can still be reported by later checks.
     from .multiplexer import multiplexer_names
 
     names = multiplexer_names()
@@ -68,29 +42,21 @@ def _check_multiplexer() -> tuple[str, str]:
 
 
 def _check_herdr() -> tuple[str, str]:
-    """Check the herdr binary and socket reachability.
-
-    Drives the backend's ``ensure_session`` so protocol handling stays in the
-    adapter. Unverified protocol versions warn there but remain best-effort;
-    unreachable sockets and invalid status responses still fail here.
-    """
     if not shutil.which(_HERDR_BACKEND):
         return _FAIL, "herdr not found in PATH"
     socket = os.environ.get("HERDR_SOCKET_PATH", "")
-    # Lazy: defer the registry import (see _check_multiplexer).
     from .multiplexer import get_multiplexer
 
     backend = get_multiplexer(_HERDR_BACKEND)
     try:
         asyncio.run(backend.ensure_session())
-    except Exception as exc:  # noqa: BLE001 — surface any backend failure verbatim
+    except Exception as exc:  # noqa: BLE001
         return _FAIL, f"herdr server unreachable: {exc}"
     where = f" ({socket})" if socket else " (default socket)"
     return _PASS, f"herdr server reachable{where}"
 
 
 def _all_hook_commands(settings: dict) -> list[str]:
-    """Flatten every hook command string in a Claude ``settings.json``."""
     return [
         hook_config.get("command", "")
         for groups in settings.get("hooks", {}).values()
@@ -103,12 +69,6 @@ def _all_hook_commands(settings: dict) -> list[str]:
 
 
 def _check_herdr_hook_coexistence() -> tuple[str, str]:
-    """Verify ccgram and herdr's Claude hooks coexist in ``settings.json``.
-
-    Both ccgram and ``herdr integration install claude`` append hooks to
-    ``~/.claude/settings.json``; this confirms one did not clobber the other.
-    """
-    # Lazy: hook helpers reach back into bot wiring; defer until doctor runs.
     from .hook import _claude_settings_file
 
     settings_file = _claude_settings_file()
@@ -116,7 +76,7 @@ def _check_herdr_hook_coexistence() -> tuple[str, str]:
         return _WARN, f"hook coexistence: {settings_file} missing"
     try:
         settings = json.loads(settings_file.read_text())
-    except (json.JSONDecodeError, OSError):  # fmt: skip
+    except json.JSONDecodeError, OSError:
         return _WARN, "hook coexistence: settings.json unreadable"
     commands = _all_hook_commands(settings)
     has_ccgram = any("ccgram" in c for c in commands)
@@ -133,13 +93,11 @@ def _check_herdr_hook_coexistence() -> tuple[str, str]:
 
 
 def _print_check(status: str, message: str) -> None:
-    """Print a single check result."""
     sym = _SYMBOLS.get(status, "?")
     print(f"  {sym} {message}")
 
 
 def _check_tmux() -> tuple[str, str]:
-    """Check tmux binary and version."""
     path = shutil.which("tmux")
     if not path:
         return _FAIL, "tmux not found in PATH"
@@ -149,13 +107,11 @@ def _check_tmux() -> tuple[str, str]:
         )
         version = result.stdout.strip()
         return _PASS, f"{version} found"
-    except (OSError, subprocess.TimeoutExpired):  # fmt: skip
+    except OSError, subprocess.TimeoutExpired:
         return _PASS, "tmux found (version unknown)"
 
 
 def _check_provider_command(provider_name: str) -> tuple[str, str]:
-    """Check provider CLI command availability."""
-    # Lazy: providers package pulls in PTB; defer until doctor runs
     from ccgram.providers import resolve_launch_command
 
     cmd = resolve_launch_command(provider_name)
@@ -168,7 +124,6 @@ def _check_provider_command(provider_name: str) -> tuple[str, str]:
 
 
 def _check_tmux_session() -> tuple[str, str]:
-    """Check if tmux session exists."""
     session_name = tmux_session_name()
     try:
         result = subprocess.run(
@@ -179,19 +134,13 @@ def _check_tmux_session() -> tuple[str, str]:
         if result.returncode == 0:
             return _PASS, f'tmux session "{session_name}" exists'
         return _FAIL, f'tmux session "{session_name}" not found'
-    except (OSError, subprocess.TimeoutExpired):  # fmt: skip
+    except OSError, subprocess.TimeoutExpired:
         return _FAIL, "cannot connect to tmux server"
 
 
 def _resolve_hook_check_config(
     provider_name: str,
 ) -> tuple[Path, tuple[str, ...], Callable[[str], bool] | None] | None:
-    """Resolve (settings_file, expected_events, predicate) for a provider.
-
-    Returns None for unknown providers. For claude, predicate is None and
-    events is empty — the caller uses get_installed_events directly.
-    """
-    # Lazy: hook helpers reach back into bot wiring; defer until doctor runs
     from .hook import (
         _CODEX_HOOK_EVENTS,
         _GEMINI_HOOK_EVENTS,
@@ -222,7 +171,6 @@ def _resolve_hook_check_config(
 def _scan_json_hook_events(
     settings: dict, events: tuple[str, ...], predicate: Callable[[str], bool]
 ) -> dict[str, bool]:
-    """Detect installed hook events in a JSON-format settings file."""
     return {
         event_type: any(
             isinstance(hook_config, dict) and predicate(hook_config.get("command", ""))
@@ -235,10 +183,6 @@ def _scan_json_hook_events(
 
 
 def _check_hooks(provider_name: str = "claude") -> tuple[str, str, dict[str, bool]]:
-    """Check hook installation for all event types.
-
-    Returns (status, message, event_status_dict).
-    """
     if provider_name == "pi":
         return _PASS, "Pi hooks are managed by hook-runner extension", {}
 
@@ -247,19 +191,16 @@ def _check_hooks(provider_name: str = "claude") -> tuple[str, str, dict[str, boo
         return _FAIL, f"unknown provider for hook check: {provider_name}", {}
     settings_file, events, predicate = resolved
 
-    # {event: False} when settings file missing/unreadable so doctor --fix
-    # has something to install — an empty dict would no-op _fix_hooks.
     all_missing = {event: False for event in events}
 
     if not settings_file.exists():
         return _FAIL, f"hooks not installed ({settings_file} missing)", all_missing
     try:
         settings = json.loads(settings_file.read_text())
-    except (json.JSONDecodeError, OSError):  # fmt: skip
+    except json.JSONDecodeError, OSError:
         return _FAIL, "hooks not installed (settings.json unreadable)", all_missing
 
     if predicate is None:
-        # Lazy: claude uses its own settings.json scanner
         from .hook import get_installed_events
 
         event_status = get_installed_events(settings)
@@ -280,7 +221,6 @@ def _check_hooks(provider_name: str = "claude") -> tuple[str, str, dict[str, boo
 
 
 def _check_config_dir() -> tuple[str, str]:
-    """Check config directory exists."""
     config_dir = ccgram_dir()
     if config_dir.is_dir():
         return _PASS, f"config dir {config_dir} exists"
@@ -288,7 +228,6 @@ def _check_config_dir() -> tuple[str, str]:
 
 
 def _check_bot_token() -> tuple[str, str]:
-    """Check bot token is set (without printing it)."""
     load_ccgram_env()
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     if token:
@@ -297,7 +236,6 @@ def _check_bot_token() -> tuple[str, str]:
 
 
 def _check_allowed_users() -> tuple[str, str]:
-    """Check allowed users configured."""
     users_str = os.environ.get("ALLOWED_USERS", "")
     if not users_str:
         return _FAIL, "ALLOWED_USERS not set"
@@ -309,14 +247,6 @@ def _check_allowed_users() -> tuple[str, str]:
 
 
 def _check_draft_streaming() -> tuple[str, str]:
-    """Report cached state of the Bot API 9.5+ draft-streaming flag.
-
-    The flag flips on the first ``DraftStream.start`` failure (lazy probe);
-    until then ``DraftStream`` opens optimistically and the legacy fallback
-    kicks in transparently on any 400 response. doctor only reads the
-    process-wide flag, so outside a running bot process it always reports
-    "untested" rather than a hard pass.
-    """
     if is_draft_unavailable():
         reason = draft_unavailable_reason() or "Bot API <9.5"
         return _WARN, f"[draft-streaming] degraded — {reason}"
@@ -324,12 +254,10 @@ def _check_draft_streaming() -> tuple[str, str]:
 
 
 def _check_events_file() -> tuple[str, str]:
-    """Check events.jsonl is writable in config dir."""
     config_dir = ccgram_dir()
     events_file = config_dir / "events.jsonl"
     try:
         config_dir.mkdir(parents=True, exist_ok=True)
-        # Test write access
         with open(events_file, "a") as f:
             f.write("")
         return _PASS, f"events file {events_file} writable"
@@ -338,7 +266,6 @@ def _check_events_file() -> tuple[str, str]:
 
 
 def _list_live_windows(session_name: str) -> dict[str, str]:
-    """List live tmux windows, excluding __main__. Returns {window_id: window_name}."""
     try:
         result = subprocess.run(
             [
@@ -355,7 +282,7 @@ def _list_live_windows(session_name: str) -> dict[str, str]:
         )
         if result.returncode != 0:
             return {}
-    except (OSError, subprocess.TimeoutExpired):  # fmt: skip
+    except OSError, subprocess.TimeoutExpired:
         return {}
 
     windows: dict[str, str] = {}
@@ -367,7 +294,6 @@ def _list_live_windows(session_name: str) -> dict[str, str]:
 
 
 def _get_known_window_ids(config_dir: Path, session_name: str) -> set[str]:
-    """Get window IDs known from state.json bindings and session_map.json."""
     known: set[str] = set()
 
     state_file = config_dir / "state.json"
@@ -376,7 +302,7 @@ def _get_known_window_ids(config_dir: Path, session_name: str) -> set[str]:
             state = json.loads(state_file.read_text())
             for bindings in state.get("thread_bindings", {}).values():
                 known.update(bindings.values())
-        except (json.JSONDecodeError, OSError):  # fmt: skip
+        except json.JSONDecodeError, OSError:
             pass
 
     session_map_file = config_dir / "session_map.json"
@@ -387,14 +313,13 @@ def _get_known_window_ids(config_dir: Path, session_name: str) -> set[str]:
             for key in session_map:
                 if key.startswith(prefix):
                     known.add(key[len(prefix) :])
-        except (json.JSONDecodeError, OSError):  # fmt: skip
+        except json.JSONDecodeError, OSError:
             pass
 
     return known
 
 
 def _find_orphaned_windows() -> list[tuple[str, str]]:
-    """Find tmux windows not bound to any topic and not in session_map."""
     session_name = tmux_session_name()
     live_windows = _list_live_windows(session_name)
     if not live_windows:
@@ -405,7 +330,6 @@ def _find_orphaned_windows() -> list[tuple[str, str]]:
 
 
 def _run_check(check_fn: Callable[[], tuple[str, str]]) -> tuple[str, str, bool]:
-    """Run a check function and return (status, message, is_failure)."""
     result = check_fn()
     status, msg = result[0], result[1]
     _print_check(status, msg)
@@ -415,13 +339,11 @@ def _run_check(check_fn: Callable[[], tuple[str, str]]) -> tuple[str, str, bool]
 def _fix_hooks(
     event_status: dict[str, bool], fix: bool, provider_name: str = "claude"
 ) -> None:
-    """Attempt to install missing hooks if --fix is set."""
     if not fix:
         return
     missing = [e for e, v in event_status.items() if not v]
     if not missing:
         return
-    # Lazy: hook helpers reach back into bot wiring; defer until doctor runs
     from .hook import _install_hook
 
     result = _install_hook(provider_name)
@@ -432,7 +354,6 @@ def _fix_hooks(
 
 
 def _fix_orphans(orphans: list[tuple[str, str]], fix: bool) -> None:
-    """Kill orphaned windows if --fix is set."""
     if not fix:
         return
     session_name = tmux_session_name()
@@ -444,14 +365,11 @@ def _fix_orphans(orphans: list[tuple[str, str]], fix: bool) -> None:
                 timeout=5,
             )
             _print_check(_PASS, f"killed orphaned window {wid} ({wname})")
-        except (OSError, subprocess.TimeoutExpired):  # fmt: skip
+        except OSError, subprocess.TimeoutExpired:
             _print_check(_FAIL, f"failed to kill window {wid}")
 
 
 def doctor_main(fix: bool = False) -> None:
-    """Entry point for `ccgram doctor [--fix]`."""
-    # Honor CCGRAM_* (e.g. CCGRAM_MULTIPLEXER) set only in ~/.ccgram/.env,
-    # like the bot does via Config — must run before _active_multiplexer_name().
     load_ccgram_env()
 
     caps = resolve_capabilities()
@@ -461,14 +379,12 @@ def doctor_main(fix: bool = False) -> None:
 
     mux_name = _active_multiplexer_name()
 
-    # Multiplexer backend (reports the active backend; validates it resolves)
     _, _, failed = _run_check(_check_multiplexer)
     has_failures = has_failures or failed
 
     _, _, failed = _run_check(lambda: _check_provider_command(caps.name))
     has_failures = has_failures or failed
 
-    # Backend-specific terminal/session health
     if mux_name == _HERDR_BACKEND:
         _, _, failed = _run_check(_check_herdr)
         has_failures = has_failures or failed
@@ -480,7 +396,6 @@ def doctor_main(fix: bool = False) -> None:
         _, _, failed = _run_check(_check_tmux_session)
         has_failures = has_failures or failed
 
-    # Hook checks — only relevant for providers with hook support
     if caps.supports_hook:
         hook_status, hook_msg, event_status = _check_hooks(caps.name)
         _print_check(hook_status, hook_msg)
@@ -494,14 +409,11 @@ def doctor_main(fix: bool = False) -> None:
         _, _, failed = _run_check(check_fn)
         has_failures = has_failures or failed
 
-    # Events file check
     _, _, failed = _run_check(_check_events_file)
     has_failures = has_failures or failed
 
-    # Bot API draft-streaming availability (Bot API 9.5+)
     _run_check(_check_draft_streaming)
 
-    # Orphaned windows — tmux-only (herdr panes are not tmux windows)
     if mux_name != _HERDR_BACKEND:
         orphans = _find_orphaned_windows()
         if orphans:

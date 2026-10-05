@@ -1,14 +1,3 @@
-"""Tests for Task 9: workspace picker step in the /new flow.
-
-Covers:
-- herdr backend (native_agent_status=True): workspace picker shown when workspaces exist
-- herdr backend: fall-through to provider picker when list_workspaces returns []
-- CB_WS_SELECT stores chosen workspace_id via index into cached list
-- CB_WS_SKIP clears pending workspace id and goes to provider picker
-- workspace_id threaded to create_window
-- tmux backend (native_agent_status=False): no picker shown (regression)
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -27,9 +16,6 @@ from ccgram.handlers.user_state import (
 )
 from ccgram.multiplexer.base import MultiplexerCapabilities, WorkspaceRef
 from ccgram.handlers.topics.directory_browser import BROWSE_PATH_KEY
-
-
-# ── Fixtures & helpers ─────────────────────────────────────────────────
 
 
 def _capabilities(native_agent_status: bool) -> MultiplexerCapabilities:
@@ -64,7 +50,7 @@ def _make_context(user_data: dict | None = None) -> MagicMock:
 
 def _make_update(thread_id: int = 42) -> MagicMock:
     update = MagicMock()
-    update.message = None  # force get_thread_id to use callback_query path
+    update.message = None
     update.callback_query = MagicMock()
     update.callback_query.message = MagicMock()
     update.callback_query.message.message_thread_id = thread_id
@@ -77,9 +63,6 @@ _WORKSPACES = [
 ]
 
 
-# ── _show_workspace_picker_or_provider ────────────────────────────────
-
-
 class TestShowWorkspacePickerOrProvider:
     @patch(
         "ccgram.handlers.topics.workspace_callbacks.safe_edit", new_callable=AsyncMock
@@ -88,7 +71,6 @@ class TestShowWorkspacePickerOrProvider:
     async def test_herdr_with_workspaces_shows_picker(
         self, mock_mux: MagicMock, mock_edit: AsyncMock, tmp_path: Path
     ) -> None:
-        """On herdr with workspaces, workspace picker is shown."""
         mock_mux.capabilities = _capabilities(native_agent_status=True)
         mock_mux.list_workspaces = AsyncMock(return_value=_WORKSPACES)
 
@@ -110,7 +92,6 @@ class TestShowWorkspacePickerOrProvider:
     async def test_herdr_empty_workspaces_shows_provider_picker(
         self, mock_mux: MagicMock, mock_edit: AsyncMock, tmp_path: Path
     ) -> None:
-        """On herdr with no workspaces, fall through to provider picker."""
         mock_mux.capabilities = _capabilities(native_agent_status=True)
         mock_mux.list_workspaces = AsyncMock(return_value=[])
 
@@ -133,7 +114,6 @@ class TestShowWorkspacePickerOrProvider:
     async def test_tmux_skips_workspace_picker(
         self, mock_mux: MagicMock, mock_edit: AsyncMock, tmp_path: Path
     ) -> None:
-        """On tmux (native_agent_status=False), workspace picker is never shown."""
         mock_mux.capabilities = _capabilities(native_agent_status=False)
 
         context = _make_context()
@@ -141,11 +121,7 @@ class TestShowWorkspacePickerOrProvider:
 
         text = mock_edit.call_args[0][1]
         assert "Select Provider" in text
-        # list_workspaces must not be called on tmux path
         mock_mux.list_workspaces.assert_not_called()
-
-
-# ── _handle_workspace_callback ────────────────────────────────────────
 
 
 class TestHandleWorkspaceCallback:
@@ -155,7 +131,6 @@ class TestHandleWorkspaceCallback:
     async def test_select_stores_workspace_id_and_shows_provider(
         self, mock_edit: AsyncMock, tmp_path: Path
     ) -> None:
-        """CB_WS_SELECT<idx> stores workspace_id and shows provider picker."""
         ws_triples = [
             ("ws1", "my-project", "/home/user/project"),
             ("ws2", "other", "/home/user/other"),
@@ -181,7 +156,6 @@ class TestHandleWorkspaceCallback:
     async def test_skip_clears_workspace_id_and_shows_provider(
         self, mock_edit: AsyncMock, tmp_path: Path
     ) -> None:
-        """CB_WS_SKIP clears any stale workspace id and shows provider picker."""
         user_data = {
             PENDING_THREAD_ID: 42,
             BROWSE_PATH_KEY: str(tmp_path),
@@ -200,7 +174,6 @@ class TestHandleWorkspaceCallback:
         assert "Select Provider" in text
 
     async def test_stale_flow_reset_fails_closed(self, tmp_path: Path) -> None:
-        """No PENDING_THREAD_ID → stale guard, alert shown, no edit."""
         query = _make_query()
         context = _make_context({BROWSE_PATH_KEY: str(tmp_path)})
 
@@ -211,7 +184,6 @@ class TestHandleWorkspaceCallback:
         assert call_kwargs.get("show_alert") is True
 
     async def test_topic_mismatch_fails_closed(self, tmp_path: Path) -> None:
-        """Thread mismatch → stale guard, alert shown."""
         query = _make_query()
         user_data = {PENDING_THREAD_ID: 99, BROWSE_PATH_KEY: str(tmp_path)}
         context = _make_context(user_data)
@@ -220,7 +192,7 @@ class TestHandleWorkspaceCallback:
             query,
             CB_WS_SKIP,
             _make_update(42),
-            context,  # thread 42 ≠ pending 99
+            context,
         )
 
         query.answer.assert_awaited_once()
@@ -232,7 +204,6 @@ class TestHandleWorkspaceCallback:
     async def test_out_of_range_index_shows_error(
         self, mock_edit: AsyncMock, tmp_path: Path
     ) -> None:
-        """Out-of-range index shows error, does not crash."""
         user_data = {
             PENDING_THREAD_ID: 42,
             BROWSE_PATH_KEY: str(tmp_path),
@@ -246,9 +217,6 @@ class TestHandleWorkspaceCallback:
 
         text = mock_edit.call_args[0][1]
         assert "❌" in text
-
-
-# ── workspace_id threaded to create_window ────────────────────────────
 
 
 class TestWorkspaceIdThreaded:
@@ -272,7 +240,6 @@ class TestWorkspaceIdThreaded:
         mock_edit: AsyncMock,
         tmp_path: Path,
     ) -> None:
-        """PENDING_WORKSPACE_ID is forwarded as workspace_id= to create_window."""
         from ccgram.handlers.topics.directory_callbacks import _create_window_and_bind
 
         mock_mux.create_window = AsyncMock(return_value=(True, "ok", "my-tab", "w1:t1"))
@@ -286,7 +253,6 @@ class TestWorkspaceIdThreaded:
         mock_sm.set_window_approval_mode = MagicMock()
         mock_sms.wait_for_session_map_entry = AsyncMock()
 
-        # Patch provider resolution + capabilities
         with (
             patch("ccgram.providers.resolve_launch_command", return_value="claude"),
             patch(
@@ -344,7 +310,6 @@ class TestWorkspaceIdThreaded:
         mock_edit: AsyncMock,
         tmp_path: Path,
     ) -> None:
-        """When no workspace was chosen, workspace_id=None is passed (auto-resolve)."""
         from ccgram.handlers.topics.directory_callbacks import _create_window_and_bind
 
         mock_mux.create_window = AsyncMock(return_value=(True, "ok", "my-tab", "w1:t1"))
@@ -370,7 +335,6 @@ class TestWorkspaceIdThreaded:
             mock_caps.supports_hook = False
             mock_reg.get.return_value.capabilities = mock_caps
 
-            # No PENDING_WORKSPACE_ID in user_data
             user_data = {PENDING_THREAD_ID: 42}
             query = _make_query()
             context = _make_context(user_data)

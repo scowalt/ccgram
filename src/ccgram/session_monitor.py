@@ -1,21 +1,3 @@
-"""Session monitoring service — thin coordinator and poll loop.
-
-Orchestrates the session-monitoring subsystem:
-  1. Reads hook events via event_reader and dispatches them.
-  2. Reconciles session_map changes via SessionLifecycle.
-  3. Reads transcript updates via TranscriptReader.
-  4. Emits NewMessage / NewWindowEvent to registered callbacks.
-
-All heavy logic lives in the extracted modules:
-  - event_reader.py   — reads events.jsonl incrementally
-  - idle_tracker.py   — per-session idle timers
-  - session_lifecycle.py — session-map diff, claude_task_state authority
-  - transcript_reader.py — transcript I/O and parsing
-
-Key classes: SessionMonitor, NewMessage, NewWindowEvent, SessionInfo.
-Re-exported from transcript_reader for backward-compatible imports.
-"""
-
 import asyncio
 import time
 import structlog
@@ -29,7 +11,7 @@ from .config import config
 from .event_reader import read_new_events
 from .idle_tracker import IdleTracker
 from .monitor_state import MonitorState
-from .providers import get_provider_for_window, registry  # noqa: F401 (used by test patches)
+from .providers import get_provider_for_window, registry  # noqa: F401
 from .session_map import parse_session_map, read_session_map_raw, session_map_prefix
 from .session_lifecycle import session_lifecycle
 from .multiplexer import multiplexer as tmux_manager
@@ -41,7 +23,6 @@ from .utils import atomic_write_json, log_throttled, task_done_callback
 
 import json
 
-# Re-export for backward-compatible imports from other modules
 __all__ = [
     "NewMessage",
     "NewWindowEvent",
@@ -87,13 +68,6 @@ def _discovery_claims(
 
 
 class SessionMonitor:
-    """Monitors Claude Code sessions for new assistant messages.
-
-    Thin coordinator: delegates I/O to TranscriptReader, event reading to
-    event_reader, session-map diffing to SessionLifecycle, and idle tracking
-    to IdleTracker.
-    """
-
     def __init__(
         self,
         projects_path: Path | None = None,
@@ -116,9 +90,6 @@ class SessionMonitor:
         self._new_window_callback: (
             Callable[[NewWindowEvent], Awaitable[None]] | None
         ) = None
-        # Lazy: providers.base imports HookEvent and gets imported back
-        # through tmux_manager → providers; keep at call site.
-        # Lazy: HookEvent pulled by hook dispatch path; defer until that path runs
         from .providers.base import HookEvent
 
         self._hook_event_callback: Callable[[HookEvent], Awaitable[None]] | None = None
@@ -127,7 +98,6 @@ class SessionMonitor:
         self._transcript_reader = TranscriptReader(self.state, self._idle_tracker)
         self._emitted_new_window_ids: set[str] = set()
 
-    # Delegation properties for backward-compatible test access
     @property
     def _last_session_map(self) -> dict:
         return session_lifecycle.last_session_map
@@ -149,7 +119,6 @@ class SessionMonitor:
         return self._transcript_reader._pending_tools
 
     def get_last_activity(self, session_id: str) -> float | None:
-        """Get monotonic timestamp of last transcript activity for a session."""
         return self._idle_tracker.get_last_activity(session_id)
 
     def set_message_callback(
@@ -166,7 +135,6 @@ class SessionMonitor:
         self._hook_event_callback = callback
 
     def record_hook_activity(self, window_id: str) -> None:
-        """Record hook-based activity for a window (resets idle timers)."""
         session_id = session_lifecycle.resolve_session_id(window_id)
         if session_id:
             self._idle_tracker.record_activity(session_id)
@@ -183,15 +151,6 @@ class SessionMonitor:
     def _adopt_newer_discovered_transcripts(
         self, raw_session_map: dict[str, Any] | None
     ) -> tuple[dict[str, Any] | None, bool]:
-        """Replace stale hook-backed transcript entries with newer discovered files.
-
-        Hook-backed providers normally keep ``session_map.json`` current. When a
-        hook runner is missing or crashes, a tmux pane can continue in a new
-        provider session while ccgram reads an old, still-existing transcript.
-        If the recorded transcript is no longer active and the provider can
-        discover a newer transcript for the same cwd, adopt it as the current
-        session so message polling resumes.
-        """
         if not raw_session_map:
             return raw_session_map, False
 
@@ -306,12 +265,6 @@ class SessionMonitor:
         return raw_session_map, changed
 
     async def check_for_updates(self, current_map: dict) -> list[NewMessage]:
-        """Check all sessions for new assistant messages.
-
-        Routes sessions to _process_session_file (allowing test spying) and
-        delegates the actual I/O to TranscriptReader. Uses _get_active_cwds()
-        for fallback session discovery so tests can stub tmux calls.
-        """
         new_messages: list[NewMessage] = []
         sid_to_wid = {v["session_id"]: wid for wid, v in current_map.items()}
 
@@ -363,31 +316,26 @@ class SessionMonitor:
     async def _process_session_file(
         self, session_id: str, file_path: Path, new_messages: list, window_id: str = ""
     ) -> None:
-        """Process a single session file (delegates to TranscriptReader)."""
         await self._transcript_reader._process_session_file(
             session_id, file_path, new_messages, window_id=window_id
         )
 
     def _scan_projects_sync(self, active_cwds: set) -> list:
-        """Scan projects synchronously (delegates to TranscriptReader)."""
         return self._transcript_reader._scan_projects_sync(
             self.projects_path, active_cwds
         )
 
     async def _get_active_cwds(self) -> set[str]:
-        """Get normalized cwds of all active tmux windows (delegates to TranscriptReader)."""
         return await self._transcript_reader._get_active_cwds()
 
     async def _read_new_lines(
         self, session: Any, file_path: Path, window_id: str = ""
     ) -> list:
-        """Read new lines from session file (delegates to TranscriptReader)."""
         return await self._transcript_reader._read_new_lines(
             session, file_path, window_id
         )
 
     async def _read_hook_events(self) -> None:
-        """Read new lines from events.jsonl, dispatch callbacks, and reconcile map."""
         if not self._hook_event_callback:
             return
 
@@ -417,7 +365,6 @@ class SessionMonitor:
     async def _reconcile_session_map(
         self, session_starts: dict[str, dict[str, str]]
     ) -> None:
-        """Fix session_map entries when a stale SessionStart overwrote a live one."""
         raw = await read_session_map_raw()
         if not raw:
             return
@@ -430,19 +377,15 @@ class SessionMonitor:
             ) == start_data.get("session_id"):
                 continue
 
-            # Check if the existing transcript is still actively written to
-            # (mtime within 30s). A stale transcript that merely exists on
-            # disk should not block reconciliation — the new session's
-            # transcript may have been created after the hook fired.
             existing_tp = existing.get("transcript_path", "")
             new_tp = start_data.get("transcript_path", "")
             if existing_tp:
                 try:
                     existing_mtime = Path(existing_tp).stat().st_mtime
                     if time.time() - existing_mtime < _TRANSCRIPT_ACTIVE_SECS:
-                        continue  # existing transcript still active
+                        continue
                 except OSError:
-                    pass  # existing transcript gone
+                    pass
             if not new_tp or not Path(new_tp).exists():
                 continue
 
@@ -452,7 +395,6 @@ class SessionMonitor:
                 existing.get("session_id", "?")[:8],
                 start_data.get("session_id", "?")[:8],
             )
-            # Lazy: hook state serialization imports shared hook models.
             from .hooks.state_files import serialize_session_map_entry
 
             raw[window_key] = serialize_session_map_entry(
@@ -466,7 +408,6 @@ class SessionMonitor:
             changed = True
 
         if changed:
-            # Lazy: utils imports app-wide helpers; only needed for rare reconciliation.
             from .utils import atomic_write_json
 
             atomic_write_json(config.session_map_file, raw)
@@ -474,11 +415,6 @@ class SessionMonitor:
     async def _load_current_session_map(
         self, raw: dict | None = None
     ) -> dict[str, dict[str, str]]:
-        """Load current session_map and return window_key -> details mapping.
-
-        If ``raw`` is provided (already read by the caller), parse it directly
-        to avoid a redundant file read.  Otherwise read session_map.json.
-        """
         if raw is None:
             raw = await read_session_map_raw()
         if not raw:
@@ -487,7 +423,6 @@ class SessionMonitor:
         return parse_session_map(raw, prefix)
 
     async def _cleanup_all_stale_sessions(self) -> None:
-        """Clean up all tracked sessions not in current session_map (startup)."""
         current_map = await self._load_current_session_map()
         active_session_ids = {v["session_id"] for v in current_map.values()}
 
@@ -506,12 +441,9 @@ class SessionMonitor:
     async def _detect_and_cleanup_changes(
         self, raw: dict | None = None
     ) -> dict[str, dict[str, str]]:
-        """Reconcile session_map; clean up replaced/removed sessions; fire new-window events."""
         raw, adopted_discovery = self._adopt_newer_discovered_transcripts(raw)
         if adopted_discovery:
             try:
-                # Lazy: session_map_sync is wired by SessionManager, while
-                # session_monitor can be imported before startup completes.
                 from .session_map import session_map_sync
 
                 await session_map_sync.load_session_map(raw)
@@ -533,9 +465,6 @@ class SessionMonitor:
 
         adoption_windows = dict(result.new_windows)
         if result.changed_windows and self._new_window_callback:
-            # Lazy: thread_router is wired into session_manager which imports
-            # session_monitor; hoisting forms a startup cycle.
-            # Lazy: proxies wired by SessionManager constructor
             from .thread_router import thread_router
 
             for window_id, details in result.changed_windows.items():
@@ -543,8 +472,6 @@ class SessionMonitor:
                     adoption_windows[window_id] = details
 
         if adoption_windows:
-            # Lazy: session.py imports session_monitor at top; hoisting
-            # session_manager forms a hard cycle on bootstrap.
             from .session import session_manager as _sm
 
             for window_id, details in adoption_windows.items():
@@ -572,18 +499,8 @@ class SessionMonitor:
     async def _emit_unbound_window_events(
         self, all_windows: list, known_window_ids: set[str]
     ) -> None:
-        """Fire a NewWindowEvent for each live window not in session_map / bound.
-
-        Surfaces windows the hook never registered (no session_map entry) so
-        they can become topics. On backends that expose agent status natively
-        (herdr), only agent panes qualify — a bare shell pane is not a topic;
-        tmux surfaces every window, preserving today's behavior. The gate is the
-        ``native_agent_status`` capability, not a backend name.
-        """
         if not self._new_window_callback:
             return
-        # Lazy: thread_router is wired into session_manager which imports
-        # session_monitor; hoisting forms a startup cycle.
         from .thread_router import thread_router
 
         caps = tmux_manager.capabilities
@@ -611,9 +528,6 @@ class SessionMonitor:
                     window.window_id,
                 )
             else:
-                # Only suppress future attempts after a durable binding exists.
-                # Topic creation can fail transiently without raising through the
-                # callback; retry those instead of losing adoption until restart.
                 if thread_router.has_window(window.window_id):
                     self._emitted_new_window_ids.add(window.window_id)
 
@@ -623,32 +537,17 @@ class SessionMonitor:
         live_window_ids: set[str],
         live_windows_by_id: dict[str, Any] | None = None,
     ) -> None:
-        """Fire a NewWindowEvent for each session_map window that is not bound.
-
-        Steady-state self-heal: a tab that was in session_map at startup (known,
-        so never a delta) but not yet bound to a Telegram topic retries on every
-        poll until it succeeds. ``handle_new_window`` is idempotent — it skips
-        windows that are already bound — so this generates no spam for bound tabs.
-
-        ``live_window_ids`` is the set from ``list_windows``. Because ``list_windows``
-        already filters ``__*__`` workspace/tab labels, any such tab is absent from
-        ``live_window_ids`` and is silently skipped here as well. When live window
-        refs are available, their current label/cwd wins over stale session_map
-        values so workspace/tab renames are reflected during adoption.
-        """
         if not self._new_window_callback:
             return
-        # Lazy: thread_router is wired into session_manager which imports
-        # session_monitor; hoisting forms a startup cycle.
         from .thread_router import thread_router
 
         bound_window_ids = {wid for _, _, wid in thread_router.iter_thread_bindings()}
         caps = tmux_manager.capabilities
         for window_id, details in current_map.items():
             if window_id not in live_window_ids:
-                continue  # dead / __*__-filtered — skip
+                continue
             if window_id in bound_window_ids:
-                continue  # already has a topic
+                continue
             live_window = (live_windows_by_id or {}).get(window_id)
             if live_window is not None and not is_agent_topic_window(live_window, caps):
                 continue
@@ -675,12 +574,8 @@ class SessionMonitor:
                 )
 
     async def _monitor_loop(self) -> None:
-        """Background poll loop."""
         logger.info("Session monitor started, polling every %ss", self.poll_interval)
 
-        # Lazy: session_map imports session_monitor types via shared
-        # state cycle; keep at call site.
-        # Lazy: proxies wired by SessionManager constructor
         from .session_map import session_map_sync
 
         await self._cleanup_all_stale_sessions()
@@ -789,8 +684,6 @@ class SessionMonitor:
             self._task.cancel()
             self._task = None
         self.state.save()
-        # Distinct from the loop's "Session monitor stopped" (logged when the
-        # poll loop actually exits) — this marks the stop request + state save.
         logger.info("Session monitor stop requested; state saved")
 
 
@@ -798,17 +691,14 @@ _active_monitor: SessionMonitor | None = None
 
 
 def set_active_monitor(monitor: SessionMonitor) -> None:
-    """Set the active SessionMonitor instance (called by bot.py post_init)."""
     global _active_monitor  # noqa: PLW0603
     _active_monitor = monitor
 
 
 def clear_active_monitor() -> None:
-    """Clear the active SessionMonitor singleton (shutdown / test reset)."""
     global _active_monitor  # noqa: PLW0603
     _active_monitor = None
 
 
 def get_active_monitor() -> SessionMonitor | None:
-    """Return the active SessionMonitor instance."""
     return _active_monitor
