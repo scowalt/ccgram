@@ -726,10 +726,10 @@ class TestSyncFixDeadTopic:
             AuditResult(issues=[], total_bindings=1, live_binding_count=1),
         ]
         mock_tr.iter_thread_bindings.side_effect = [
-            [(100, 42, "@2")],  # pre-audit probe
-            [],  # prune_stale_offsets
-            [],  # live topic-name reconciliation
-            [],  # post-fix probe (already unbound)
+            [(100, 42, "@2")],
+            [],
+            [],
+            [],
         ]
         mock_tr.resolve_chat_id.return_value = -999
         mock_tr.get_display_name.return_value = "qmd-go"
@@ -741,7 +741,7 @@ class TestSyncFixDeadTopic:
         query = MagicMock()
         mock_bot = AsyncMock()
         mock_bot.send_message.side_effect = [
-            BadRequest("Message thread not found"),  # pre-audit
+            BadRequest("Message thread not found"),
         ]
         query.get_bot.return_value = mock_bot
 

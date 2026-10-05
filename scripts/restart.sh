@@ -45,9 +45,6 @@ runloop() {
 	}
 
 	acquire_lock
-	# Signals: let the child (Python) handle INT/QUIT and exit with the right
-	# code (130/131).  The no-op traps (':') keep bash's while-loop running
-	# without propagating SIG_IGN to the child (unlike `trap '' SIG`).
 	trap ':' INT QUIT
 	unset VIRTUAL_ENV
 	ulimit -c 0

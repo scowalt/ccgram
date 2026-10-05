@@ -1,5 +1,3 @@
-"""Tests for the pure decide_tick function in window_tick."""
-
 import time
 
 from ccgram.handlers.polling.polling_types import TickContext, TickDecision

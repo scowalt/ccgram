@@ -1,12 +1,3 @@
-"""Side-effecting transition functions for window_tick.
-
-All Telegram, tmux, and singleton mutations live here. Functions accept
-the inputs gathered by ``observe`` and the decision returned by
-``decide``, and apply the resulting effects: emoji updates, status
-enqueuing, typing indicators, autoclose timers, dead-window
-notifications, multi-pane scans, passive shell relay.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -74,27 +65,14 @@ def _get_provider(window_id: str) -> "AgentProvider":
     )
 
 
-# ── Typing throttle ─────────────────────────────────────────────────────
-
-
 async def _send_typing_throttled(
     _bot: "Bot",
     _user_id: int,
     _thread_id: int | None,
     runtime: "PollingRuntime | None" = None,
 ) -> None:
-    """No-op — typing indicators are disabled to preserve rate limit budget.
-
-    Each send_chat_action call goes through PTB's AIORateLimiter group limiter
-    (20/min per group). With N active topics polling every 4s, typing alone
-    consumes N×15 calls/min, starving actual content messages. The topic emoji
-    (green circle = active) already conveys the same "agent is working" signal.
-    """
     _ = runtime
     return
-
-
-# ── Idle / no-status transitions ────────────────────────────────────────
 
 
 async def _transition_to_idle(
@@ -118,9 +96,6 @@ async def _transition_to_idle(
     )
 
 
-# ── Multi-pane scanning (agent teams) ─────────────────────────────────
-
-
 async def _surface_pane_alert(
     bot: "Bot", user_id: int, window_id: str, thread_id: int, pane_id: str
 ) -> None:
@@ -140,12 +115,6 @@ async def _forward_pane_output(
     pane_id: str,
     pane_text: str,
 ) -> None:
-    """Forward a subscribed pane's freshly-captured text to its bound topic.
-
-    Uses the screen buffer to strip ANSI, keeps the tail of the capture so
-    the user sees the most-recent output, and labels the message with the
-    pane's friendly name when one is set.
-    """
 
     pane = get_pane_projection(window_id, pane_id)
     if pane is None or not pane.subscribed:
@@ -180,7 +149,6 @@ async def _scan_window_panes(
     thread_id: int,
     runtime: "PollingRuntime | None" = None,
 ) -> None:
-    """Delegate multi-pane scanning to ``PaneStatusStrategy``."""
     pss = runtime.pane_status if runtime is not None else pane_status_strategy
     transitions = await pss.scan_window(
         bot,
@@ -201,7 +169,6 @@ async def _notify_pane_lifecycle(
     thread_id: int,
     transitions: list[PaneTransition],
 ) -> None:
-    """Emit one-line "pane created"/"pane closed" notifications when enabled."""
     enabled = get_pane_lifecycle_notify(window_id, config.pane_lifecycle_notify)
     if not enabled:
         return
@@ -228,9 +195,6 @@ async def _notify_pane_lifecycle(
                 pane_id=t.pane_id,
                 error=str(exc),
             )
-
-
-# ── Interactive-only check ───────────────────────────────────────────────
 
 
 async def _check_interactive_only(
@@ -264,9 +228,6 @@ async def _check_interactive_only(
             clear_interactive_mode(user_id, thread_id)
 
 
-# ── Passive shell relay ──────────────────────────────────────────────────
-
-
 async def _maybe_check_passive_shell(
     bot: "Bot",
     user_id: int,
@@ -284,18 +245,11 @@ async def _maybe_check_passive_shell(
         if not raw:
             return
         rendered = raw
-    # Lazy: shell_capture is registered via callback_registry; importing
-    # at top forms apply → shell_capture → polling cycle through the
-    # shell prompt approval keyboard.
-    # Lazy: shell.shell_capture imports apply indirectly through the broker
     from ...shell.shell_capture import check_passive_shell_output
 
     await check_passive_shell_output(
         PTBTelegramClient(bot), user_id, thread_id, window_id, rendered
     )
-
-
-# ── Dead window notification ─────────────────────────────────────────────
 
 
 async def _handle_dead_window_notification(
@@ -309,12 +263,7 @@ async def _handle_dead_window_notification(
     ps = runtime.poll_state if runtime is not None else terminal_poll_state
     if lc.is_dead_notified(user_id, thread_id, wid):
         return
-    # Mark notified before the first await: the push (event-stream) and poll
-    # paths both call this for the same window and could otherwise both pass the
-    # guard above before either marks, sending two banners + two autoclose timers.
     lc.mark_dead_notified(user_id, thread_id, wid)
-    # Evict any push-cached status so a dead/replaced window (herdr reuses tab
-    # ids across restart) can't serve a stale "working" to the status poll.
     agent_status_cache.clear(wid)
     ps.clear_seen_status(wid)
 
@@ -381,9 +330,6 @@ async def _handle_dead_window_notification(
                 )
         except TelegramError:
             pass
-
-
-# ── Decision-application transitions ───────────────────────────────────
 
 
 async def _apply_active_transition(
@@ -478,7 +424,6 @@ async def _apply_tick_decision(
     decision: TickDecision,
     runtime: "PollingRuntime | None" = None,
 ) -> None:
-    """Apply the effects dictated by a ``TickDecision``. All I/O lives here."""
     if decision.show_recovery or decision.transition is None:
         return
 
@@ -504,9 +449,6 @@ async def _apply_tick_decision(
         await _apply_starting_transition(
             bot, user_id, window_id, thread_id, runtime=runtime
         )
-
-
-# ── Status-update orchestration ─────────────────────────────────────────
 
 
 async def _update_status(

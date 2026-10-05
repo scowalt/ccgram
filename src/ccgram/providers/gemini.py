@@ -1,23 +1,3 @@
-"""Gemini CLI provider — Google's terminal agent behind AgentProvider protocol.
-
-Gemini CLI uses directory-scoped sessions with automatic persistence. Resume
-uses ``--resume <index|latest>`` flag syntax (index number or "latest", not
-a session UUID). No SessionStart hook — session detection requires external
-wrapping.
-
-Terminal UI: Gemini CLI uses ``@inquirer/select`` for interactive prompts.
-Permission prompts start with "Action Required" and list numbered options
-with a ``●`` (U+25CF) marker on the selected choice.
-
-Transcript format: incremental JSONL files per session with structure:
-  - Header: ``{"sessionId", "projectHash", "startTime", ...}``
-  - Entries: ``{"id", "timestamp", "type", "content": [...]}``
-  - Updates: ``{"$set": {"lastUpdated": "..."}}``
-
-Messages use ``type`` field with values ``"user"`` / ``"gemini"`` and can
-store content as either a string or a list of ``{text: ...}`` fragments.
-"""
-
 import hashlib
 import json
 import os
@@ -43,7 +23,6 @@ from ccgram.providers.base import (
 from ccgram.terminal_parser import UIPattern, extract_interactive_content
 from ccgram.utils import atomic_write_json, ccgram_dir
 
-# Gemini CLI known slash commands
 _GEMINI_BUILTINS: dict[str, str] = {
     "/about": "Show version info",
     "/agents": "Manage agent configurations",
@@ -72,9 +51,7 @@ _GEMINI_BUILTINS: dict[str, str] = {
     "/policies": "List active policies",
     "/privacy": "Display privacy notice",
     "/quit": "Exit Gemini CLI",
-    # /resume excluded — collides with bot-native /resume (ccgram session picker)
     "/rewind": "Restart from an earlier message",
-    # /restore excluded — collides with bot-native /restore (dead-topic recovery)
     "/settings": "View and edit Gemini settings",
     "/setup-github": "Set up GitHub Actions",
     "/shells": "Toggle background shells",
@@ -87,94 +64,46 @@ _GEMINI_BUILTINS: dict[str, str] = {
     "/vim": "Toggle Vim input mode",
 }
 
-# Gemini role → our MessageRole mapping
 _GEMINI_ROLE_MAP: dict[str, MessageRole] = {
     "user": "user",
     "gemini": "assistant",
-    # Gemini emits informational/error messages as separate record types.
     "info": "assistant",
     "error": "assistant",
 }
 
-# ── Gemini CLI UI patterns ──────────────────────────────────────────────
-#
-# Gemini uses @inquirer/select for permission prompts.  The structure is:
-#
-#   Action Required
-#   ? Shell <command> [current working directory <path>] (<description>…
-#   <command>
-#   Allow execution of: '<tools>'?
-#   ● 1. Allow once
-#     2. Allow for this session
-#     3. Allow for all future sessions
-#     4. No, suggest changes (esc
-#
-# For file writes: "? WriteFile <path>" instead of "? Shell <command>".
-# The ● (U+25CF) marks the selected option; (esc is always on the last line.
-#
-# We match on structural markers rather than exact wording for resilience
-# against prompt text changes.
 _GEMINI_BOX_PREFIX = r"[\s│┃║|]*"
 
 GEMINI_UI_PATTERNS: list[UIPattern] = [
     UIPattern(
         name="SelectionUI",
-        top=(
-            # e.g. "Select Model"
-            re.compile(rf"^{_GEMINI_BOX_PREFIX}Select\b"),
-        ),
+        top=(re.compile(rf"^{_GEMINI_BOX_PREFIX}Select\b"),),
         bottom=(
-            # Gemini modal close hint
             re.compile(rf"^{_GEMINI_BOX_PREFIX}\(Press Esc to (close|cancel)\)"),
-            # Some selectors show Enter/Tab hints instead of close text.
             re.compile(rf"^{_GEMINI_BOX_PREFIX}\(Press Enter to (confirm|select)\)"),
         ),
         min_gap=1,
     ),
     UIPattern(
         name="PermissionPrompt",
-        top=(
-            # "Action Required" header (bold in terminal, plain in capture)
-            re.compile(rf"^{_GEMINI_BOX_PREFIX}Action Required"),
-        ),
+        top=(re.compile(rf"^{_GEMINI_BOX_PREFIX}Action Required"),),
         bottom=(
-            # Last option always ends with "(esc" (possibly truncated by pane width)
             re.compile(r"(?i)\(esc"),
-            # Fallback: a numbered "No" option (the cancel choice)
             re.compile(rf"^{_GEMINI_BOX_PREFIX}\d+\.\s+No\b"),
         ),
     ),
 ]
 
 
-# ── Boxed-prompt extraction (Gemini CLI ≥ 0.42) ─────────────────────────
-#
-# Modern Gemini wraps every interactive prompt in a rounded box:
-#
-#   ╭──────────────────────────────────────────────╮
-#   │ Allow execution of: 'whoami'?                 │
-#   │ ● 1. Allow once                               │
-#   │   2. Allow for this session                   │
-#   │   4. No, suggest changes (esc                 │
-#   ╰──────────────────────────────────────────────╯
-#
-# There is no bare "Action Required"/"Select" line in-pane — that text now
-# lives only in the OSC pane title. The regex UIPattern anchors therefore
-# never match real ≥0.42 output, so the question is extracted directly from
-# the box instead.  Older non-boxed renderings still go through
-# GEMINI_UI_PATTERNS below.
 _BOX_OPEN_RE = re.compile(r"^\s*[╭┌╔]")
 _BOX_CLOSE_RE = re.compile(r"^\s*[╰└╚]")
 _BOX_SIDE_RE = re.compile(r"^\s*[│┃║|]\s?|\s*[│┃║|]\s*$")
 _BOX_GLYPHS = frozenset("─━═│┃║|╭╮╰╯┌┐└┘╔╗╚╝ ")
-# Any one of these unambiguously marks an interactive prompt.
 _GEMINI_STRONG_MARKERS = (
-    re.compile(r"^\s*[●❯]\s*\d+\."),  # selected option marker
+    re.compile(r"^\s*[●❯]\s*\d+\."),
     re.compile(r"(?i)\benter to (submit|select|confirm|continue)\b"),
     re.compile(r"(?i)\(press esc to (close|cancel)\)"),
     re.compile(r"(?i)\(esc\b"),
 )
-# A bare numbered line is weak — a single one may be prose. Require ≥2.
 _GEMINI_NUMBERED_OPTION_RE = re.compile(r"^\s*\d+\.\s")
 _MIN_NUMBERED_OPTIONS = 2
 _PERMISSION_HINT_RE = re.compile(
@@ -183,7 +112,6 @@ _PERMISSION_HINT_RE = re.compile(
 
 
 def _clean_box_lines(lines: list[str]) -> list[str]:
-    """Strip box-drawing borders/rules from a captured box, keep content."""
     out: list[str] = []
     for raw in lines:
         line = raw.rstrip()
@@ -191,7 +119,7 @@ def _clean_box_lines(lines: list[str]) -> list[str]:
         if not stripped:
             out.append("")
             continue
-        if set(stripped) <= _BOX_GLYPHS:  # pure border or horizontal rule
+        if set(stripped) <= _BOX_GLYPHS:
             continue
         out.append(_BOX_SIDE_RE.sub("", line).rstrip())
     while out and not out[0].strip():
@@ -202,14 +130,6 @@ def _clean_box_lines(lines: list[str]) -> list[str]:
 
 
 def _extract_active_box(pane_text: str) -> str | None:
-    """Return the cleaned content of the active box, or None.
-
-    Conservative against torn captures: returns content only for a single
-    well-formed box at the bottom. A dangling open border below the last
-    close (active box mid-render) or another box boundary between the
-    matched open and close yields None — the next poll re-reads a complete
-    frame rather than surfacing a stale earlier box.
-    """
     lines = pane_text.split("\n")
     close_idx = next(
         (i for i in range(len(lines) - 1, -1, -1) if _BOX_CLOSE_RE.match(lines[i])),
@@ -233,12 +153,6 @@ def _extract_active_box(pane_text: str) -> str | None:
 
 
 def _box_is_interactive(box_text: str) -> bool:
-    """True when the box content carries an interactive affordance.
-
-    Any strong marker (selected ``●``/``❯`` option, footer hint) is
-    sufficient. A bare numbered list needs ≥2 entries so a single ``1.``
-    line in informational prose is not misread as a prompt.
-    """
     numbered = 0
     for line in box_text.split("\n"):
         if any(marker.search(line) for marker in _GEMINI_STRONG_MARKERS):
@@ -269,12 +183,10 @@ def _runtime_command_basename(pane_current_command: str) -> str:
 
 
 def needs_pane_title_for_detection(pane_current_command: str) -> bool:
-    """Return True when runtime detection needs pane-title context."""
     return _runtime_command_basename(pane_current_command) in _GEMINI_WRAPPER_COMMANDS
 
 
 def detect_gemini_from_runtime(pane_current_command: str, pane_title: str) -> bool:
-    """Detect Gemini when wrapped by runtime shims like bun/node/npx."""
     if not needs_pane_title_for_detection(pane_current_command):
         return False
     if not isinstance(pane_title, str):
@@ -283,25 +195,11 @@ def detect_gemini_from_runtime(pane_current_command: str, pane_title: str) -> bo
 
 
 def build_hardened_gemini_launch_command(command: str) -> str:
-    """Wrap Gemini launch command with ccgram-managed stability settings.
-
-    Gemini reads this path as "system settings", so it overrides workspace/user
-    settings and reliably disables interactive-shell PTY mode for ccgram runs.
-    If the settings file cannot be written, returns the original command.
-    """
     settings_path = ccgram_dir() / _GEMINI_SYSTEM_SETTINGS_FILE
     try:
         atomic_write_json(
             settings_path,
-            {
-                "tools": {
-                    "shell": {
-                        # Disable node-pty interactive shell mode in ccgram-managed Gemini runs.
-                        # This avoids known EBADF crashes in tmux when shell tools execute.
-                        "enableInteractiveShell": False
-                    }
-                }
-            },
+            {"tools": {"shell": {"enableInteractiveShell": False}}},
         )
     except OSError:
         return command
@@ -310,7 +208,6 @@ def build_hardened_gemini_launch_command(command: str) -> str:
 
 
 def _extract_gemini_text(value: Any) -> str:
-    """Extract visible text from Gemini content/displayContent payloads."""
     if isinstance(value, str):
         return value
     if not isinstance(value, list):
@@ -331,7 +228,6 @@ def _extract_gemini_text(value: Any) -> str:
 
 
 def _entry_text(entry: dict[str, Any]) -> str:
-    """Extract human-visible message text from a Gemini transcript entry."""
     text = _extract_gemini_text(entry.get("content"))
     if text:
         return text
@@ -339,7 +235,6 @@ def _entry_text(entry: dict[str, Any]) -> str:
 
 
 def _summarize_tool_args(args: Any) -> str:
-    """Create a short summary from Gemini tool-call args."""
     if not isinstance(args, dict):
         return ""
     preferred = (
@@ -363,7 +258,6 @@ def _summarize_tool_args(args: Any) -> str:
 
 
 def _extract_tool_result_text(tool_call: dict[str, Any]) -> str:
-    """Extract tool-result text from a Gemini tool-call payload."""
     result_display = tool_call.get("resultDisplay")
     if isinstance(result_display, str) and result_display:
         return result_display
@@ -392,13 +286,6 @@ def _emit_tool_calls(
     entry: dict[str, Any],
     pending: dict[str, Any],
 ) -> list[AgentMessage]:
-    """Emit tool_use / tool_result messages from a Gemini toolCalls list.
-
-    Skips re-announcing a tool whose id is already in ``pending`` (Gemini
-    re-appends the same message line on every toolCalls update). Emits
-    ``tool_result`` once a result payload becomes available and pops the
-    tool from ``pending``.
-    """
     out: list[AgentMessage] = []
     timestamp = entry.get("timestamp")
     for tc in tool_calls:
@@ -442,7 +329,6 @@ def _emit_tool_calls(
 
 
 def _read_project_alias(config_dir: Path, resolved_cwd: str) -> str:
-    """Read the project alias for cwd from ~/.gemini/projects.json."""
     projects_path = config_dir / "projects.json"
     try:
         with open(projects_path, encoding="utf-8") as f:
@@ -459,10 +345,8 @@ def _read_project_alias(config_dir: Path, resolved_cwd: str) -> str:
 
 
 def _collect_gemini_sessions(chats_dir: Path) -> list[tuple[float, Path]]:
-    """Collect Gemini chat transcripts from a chats directory."""
     result: list[tuple[float, Path]] = []
     try:
-        # Gemini CLI now uses .jsonl for incremental transcripts.
         files = sorted(chats_dir.glob("session-*.jsonl"))
     except OSError:
         return result
@@ -475,10 +359,6 @@ def _collect_gemini_sessions(chats_dir: Path) -> list[tuple[float, Path]]:
 
 
 def _read_gemini_session_meta(fpath: Path) -> tuple[str, str] | None:
-    """Read (session_id, project_hash) from a Gemini transcript JSONL file.
-
-    Gemini's JSONL format stores session metadata in the first line.
-    """
     try:
         with open(fpath, encoding="utf-8") as f:
             line = f.readline()
@@ -498,7 +378,6 @@ def _read_gemini_session_meta(fpath: Path) -> tuple[str, str] | None:
 
 
 def _resolve_gemini_commands_dir(base_dir: str) -> Path:
-    """Resolve Gemini commands directory from a provider base dir."""
     base = Path(base_dir).expanduser()
     if base.name == ".claude":
         return base.with_name(".gemini") / "commands"
@@ -508,7 +387,6 @@ def _resolve_gemini_commands_dir(base_dir: str) -> Path:
 
 
 def _parse_toml_command_description(cmd_file: Path, *, default: str) -> str:
-    """Read command description from Gemini TOML file."""
     try:
         with open(cmd_file, "rb") as f:
             parsed = tomllib.load(f)
@@ -523,7 +401,6 @@ def _parse_toml_command_description(cmd_file: Path, *, default: str) -> str:
 
 
 def _discover_gemini_toml_commands(base_dir: str) -> list[DiscoveredCommand]:
-    """Discover Gemini custom slash commands from .gemini/commands/*.toml."""
     commands_dir = _resolve_gemini_commands_dir(base_dir)
     if not commands_dir.is_dir():
         return []
@@ -560,8 +437,6 @@ def _discover_gemini_toml_commands(base_dir: str) -> list[DiscoveredCommand]:
 
 
 class GeminiProvider(JsonlProvider):
-    """AgentProvider implementation for Google Gemini CLI."""
-
     _CAPS = ProviderCapabilities(
         name="gemini",
         launch_command="gemini",
@@ -574,8 +449,6 @@ class GeminiProvider(JsonlProvider):
         uses_pane_title=True,
         builtin_commands=tuple(_GEMINI_BUILTINS.keys()),
         supports_status_snapshot=True,
-        # Pickers verified against geminicli.com/docs/reference/commands.
-        # Each opens a modal selector the user drives with arrow keys.
         tui_picker_commands=frozenset(
             {
                 "agents",
@@ -597,13 +470,11 @@ class GeminiProvider(JsonlProvider):
     _BUILTINS = _GEMINI_BUILTINS
 
     def requires_pane_title_for_detection(self, pane_current_command: str) -> bool:
-        """Return True when Gemini runtime detection needs pane-title context."""
         return needs_pane_title_for_detection(pane_current_command)
 
     def detect_from_pane_title(
         self, pane_current_command: str, pane_title: str
     ) -> bool:
-        """Detect Gemini from wrapped command + OSC title markers."""
         return detect_gemini_from_runtime(pane_current_command, pane_title)
 
     def make_launch_args(
@@ -611,14 +482,7 @@ class GeminiProvider(JsonlProvider):
         resume_id: str | None = None,
         use_continue: bool = False,
     ) -> str:
-        """Build Gemini CLI args for launching or resuming a session.
-
-        Resume uses ``--resume <index|latest>`` — accepts a numeric index
-        or ``"latest"``, NOT a UUID.
-        Continue uses ``--resume latest`` to pick up the most recent session.
-        """
         if resume_id:
-            # Allow numeric indices and "latest" in addition to standard IDs
             if not (resume_id == "latest" or RESUME_ID_RE.match(resume_id)):
                 raise ValueError(f"Invalid resume_id: {resume_id!r}")
             return f"--resume {resume_id}"
@@ -626,28 +490,14 @@ class GeminiProvider(JsonlProvider):
             return "--resume latest"
         return ""
 
-    # ── Gemini-specific transcript parsing ────────────────────────────
-
     def parse_transcript_entries(
         self,
         entries: list[dict[str, Any]],
         pending_tools: dict[str, Any],
         cwd: str | None = None,  # noqa: ARG002
     ) -> tuple[list[AgentMessage], dict[str, Any]]:
-        """Parse Gemini transcript entries into AgentMessages.
-
-        Gemini messages use ``type`` field ("user"/"gemini"/"info"/"error")
-        instead of ``role`` and support mixed content formats (string or list
-        of text fragments). Tool calls are emitted as ``tool_use`` and
-        ``tool_result`` messages when possible.
-        """
         messages: list[AgentMessage] = []
         pending = dict(pending_tools)
-        # Gemini's JSONL transcript re-appends the same message id on every
-        # toolCalls update (see chatRecordingService.pushMessage upstream).
-        # Track seen message ids to avoid duplicate text emission; track
-        # tool_use ids in `pending` so we only announce a tool once and emit
-        # tool_result on the update that carries the result payload.
         seen_msg_ids: set[str] = pending.setdefault("__seen_msg_ids__", set())
 
         for entry in entries:
@@ -680,11 +530,9 @@ class GeminiProvider(JsonlProvider):
         return messages, pending
 
     def is_user_transcript_entry(self, entry: dict[str, Any]) -> bool:
-        """Check if this Gemini entry is a human turn."""
         return entry.get("type") == "user"
 
     def parse_history_entry(self, entry: dict[str, Any]) -> AgentMessage | None:
-        """Parse a single Gemini transcript entry for history display."""
         msg_type = entry.get("type", "")
         role = _GEMINI_ROLE_MAP.get(msg_type)
         if not role:
@@ -706,7 +554,6 @@ class GeminiProvider(JsonlProvider):
         resolved_cwd: str,
         expected_hash: str,
     ) -> list[Path]:
-        """Build candidate chats directories for a cwd."""
         dirs: list[Path] = [sessions_root / expected_hash / "chats"]
         alias = _read_project_alias(config_dir, resolved_cwd)
         if alias:
@@ -717,7 +564,6 @@ class GeminiProvider(JsonlProvider):
     def _collect_candidate_sessions(
         candidate_dirs: list[Path],
     ) -> list[tuple[float, Path]]:
-        """Collect session files from expected candidate directories."""
         sessions: list[tuple[float, Path]] = []
         seen_dirs: set[Path] = set()
         for chats_dir in candidate_dirs:
@@ -739,7 +585,6 @@ class GeminiProvider(JsonlProvider):
         exclude_session_ids: set[str] | None = None,
         exclude_transcript_paths: set[str] | None = None,
     ) -> SessionStartEvent | None:
-        """Return the newest matching session event from candidate files."""
         sessions.sort(reverse=True)
         claimed_session_ids = exclude_session_ids or set()
         claimed_transcript_paths = exclude_transcript_paths or set()
@@ -750,7 +595,6 @@ class GeminiProvider(JsonlProvider):
             if not meta:
                 continue
             session_id, project_hash = meta
-            # Match project strictly to avoid cross-project false positives.
             if project_hash != expected_hash:
                 continue
             if (
@@ -775,12 +619,6 @@ class GeminiProvider(JsonlProvider):
         exclude_session_ids: set[str] | None = None,
         exclude_transcript_paths: set[str] | None = None,
     ) -> SessionStartEvent | None:
-        """Discover latest Gemini transcript matching cwd.
-
-        Gemini stores chats under ``~/.gemini/tmp/<project>/chats/session-*.jsonl``
-        (project alias) and older versions may use ``<projectHash>`` directory
-        names. We match by ``projectHash`` (sha256 of resolved cwd).
-        """
         config_dir = Path.home() / ".gemini"
         sessions_root = config_dir / "tmp"
         if not sessions_root.is_dir():
@@ -809,7 +647,6 @@ class GeminiProvider(JsonlProvider):
         )
 
     def discover_commands(self, base_dir: str) -> list[DiscoveredCommand]:
-        """Discover built-ins plus workspace Gemini TOML commands."""
         commands = super().discover_commands(base_dir)
         commands.extend(_discover_gemini_toml_commands(base_dir))
         deduped: list[DiscoveredCommand] = []
@@ -824,29 +661,11 @@ class GeminiProvider(JsonlProvider):
     def parse_terminal_status(
         self, pane_text: str, *, pane_title: str = ""
     ) -> StatusUpdate | None:
-        """Parse Gemini CLI pane for status via title and interactive UI.
-
-        Gemini CLI sets pane title via OSC escape sequences:
-          - ``Working: ✦`` (U+2726) — agent is processing
-          - ``Action Required: ✋`` (U+270B) — needs user input
-          - ``Ready: ◇`` (U+25C7) — idle / waiting for input
-
-        Title-based detection is checked first (most reliable), then
-        pane content is scanned for interactive UI patterns.
-        """
-        # 1. Working title → non-interactive status
-        # Accept both the emoji marker and plain text for robustness.
-        if "\u2726" in pane_title or "Working" in pane_title:  # ✦
+        if "\u2726" in pane_title or "Working" in pane_title:
             return StatusUpdate(raw_text="working", display_label="\u2026working")
 
-        # 2. Action Required title → check content for specific UI
-        action_required = (
-            "\u270b" in pane_title or "Action Required" in pane_title
-        )  # ✋
+        action_required = "\u270b" in pane_title or "Action Required" in pane_title
 
-        # 3. Boxed prompt (Gemini ≥ 0.42) — extract the question from the box.
-        # GEMINI_UI_PATTERNS anchors no longer exist in-pane; the prompt is
-        # wrapped in box-drawing borders with the question as the first line.
         box_text = _extract_active_box(pane_text)
         if box_text and _box_is_interactive(box_text):
             ui_type = (
@@ -861,7 +680,6 @@ class GeminiProvider(JsonlProvider):
                 ui_type=ui_type,
             )
 
-        # 4. Legacy non-boxed rendering (Gemini ≤ 0.41) — regex patterns.
         interactive = extract_interactive_content(pane_text, GEMINI_UI_PATTERNS)
         if interactive:
             return StatusUpdate(
@@ -871,7 +689,6 @@ class GeminiProvider(JsonlProvider):
                 ui_type=interactive.name,
             )
 
-        # 5. Title says action required but content didn't match anything.
         if action_required:
             return StatusUpdate(
                 raw_text="Action Required",
@@ -880,7 +697,6 @@ class GeminiProvider(JsonlProvider):
                 ui_type="PermissionPrompt",
             )
 
-        # 5. Ready title or unknown — no status (let activity heuristic handle)
         return None
 
     def build_status_snapshot(
@@ -891,7 +707,6 @@ class GeminiProvider(JsonlProvider):
         session_id: str = "",
         cwd: str = "",
     ) -> str | None:
-        """Build a basic status snapshot for Gemini sessions."""
         try:
             size = os.path.getsize(transcript_path)
         except OSError:
@@ -911,7 +726,6 @@ class GeminiProvider(JsonlProvider):
         )
 
     def has_output_since(self, transcript_path: str, offset: int) -> bool:
-        """Check if any assistant output appeared after *offset*."""
         try:
             return os.path.getsize(transcript_path) > offset
         except OSError:

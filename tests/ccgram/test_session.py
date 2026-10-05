@@ -1105,8 +1105,6 @@ class TestResolveStaleIdsPreservesDeadBindings:
 
 
 class _FakeMux:
-    """Minimal multiplexer stand-in: capability flag + live window list."""
-
     def __init__(self, *, ids_stable: bool, windows: list) -> None:
         self.capabilities = SimpleNamespace(ids_stable_across_restart=ids_stable)
         self._windows = windows
@@ -1119,9 +1117,6 @@ class _FakeMux:
 
 
 class TestResolveStaleIdsHerdrRestart:
-    """Session-level glue for non-stable-id backends: read the hook-written
-    session_map, join live pane id -> session id, re-resolve by session id."""
-
     @pytest.fixture(autouse=True)
     def _session_map(self, tmp_path, monkeypatch):
         self.map_file = tmp_path / "session_map.json"
@@ -1152,8 +1147,6 @@ class TestResolveStaleIdsHerdrRestart:
     async def test_tmux_path_is_noop_for_stable_ids(
         self, mgr: SessionManager, monkeypatch
     ) -> None:
-        # Stable-id backend: even with a session_map present, re-resolution uses
-        # the display-name path and never touches live windows.
         thread_router.bind_thread(100, 1, "@1", window_name="proj")
         mgr.window_states["@1"] = WindowState(session_id="S1", cwd="/repo")
         self.map_file.write_text("{}")

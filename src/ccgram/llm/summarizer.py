@@ -1,10 +1,3 @@
-"""LLM-powered completion summary for agent sessions.
-
-Reads recent transcript entries and produces a single-line summary of what
-the agent accomplished. Used by the Stop hook to enhance the "Ready" message.
-Returns None gracefully when LLM is not configured or on any failure.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -30,18 +23,15 @@ _MAX_ASSISTANT_CHARS = 500
 
 
 def _read_tail_lines(path: Path, max_lines: int) -> list[str]:
-    """Read the last N lines from a file via reverse seek. Runs in a thread."""
     try:
         size = path.stat().st_size
         if size == 0:
             return []
-        # Read a chunk from the end — 200 bytes per line is generous for JSONL
         chunk_size = min(size, max_lines * 200)
         with path.open("rb") as f:
             f.seek(max(0, size - chunk_size))
             tail = f.read().decode(errors="replace")
         lines = tail.splitlines()
-        # Drop the first partial line if we didn't read from the start
         if chunk_size < size:
             lines = lines[1:]
         return lines[-max_lines:]
@@ -50,7 +40,6 @@ def _read_tail_lines(path: Path, max_lines: int) -> list[str]:
 
 
 def _extract_tool_summary(block: dict) -> str | None:
-    """Extract a compact tool summary from a tool_use content block."""
     name = block.get("name", "")
     input_data = block.get("input", {})
     if not isinstance(input_data, dict):
@@ -73,7 +62,6 @@ def _extract_tool_summary(block: dict) -> str | None:
 
 
 def _extract_result_snippet(block: dict) -> str:
-    """Extract a short snippet from a tool_result content block."""
     content = block.get("content", "")
     if isinstance(content, list):
         parts = [p.get("text", "") for p in content if isinstance(p, dict)]
@@ -84,7 +72,6 @@ def _extract_result_snippet(block: dict) -> str:
 
 
 def _parse_entry(raw_line: str) -> tuple[str, list[dict]] | None:
-    """Parse a JSONL line into (entry_type, content_blocks) or None."""
     raw_line = raw_line.strip()
     if not raw_line:
         return None
@@ -104,7 +91,6 @@ def _parse_entry(raw_line: str) -> tuple[str, list[dict]] | None:
 
 
 def _process_assistant_blocks(blocks: list[dict], context_parts: list[str]) -> str:
-    """Process assistant content blocks, return last text seen."""
     last_text = ""
     for block in blocks:
         btype = block.get("type")
@@ -120,7 +106,6 @@ def _process_assistant_blocks(blocks: list[dict], context_parts: list[str]) -> s
 
 
 def _process_user_blocks(blocks: list[dict], context_parts: list[str]) -> None:
-    """Process user content blocks (tool results)."""
     for block in blocks:
         if block.get("type") == "tool_result":
             snippet = _extract_result_snippet(block)
@@ -130,7 +115,6 @@ def _process_user_blocks(blocks: list[dict], context_parts: list[str]) -> None:
 
 
 def _build_summary_context(lines: list[str]) -> str:
-    """Build a compact context string from JSONL transcript lines."""
     context_parts: list[str] = []
     last_assistant_text = ""
 
@@ -155,13 +139,6 @@ def _build_summary_context(lines: list[str]) -> str:
 
 
 async def summarize_completion(transcript_path: str) -> str | None:
-    """Produce a single-line completion summary via the configured LLM.
-
-    Returns None if:
-    - transcript_path is empty or file doesn't exist
-    - LLM is not configured
-    - LLM call fails for any reason
-    """
     if not transcript_path:
         return None
 
@@ -169,10 +146,6 @@ async def summarize_completion(transcript_path: str) -> str | None:
     if not path.exists():
         return None
 
-    # Lazy: llm/__init__.py wires httpx + provider configs; loading it
-    # only when a summary is actually requested keeps the monitor's
-    # import path light.
-    # Lazy: get_text_completer factory; cycle with provider registration
     from . import get_text_completer
 
     completer = get_text_completer()

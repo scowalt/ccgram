@@ -1,11 +1,3 @@
-"""Integration tests for SessionMonitor polling against real JSONL files.
-
-Tests the full check_for_updates pipeline: session initialization,
-incremental message delivery, file truncation recovery, and session
-change cleanup. Mtime caching and MonitorState round-trips are covered
-by unit tests.
-"""
-
 import json
 import os
 import time
@@ -92,14 +84,12 @@ def _append_jsonl(path, entries):
 
 
 def _bump_mtime(path):
-    """Advance file mtime by 2 seconds to ensure change detection."""
     st = os.stat(path)
     os.utime(path, (st.st_atime, st.st_mtime + 2))
 
 
 @pytest.fixture
 def session_map_with_transcript(state_dir):
-    """Write a session_map.json pointing to a transcript file."""
 
     def _setup(transcript_path, session_id=TEST_SESSION_ID):
         session_map = {
@@ -266,9 +256,7 @@ async def test_session_change_cleanup(state_dir, session_map_with_transcript) ->
     monitor._last_session_map = old_map
 
     new_sid = "11111111-2222-3333-4444-555555555555"
-    new_transcript = (
-        state_dir / "transcript_new.jsonl"
-    )  # real session change → different file
+    new_transcript = state_dir / "transcript_new.jsonl"
     _write_jsonl(
         new_transcript, _make_task_create_entry("2", "New task", session_id=new_sid)
     )

@@ -50,8 +50,6 @@ class TestClearTopicState:
 
 
 class TestClearTopicStateQualifiedId:
-    """qualified_id is built from session_map_prefix(), not hardcoded tmux prefix."""
-
     @pytest.fixture
     def _common_patches(self):
         with (
@@ -85,7 +83,6 @@ class TestClearTopicStateQualifiedId:
     ) -> None:
         monkeypatch.setattr(config, "multiplexer_name", "herdr")
         mock_ts = _common_patches
-        # window_dead defaults to True; pass False to suppress qualified_id
         await clear_topic_state(
             1, 42, client=None, window_id="w1:t0", window_dead=False
         )

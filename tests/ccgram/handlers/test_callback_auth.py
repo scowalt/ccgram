@@ -1,5 +1,3 @@
-"""Tests for callback handler authorization checks."""
-
 from unittest.mock import patch
 
 from ccgram.handlers.callback_helpers import user_owns_window

@@ -1,5 +1,3 @@
-"""Session map primary election regression tests."""
-
 import json
 import os
 import time
@@ -131,16 +129,9 @@ async def test_load_session_map_malformed_entry_does_not_delete_window_state(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    """A future-version or otherwise invalid session_map entry must NOT cause
-    the in-memory WindowState for that window_id to be deleted (MAJOR-1 regression).
-
-    The malformed entry is present in the file so the window_id must be added to
-    valid_wids regardless of schema validation outcome.
-    """
     transcript = tmp_path / "valid.jsonl"
     _write_transcript(transcript, 0)
     session_map_file = tmp_path / "session_map.json"
-    # valid entry for @5, invalid (future schema_version) entry for @9
     session_map_file.write_text(
         json.dumps(
             {
@@ -159,18 +150,14 @@ async def test_load_session_map_malformed_entry_does_not_delete_window_state(
     monkeypatch.setattr("ccgram.session_map.config.session_map_file", session_map_file)
     monkeypatch.setattr("ccgram.session_map.config.tmux_session_name", "ccgram")
     monkeypatch.setattr(session_map_sync, "_schedule_save", lambda: None)
-    # Pre-populate in-memory state for @9 (no thread binding, not old-format sid)
     window_store.window_states["@5"] = WindowState(session_id="sess-5", cwd="/repo")
     window_store.window_states["@9"] = WindowState(session_id="sess-9", cwd="/repo")
 
     await session_map_sync.load_session_map()
 
-    # @9's in-memory state must survive — the malformed file entry must not
-    # cause _remove_stale_window_states to delete it
     assert "@9" in window_store.window_states, (
         "WindowState for @9 was deleted despite being present in session_map.json"
     )
-    # @5 (valid entry) state is updated normally
     assert "@5" in window_store.window_states
 
 

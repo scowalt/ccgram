@@ -1,17 +1,3 @@
-"""Discover Claude Code commands for Telegram bot menu registration.
-
-Scans three sources to build the command list:
-  1. Built-in CC commands (always present)
-  2. User-invocable skills from ~/.claude/skills/
-  3. Custom commands from ~/.claude/commands/
-
-Core components:
-  - CCCommand dataclass: name, telegram_name, description, source
-  - discover_cc_commands(): filesystem scanner with caching
-  - register_commands(): sets Telegram bot menu (BotCommand list)
-  - get_cc_name(): reverse lookup from sanitized telegram name to CC name
-"""
-
 import structlog
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,10 +13,6 @@ from telegram import Bot, BotCommand, BotCommandScope
 
 logger = structlog.get_logger()
 
-# Built-in Claude Code commands. Refreshed from code.claude.com/docs/en/commands.
-# Telegram menu is a discovery surface only — any /<token> still forwards
-# to the provider (see commands/forward.py). /resume collides with bot-native
-# /resume (excluded — ccgram has its own picker).
 CC_BUILTINS: dict[str, str] = {
     "agents": "↗ Manage subagent configurations",
     "background": "↗ Detach session as background agent",
@@ -71,7 +53,6 @@ CC_BUILTINS: dict[str, str] = {
     "verify": "↗ Build and run app to verify change",
 }
 
-# Bot-native commands (registered first, not from CC)
 _BOT_COMMANDS: list[tuple[str, str]] = [
     ("start", "Show ccgram welcome message"),
     ("commands", "List commands for this topic provider"),
@@ -91,63 +72,40 @@ _BOT_COMMANDS: list[tuple[str, str]] = [
     ("upgrade", "Upgrade ccgram and restart"),
 ]
 
-# Telegram limits: max 100 commands, descriptions max 256 chars
 _MAX_TELEGRAM_COMMANDS = 100
 _MAX_DESCRIPTION_LEN = 256
 
 
 @dataclass(frozen=True, slots=True)
 class CCCommand:
-    """A discovered Claude Code command."""
-
-    name: str  # Original CC name (e.g. "spec:work", "committing-code")
-    telegram_name: str  # Sanitized for Telegram (e.g. "spec_work")
+    name: str
+    telegram_name: str
     description: str
     source: Literal["builtin", "skill", "command"]
 
 
 def _sanitize_telegram_name(name: str) -> str:
-    """Sanitize a CC command name for Telegram.
-
-    Telegram allows only [a-z0-9_] in command names, max 32 chars.
-    Returns empty string for unrepresentable names.
-    """
     sanitized = name.lower().replace("-", "_").replace(":", "_")
-    # Strip anything not alphanumeric or underscore
     sanitized = "".join(c for c in sanitized if c.isalnum() or c == "_")
     return sanitized[:32]
 
 
 def _cc_desc(desc: str) -> str:
-    """Ensure description has ↗ prefix for CC-forwarded commands."""
     return desc if desc.startswith("↗") else f"↗ {desc}"
 
 
 def parse_frontmatter(path: Path) -> dict[str, str]:
-    """Compatibility wrapper around provider-agnostic frontmatter parser."""
     return _parse_frontmatter(path)
 
 
 def discover_cc_commands(claude_dir: Path | None = None) -> list[CCCommand]:
-    """Scan filesystem for CC commands.
-
-    Sources (in order):
-      1. Built-in commands (CC_BUILTINS)
-      2. Skills: {claude_dir}/skills/*/SKILL.md (user-invocable only)
-      3. Custom commands: {claude_dir}/commands/{group}/*.md
-
-    Commands with empty sanitized names are skipped.
-    """
     if claude_dir is None:
-        # Lazy: config singleton is wired late at startup; importing at top
-        # would freeze test overrides that monkeypatch config attrs.
         from ccgram.config import config
 
         claude_dir = config.claude_config_dir
 
     commands: list[CCCommand] = []
 
-    # 1. Builtins
     for name, desc in CC_BUILTINS.items():
         commands.append(
             CCCommand(
@@ -158,7 +116,6 @@ def discover_cc_commands(claude_dir: Path | None = None) -> list[CCCommand]:
             )
         )
 
-    # 2. User-defined skills + commands
     for cmd in discover_user_defined_commands(claude_dir):
         tg_name = _sanitize_telegram_name(cmd.name)
         if not tg_name:
@@ -175,13 +132,10 @@ def discover_cc_commands(claude_dir: Path | None = None) -> list[CCCommand]:
     return commands
 
 
-# Module-level cache (telegram_name → cc_name, first-wins to match registration)
 _name_map: dict[str, str] = {}
 
 
 def _provider_base_dir(claude_dir: Path | None = None) -> str:
-    """Resolve base dir for provider command discovery."""
-    # Lazy: config singleton accessed only when this helper actually runs
     from ccgram.config import config as _cfg
 
     return str(claude_dir) if claude_dir else str(_cfg.claude_config_dir)
@@ -191,7 +145,6 @@ def discover_provider_commands(
     provider: AgentProvider,
     claude_dir: Path | None = None,
 ) -> list[CCCommand]:
-    """Discover commands for one provider as CCCommand entries."""
     base_dir = _provider_base_dir(claude_dir)
     valid_sources = {"builtin", "skill", "command"}
     discovered = command_catalog.get_provider_commands(provider, base_dir)
@@ -217,7 +170,6 @@ def get_provider_command_map(
     provider: AgentProvider,
     claude_dir: Path | None = None,
 ) -> dict[str, str]:
-    """Build telegram_name -> original command mapping for a provider."""
     mapping: dict[str, str] = {}
     for cmd in discover_provider_commands(provider, claude_dir):
         if cmd.telegram_name and cmd.telegram_name not in mapping:
@@ -229,7 +181,6 @@ def get_provider_supported_commands(
     provider: AgentProvider,
     claude_dir: Path | None = None,
 ) -> set[str]:
-    """Return normalized slash commands supported by a provider."""
     supported: set[str] = set()
     for name in get_provider_command_map(provider, claude_dir).values():
         token = name if name.startswith("/") else f"/{name}"
@@ -247,13 +198,6 @@ def _refresh_cache(
     provider: AgentProvider | None = None,
     providers: Iterable[AgentProvider] | None = None,
 ) -> list[CCCommand]:
-    """Re-discover commands and update the cache.
-
-    When *providers* is given, merges commands from each provider in order.
-    When *provider* is given, uses ``provider.discover_commands()`` which
-    returns ``list[DiscoveredCommand]``.
-    Falls back to filesystem scanning via ``discover_cc_commands()`` otherwise.
-    """
     global _name_map
 
     if providers is not None:
@@ -264,7 +208,6 @@ def _refresh_cache(
         commands = discover_provider_commands(provider, claude_dir)
     else:
         commands = discover_cc_commands(claude_dir)
-    # First-wins: matches the dedup order in register_commands
     new_map: dict[str, str] = {}
     for cmd in commands:
         if cmd.telegram_name not in new_map:
@@ -274,7 +217,6 @@ def _refresh_cache(
 
 
 def get_cc_name(telegram_name: str) -> str | None:
-    """Look up the original CC command name from a sanitized Telegram name."""
     return _name_map.get(telegram_name)
 
 
@@ -286,14 +228,6 @@ async def register_commands(
     include_cc_commands: bool = True,
     scope: BotCommandScope | None = None,
 ) -> None:
-    """Discover CC commands and register them in the Telegram bot menu.
-
-    When *providers* is given, commands are merged from each provider in order.
-    When *provider* is given, command discovery is delegated to that provider.
-    Registers bot-native commands first (start, history, etc.), then up to
-    the remaining Telegram limit of discovered CC commands. Deduplicates
-    by telegram_name (first-wins) and excludes collisions with bot-native names.
-    """
     commands = (
         _refresh_cache(claude_dir, provider=provider, providers=providers)
         if include_cc_commands
@@ -303,13 +237,11 @@ async def register_commands(
     bot_commands = [BotCommand(name, desc) for name, desc in _BOT_COMMANDS]
     max_cc = _MAX_TELEGRAM_COMMANDS - len(bot_commands)
 
-    # Pre-populate with bot-native names to avoid collisions
     seen_names: set[str] = {name for name, _ in _BOT_COMMANDS}
     cc_count = 0
     for cmd in commands:
         if cc_count >= max_cc:
             break
-        # Skip empty names, duplicates, and bot-native collisions
         if not cmd.telegram_name or cmd.telegram_name in seen_names:
             continue
         seen_names.add(cmd.telegram_name)
@@ -317,13 +249,11 @@ async def register_commands(
         bot_commands.append(BotCommand(cmd.telegram_name, desc))
         cc_count += 1
 
-    # Lazy: only needed when scheduling the menu-refresh task
     import asyncio
 
-    # Lazy: only used inside the rate-limit retry path
     from telegram.error import RetryAfter
 
-    max_startup_wait = 120  # Don't block startup longer than this
+    max_startup_wait = 120
 
     try:
         if scope is None:

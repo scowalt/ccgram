@@ -1,13 +1,3 @@
-"""Messaging pipeline subpackage — per-user queue, sender, routing, batching.
-
-Bundles the modules that turn assistant messages from SessionMonitor into
-Telegram deliveries: queue primitives, the worker loop, content/status task
-sum types, the safe-send helpers, and the tool-use batching state machine.
-
-Public surface re-exported here is the entry point for ``bot.py`` and the
-rest of ``handlers/``; internals stay in the per-module files.
-"""
-
 from .message_queue import (
     clear_tool_msg_ids_for_topic,
     enqueue_content_message,

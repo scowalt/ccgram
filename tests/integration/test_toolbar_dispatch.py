@@ -1,11 +1,3 @@
-"""Integration tests for toolbar callback dispatch through the PTB application.
-
-Exercises the full path from a Telegram CallbackQuery → callback_registry
-dispatch → toolbar_callbacks._dispatch → action handler. Mocks tmux_manager
-and session_manager but uses a real PTB Application + real callback_registry
-to verify the single ``CB_TOOLBAR`` prefix wiring and per-type dispatch.
-"""
-
 from __future__ import annotations
 
 import os
@@ -76,7 +68,6 @@ def _reset_toolbar_config():
 
 @pytest.fixture
 async def app():
-    """Real PTB Application with the callback_registry dispatch installed."""
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not token:
         pytest.skip("TELEGRAM_BOT_TOKEN not set")
@@ -94,11 +85,6 @@ async def app():
     with patch.object(type(application.bot), "_do_post", mock_post):
         async with application:
             yield application
-
-
-# ──────────────────────────────────────────────────────────────────────
-# build_toolbar_keyboard end-to-end (4 providers × default layout)
-# ──────────────────────────────────────────────────────────────────────
 
 
 class TestKeyboardBuild:
@@ -132,11 +118,6 @@ class TestKeyboardBuild:
                 cb = btn.callback_data
                 assert isinstance(cb, str)
                 assert len(cb.encode("utf-8")) <= 64
-
-
-# ──────────────────────────────────────────────────────────────────────
-# Full PTB dispatch round-trip
-# ──────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.usefixtures("app")
@@ -284,16 +265,9 @@ class TestDispatchRoundTrip:
         assert kwargs.get("show_alert") is True
 
 
-# ──────────────────────────────────────────────────────────────────────
-# Custom config dispatched end-to-end through PTB
-# ──────────────────────────────────────────────────────────────────────
-
-
 @pytest.mark.usefixtures("app")
 class TestCustomConfigDispatch:
     async def test_custom_layout_renders_and_dispatches(self, app: Application) -> None:
-        # User config: a 2-row "text" style layout for claude with a
-        # custom /summary action.
         summary = ToolbarAction(
             name="summary",
             emoji="📝",
@@ -309,7 +283,6 @@ class TestCustomConfigDispatch:
             layouts={**DEFAULT_LAYOUTS, "claude": custom_layout},
             actions={**BUILTIN_ACTIONS, "summary": summary},
         )
-        # Render the keyboard and verify shape + labels.
         with patch(
             "ccgram.handlers.toolbar.toolbar_keyboard.get_toolbar_config",
             return_value=cfg,
@@ -320,7 +293,6 @@ class TestCustomConfigDispatch:
         assert kb.inline_keyboard[0][1].text == "Sum"
         assert kb.inline_keyboard[1][0].text == "Close"
 
-        # Click the custom action and verify it dispatches.
         update = _make_callback_query_update(
             f"tb:{TEST_WINDOW_ID}:summary", bot=app.bot
         )
@@ -352,13 +324,12 @@ class TestCustomConfigDispatch:
         )
 
     async def test_user_overrides_builtin_via_config(self, app: Application) -> None:
-        # User overrides the builtin "mode" action with a different key.
         custom_mode = ToolbarAction(
             name="mode",
             emoji="🆕",
             text="Mode",
             action_type="key",
-            payload="C-x",  # different key than the default \x1b[Z
+            payload="C-x",
             literal=False,
             read_state=False,
         )
@@ -390,7 +361,6 @@ class TestCustomConfigDispatch:
             )
             mock_tmux.send_keys = AsyncMock()
             await app.process_update(update)
-        # The user's override key, not the default \x1b[Z
         mock_tmux.send_keys.assert_awaited_once_with(
             TEST_WINDOW_ID, "C-x", enter=False, literal=False
         )

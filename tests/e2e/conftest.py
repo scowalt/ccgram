@@ -1,13 +1,3 @@
-"""E2E test fixtures — real PTB app, real tmux, real agent CLIs.
-
-Provides:
-  - e2e_state_dir: isolated state files in tmp_path
-  - e2e_tmux: dedicated tmux session (ccgram-e2e)
-  - intercepted_calls: API call recorder
-  - e2e_app: full Application lifecycle with mocked Bot API
-  - work_dir: minimal agent working directory
-"""
-
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,18 +10,6 @@ pytestmark = pytest.mark.e2e
 
 @pytest.fixture(autouse=True)
 def _reset_runtime_callbacks():
-    """Reset register-once callbacks AND bootstrap wire flag between tests.
-
-    Each e2e test runs ``app.post_init(app)`` which calls
-    ``wire_runtime_callbacks`` → ``register_approval_callback``.
-    F2.6 made those fail loud on double registration AND
-    ``wire_runtime_callbacks`` is idempotent (short-circuits on
-    ``_callbacks_wired``), so without resetting both layers, test N+1
-    either re-registers and raises (without idempotency) or skips wiring
-    entirely and leaves the inner callbacks unwired (with idempotency).
-    Delegating to ``bootstrap.reset_for_testing`` keeps both layers in
-    sync with the production reset path.
-    """
     from ccgram import bootstrap
 
     bootstrap.reset_for_testing()
@@ -39,14 +17,8 @@ def _reset_runtime_callbacks():
     bootstrap.reset_for_testing()
 
 
-# ---------------------------------------------------------------------------
-# State directory fixture
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture
 def e2e_state_dir(tmp_path, monkeypatch):
-    """Create isolated state files and point config at them."""
     state_dir = tmp_path / "ccgram-state"
     state_dir.mkdir()
 
@@ -71,16 +43,11 @@ def e2e_state_dir(tmp_path, monkeypatch):
     return state_dir
 
 
-# ---------------------------------------------------------------------------
-# Tmux session fixture
-# ---------------------------------------------------------------------------
-
 E2E_TMUX_SESSION = "ccgram-e2e"
 
 
 @pytest.fixture
 def e2e_tmux(monkeypatch):
-    """Create a dedicated tmux session for E2E tests."""
     import libtmux
 
     from ccgram.config import config
@@ -90,12 +57,10 @@ def e2e_tmux(monkeypatch):
 
     server = libtmux.Server()
 
-    # Kill stale session if it exists
     existing = server.sessions.get(session_name=E2E_TMUX_SESSION, default=None)
     if existing:
         existing.kill()
 
-    # Create fresh session
     session = server.new_session(
         session_name=E2E_TMUX_SESSION,
         start_directory=str(Path.home()),
@@ -103,8 +68,6 @@ def e2e_tmux(monkeypatch):
     if session.windows:
         session.windows[0].rename_window("__main__")
 
-    # Replace the global tmux_manager singleton in every importing module, and
-    # wire the multiplexer proxy so proxy/lazy callers resolve to it too.
     manager = TmuxManager(session_name=E2E_TMUX_SESSION)
 
     from ccgram.multiplexer import _reset_multiplexer_for_testing, install_multiplexer
@@ -154,14 +117,8 @@ def e2e_tmux(monkeypatch):
     _reset_multiplexer_for_testing()
 
 
-# ---------------------------------------------------------------------------
-# API interceptor
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture
 def intercepted_calls():
-    """Returns a list that records all intercepted Bot API calls."""
     return []
 
 
@@ -215,7 +172,6 @@ def _make_message_response(data, msg_id=None):
 
 
 def _make_api_router(calls: list):
-    """Build a side_effect function that routes Bot API calls by endpoint."""
 
     async def router(*, endpoint: str, data=None, **_kw):
         data = _parse_request_data(data)
@@ -242,21 +198,12 @@ def _make_api_router(calls: list):
     return router
 
 
-# ---------------------------------------------------------------------------
-# Application fixture
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture
 async def e2e_app(e2e_state_dir, e2e_tmux, intercepted_calls, monkeypatch):
-    """Full PTB Application with real handlers, mocked Bot API, real tmux."""
     from ccgram.session import SessionManager
 
     fresh_manager = SessionManager()
 
-    # Patch session_manager in every module that imports it at module level.
-    # Python's `from mod import name` creates a local binding, so we must
-    # patch each importing module individually.
     _sm_modules = [
         "ccgram.session",
         "ccgram.bot",
@@ -295,26 +242,17 @@ async def e2e_app(e2e_state_dir, e2e_tmux, intercepted_calls, monkeypatch):
 
     with patch.object(type(app.bot), "_do_post", side_effect=router):
         async with app:
-            # post_init is only called by run_polling(), not __aenter__
-            # Call it manually to start monitors, register commands, etc.
             if app.post_init:
                 await app.post_init(app)
             yield app, intercepted_calls, e2e_tmux, fresh_manager
-            # post_stop/post_shutdown only run in run_polling(); call manually
             if app.post_stop:
                 await app.post_stop(app)
             if app.post_shutdown:
                 await app.post_shutdown(app)
 
 
-# ---------------------------------------------------------------------------
-# Work directory fixture
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture
 def work_dir(tmp_path):
-    """Create a minimal working directory for agents."""
     readme = tmp_path / "README.md"
     readme.write_text("# E2E Test Project\n\nThis is a test project for E2E tests.\n")
     return tmp_path

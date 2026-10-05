@@ -1,14 +1,3 @@
-"""Tests for multiplexer/tmux.py — Task 2 (tmux as the first backend).
-
-Covers:
-- tmux ``MultiplexerCapabilities`` are pinned to the design values
-  (per-field and as a full snapshot — the Task 5 characterization guard that
-  the tmux behavior contract is unchanged).
-- ``TmuxManager`` satisfies the ``Multiplexer`` Protocol structurally.
-- One round-trip per Protocol wrapper method (neutral value types in/out),
-  with the libtmux/subprocess legacy methods mocked.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -28,11 +17,7 @@ from ccgram.multiplexer.tmux import TmuxManager, tmux_manager
 
 @pytest.fixture
 def mgr() -> TmuxManager:
-    """A fresh TmuxManager (does not touch the global singleton's state)."""
     return TmuxManager(session_name="ccgram-test")
-
-
-# ── Capabilities ───────────────────────────────────────────────────────
 
 
 class TestTmuxCapabilities:
@@ -47,13 +32,10 @@ class TestTmuxCapabilities:
         assert caps.supports_event_stream is False
 
     def test_capabilities_is_frozen(self, mgr: TmuxManager) -> None:
-        with pytest.raises(Exception):  # frozen dataclass → FrozenInstanceError
+        with pytest.raises(Exception):
             mgr.capabilities.name = "other"  # type: ignore[misc]
 
     def test_capabilities_full_snapshot(self, mgr: TmuxManager) -> None:
-        """Characterization guard (Task 5): the entire tmux capability surface
-        is locked. Any change to a flag is a behavior change and must fail here.
-        """
         from dataclasses import asdict
 
         assert asdict(mgr.capabilities) == {
@@ -68,21 +50,13 @@ class TestTmuxCapabilities:
         }
 
 
-# ── Protocol conformance ───────────────────────────────────────────────
-
-
 def test_tmux_manager_satisfies_protocol() -> None:
-    """The singleton is a structural Multiplexer (runtime_checkable)."""
     assert isinstance(tmux_manager, Multiplexer)
 
 
 def test_tmux_manager_typed_as_multiplexer(mgr: TmuxManager) -> None:
-    """A TmuxManager binds to the Multiplexer type (pyright structural check)."""
     backend: Multiplexer = mgr
     assert backend.capabilities.name == "tmux"
-
-
-# ── Round-trips per wrapper method ─────────────────────────────────────
 
 
 async def test_ensure_session_calls_get_or_create(mgr: TmuxManager) -> None:
@@ -171,7 +145,6 @@ async def test_capture_scrollback_no_clamp_for_tmux(mgr: TmuxManager) -> None:
     result = await mgr.capture_scrollback("@0", lines=5000)
     assert isinstance(result, CaptureResult)
     assert result.text == "line1\nline2"
-    # tmux read_max_lines is None → never truncates, history passed through.
     assert result.truncated is False
     mgr.capture_pane_scrollback.assert_awaited_once_with("@0", history=5000)
 
@@ -317,12 +290,8 @@ async def test_ps_foreground_returns_none_on_nonzero_exit(monkeypatch) -> None:
     assert await TmuxManager._ps_foreground("/dev/missing") is None
 
 
-# ── _parse_ps_line (pure) ──────────────────────────────────────────────
-
-
 class TestParsePsLine:
     def test_foreground_leader(self) -> None:
-        # pid == pgid, "+" foreground stat
         line = "321 321 S+ claude --continue"
         assert TmuxManager._parse_ps_line(line) == (321, 321, ["claude", "--continue"])
 
@@ -336,7 +305,6 @@ class TestParsePsLine:
         assert TmuxManager._parse_ps_line("abc def S+ claude") is None
 
     def test_foreground_non_leader(self) -> None:
-        # foreground but pid != pgid → still parsed (fallback candidate)
         assert TmuxManager._parse_ps_line("555 321 S+ node x") == (
             555,
             321,

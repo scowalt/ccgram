@@ -1,5 +1,3 @@
-"""Tests for window picker callback handlers."""
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from telegram import Bot, CallbackQuery, Update
@@ -287,9 +285,6 @@ class TestBindProviderDetection:
         assert call_args[0] == ("@5", "external_bind")
 
     async def test_bind_bare_herdr_shell_still_detects_via_foreground(self) -> None:
-        # herdr leaves pane_current_command empty for a bare shell pane; the
-        # bind path must still run detection (which consults the foreground
-        # process via window_id) instead of skipping it.
         user_data = {UNBOUND_WINDOWS_KEY: ["@5"], PENDING_THREAD_ID: 42}
         query, update, context = _make_query_update_context(user_data=user_data)
 

@@ -1,19 +1,3 @@
-"""Per-window poll cycle — one tick for one thread-bound tmux window.
-
-Splits the per-window cycle into three layers:
-
-* ``decide`` — pure decision kernel (no I/O, no side effects). Takes a
-  ``TickContext``, returns a ``TickDecision``.
-* ``observe`` — I/O readers that build the ``TickContext`` from tmux,
-  the screen buffer, and the session monitor.
-* ``apply`` — every Telegram, tmux, and singleton mutation lives here:
-  emoji updates, status enqueuing, dead-window notifications, multi-pane
-  scans, passive shell relay.
-
-The package's public entry point is ``tick_window``; the polling
-coordinator imports nothing else.
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -69,7 +53,6 @@ async def tick_window(
     window: "TmuxWindow | None",
     runtime: PollingRuntime | None = None,
 ) -> None:
-    """Run one poll cycle for one window."""
     rt = runtime if runtime is not None else get_default_runtime()
     if rt.lifecycle.is_dead_notified(user_id, thread_id, window_id):
         return

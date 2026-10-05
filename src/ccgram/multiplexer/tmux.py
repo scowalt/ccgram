@@ -1,27 +1,3 @@
-"""Tmux backend for the Multiplexer contract, via libtmux.
-
-The first concrete backend behind ``multiplexer.base.Multiplexer``.  Wraps
-libtmux to provide async-friendly operations on a single tmux session:
-  - list_windows / find_window_by_name: discover Claude Code windows.
-  - capture_pane: read terminal content (plain or with ANSI colors).
-  - send_keys: forward user input or control keys to a window.
-  - create_window / kill_window: lifecycle management.
-  - list_panes / capture_pane_by_id / send_keys_to_pane: pane-level ops.
-  - Vim mode detection: auto-enter INSERT mode before sending text when
-    Claude Code's /vim mode is active and the TUI is in NORMAL mode.
-
-All blocking libtmux calls are wrapped in asyncio.to_thread().
-
-``TmuxManager`` satisfies the ``Multiplexer`` Protocol (neutral value types +
-``capabilities``). Callers use the stable pane/window helpers
-(``find_window_by_id``, ``capture_pane``, ``send_keys``, ``stamp_pane_title``)
-alongside the richer value-returning operations such as ``capture_scrollback``
-and ``foreground``.
-
-Key class: TmuxManager (singleton instantiated as `tmux_manager`).
-Module-level: _vim_state cache, _vim_locks for per-window send serialization.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -73,14 +49,7 @@ __all__ = [
 logger = structlog.get_logger()
 _T = TypeVar("_T")
 
-# Backward-compat alias: callers still import ``TmuxWindow`` from this module.
-# ``WindowRef`` is field-compatible (Task 1), so the alias is exact.
 TmuxWindow = WindowRef
-
-# Vim-insert detection state moved to ``multiplexer.vim_state`` (backend-neutral)
-# so the polling layer can import the helpers without importing this backend
-# (F1 boundary).  ``send`` below reads ``_vim_state`` / ``_vim_locks`` and the
-# ``has_insert_indicator`` probe imported above.
 
 
 _TmuxError = (
@@ -89,7 +58,7 @@ _TmuxError = (
     subprocess.CalledProcessError,
 )
 
-_WINDOW_LIST_TTL = 0.75  # seconds — coalesce status/monitor window scans
+_WINDOW_LIST_TTL = 0.75
 _TMUX_QUERY_TIMEOUT = 2.0
 _TMUX_BACKOFF_AFTER_FAILURE = 5.0
 _TMUX_KILL_WAIT_TIMEOUT = 0.5
@@ -271,7 +240,6 @@ async def _run_libtmux_operation(
     return result
 
 
-# Static capability declaration for the tmux backend (design Task 2).
 _TMUX_CAPABILITIES = MultiplexerCapabilities(
     name="tmux",
     ids_stable_across_restart=True,
@@ -285,24 +253,11 @@ _TMUX_CAPABILITIES = MultiplexerCapabilities(
 
 
 class TmuxManager:
-    """Manages tmux windows for Claude Code sessions.
-
-    Satisfies the ``Multiplexer`` Protocol: returns the neutral value types
-    (``WindowRef``/``PaneInfo``/``CaptureResult``/``ForegroundInfo``/
-    ``PaneDims``) and exposes ``capabilities``.
-    """
-
     @property
     def capabilities(self) -> MultiplexerCapabilities:
-        """Return the static capability declaration for the tmux backend."""
         return _TMUX_CAPABILITIES
 
     def __init__(self, session_name: str | None = None):
-        """Initialize tmux manager.
-
-        Args:
-            session_name: Name of the tmux session to use (default from config)
-        """
         self.session_name = session_name or config.tmux_session_name
         self._server: libtmux.Server | None = None
         self._windows_cache: list[TmuxWindow] = []
@@ -315,17 +270,14 @@ class TmuxManager:
 
     @property
     def server(self) -> libtmux.Server:
-        """Get or create tmux server connection."""
         if self._server is None:
             self._server = libtmux.Server()
         return self._server
 
     def _reset_server(self) -> None:
-        """Reset cached server connection (e.g. after tmux server restart)."""
         self._server = None
 
     def get_session(self) -> libtmux.Session | None:
-        """Get the tmux session if it exists."""
         try:
             return self.server.sessions.get(
                 session_name=self.session_name, default=None
@@ -335,24 +287,20 @@ class TmuxManager:
             return None
 
     def get_or_create_session(self) -> libtmux.Session:
-        """Get existing session or create a new one."""
         session = self.get_session()
         if session:
             return session
 
-        # Create new session with main window named specifically
         session = self.server.new_session(
             session_name=self.session_name,
             start_directory=str(Path.home()),
         )
-        # Rename the default window to the main window name
         if session.windows:
             session.windows[0].rename_window(config.tmux_main_window_name)
         return session
 
     @staticmethod
     def _window_ref_for_reconciliation(window: libtmux.Window) -> TmuxWindow | None:
-        """Build a window ref while treating pane metadata as optional."""
         name = window.window_name or ""
         window_id = window.window_id or ""
         if name == config.tmux_main_window_name:
@@ -389,7 +337,6 @@ class TmuxManager:
         )
 
     def _ensure_window_scan_state(self) -> None:
-        """Initialize scan caches for tests that construct via ``__new__``."""
         if not hasattr(self, "_windows_cache"):
             self._windows_cache = []
         if not hasattr(self, "_windows_cache_expires"):
@@ -420,13 +367,6 @@ class TmuxManager:
         return None
 
     async def list_windows(self) -> list[TmuxWindow]:
-        """List all windows in the session with their working directories.
-
-        Uses direct ``tmux list-windows`` instead of libtmux's session lookup so
-        the 1s polling path does not spawn expensive ``list-sessions -F``
-        clients. Results are briefly cached and concurrent scans reuse the
-        cache, preventing tmux clients from piling up when the server wedges.
-        """
         self._ensure_window_scan_state()
         loop = asyncio.get_running_loop()
         cached = self._window_scan_cached(loop.time())
@@ -441,7 +381,6 @@ class TmuxManager:
             return list(self._windows_cache)
 
     async def list_windows_for_reconciliation(self) -> list[TmuxWindow] | None:
-        """List windows, or return None when tmux cannot confirm the session."""
 
         def _sync_list_windows() -> list[TmuxWindow] | None:
             try:
@@ -552,14 +491,6 @@ class TmuxManager:
         return windows
 
     async def find_window_by_name(self, window_name: str) -> TmuxWindow | None:
-        """Find a window by its name.
-
-        Args:
-            window_name: The window name to match
-
-        Returns:
-            TmuxWindow if found, None otherwise
-        """
         windows = await self.list_windows()
         for window in windows:
             if window.window_name == window_name:
@@ -567,14 +498,6 @@ class TmuxManager:
         return None
 
     async def find_window_by_id(self, window_id: str) -> TmuxWindow | None:
-        """Find a window by its tmux window ID (e.g. '@0', '@12').
-
-        Args:
-            window_id: The tmux window ID to match
-
-        Returns:
-            TmuxWindow if found, None otherwise
-        """
         windows = await self.list_windows()
         for window in windows:
             if window.window_id == window_id:
@@ -582,16 +505,6 @@ class TmuxManager:
         return None
 
     async def capture_pane(self, window_id: str, with_ansi: bool = False) -> str | None:
-        """Capture the visible text content of a window's active pane.
-
-        Args:
-            window_id: The window ID to capture
-            with_ansi: If True, capture with ANSI color codes
-
-        Returns:
-            The captured text (stripped of trailing whitespace),
-            or None on failure or empty content.
-        """
         if with_ansi:
             return await self._capture_pane_ansi(window_id)
 
@@ -600,12 +513,6 @@ class TmuxManager:
     async def capture_pane_scrollback(
         self, window_id: str, history: int = 200
     ) -> str | None:
-        """Capture pane text including scrollback history (plain text, no ANSI).
-
-        Uses ``tmux capture-pane -p -J -S -{history}``. The ``-J`` flag joins
-        wrapped lines so prompt markers are never split across lines on narrow
-        terminals. Returns stripped text or None on failure.
-        """
         cmd = [
             "tmux",
             "capture-pane",
@@ -643,11 +550,6 @@ class TmuxManager:
             return None
 
     async def capture_pane_raw(self, window_id: str) -> tuple[str, int, int] | None:
-        """Capture pane text with ANSI escapes and pane dimensions.
-
-        Returns (raw_text, columns, rows) or None on failure. The raw text
-        includes ANSI escape sequences suitable for feeding into pyte.
-        """
         cmd = [
             "tmux",
             "display-message",
@@ -657,7 +559,6 @@ class TmuxManager:
             "#{pane_width}:#{pane_height}",
         ]
         try:
-            # Get dimensions and capture in one shell command
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
@@ -673,9 +574,6 @@ class TmuxManager:
                 return None
             stdout, stderr = result
             if proc.returncode != 0:
-                # Window/pane gone mid-capture — a race in the live-view poll,
-                # not an operator-actionable error. TimeoutError below stays
-                # WARNING (tmux genuinely wedged).
                 logger.debug(
                     "Failed to get pane dimensions %s: %s",
                     window_id,
@@ -689,7 +587,6 @@ class TmuxManager:
             except ValueError:
                 return None
 
-            # Capture with ANSI escapes
             text = await self._capture_pane_ansi(window_id)
             if text is None:
                 return None
@@ -702,18 +599,15 @@ class TmuxManager:
             return None
 
     def _ensure_capture_state(self) -> None:
-        """Initialize capture backoff state for tests that construct via ``__new__``."""
         if not hasattr(self, "_capture_backoff_expires"):
             self._capture_backoff_expires = {}
         if not hasattr(self, "_capture_locks"):
             self._capture_locks = {}
 
     async def _capture_pane_ansi(self, window_id: str) -> str | None:
-        """Capture pane with ANSI colors via tmux subprocess."""
         return await self._capture_pane_subprocess(window_id, with_ansi=True)
 
     async def _capture_pane_plain(self, window_id: str) -> str | None:
-        """Capture pane as plain text via a bounded tmux subprocess."""
         return await self._capture_pane_subprocess(window_id, with_ansi=False)
 
     async def _capture_pane_subprocess(
@@ -778,11 +672,6 @@ class TmuxManager:
         return text if text else None
 
     async def get_pane_title(self, window_id: str) -> str:
-        """Get the terminal title of a window's active pane.
-
-        Some CLIs (e.g. Gemini) broadcast state via OSC escape sequences
-        that set the terminal title. Returns empty string on failure.
-        """
         cmd = [
             "tmux",
             "display-message",
@@ -815,11 +704,6 @@ class TmuxManager:
             return ""
 
     async def stamp_pane_title(self, window_id: str, provider_name: str) -> None:
-        """Set pane title to ``ccgram:<provider>`` for instant re-detection.
-
-        Uses ``tmux select-pane -T`` to set the title directly, avoiding
-        ``send_keys`` which would deliver the command as input to agent CLIs.
-        """
         title = f"ccgram:{provider_name}"
         target = f"{self.session_name}:{window_id}"
         command = ["tmux", "select-pane", "-t", target, "-T", title]
@@ -835,13 +719,12 @@ class TmuxManager:
                 command=command,
                 timeout=5.0,
             )
-        except (OSError, TimeoutError):
+        except OSError, TimeoutError:
             pass
 
     def _pane_send(
         self, window_id: str, chars: str, *, enter: bool, literal: bool
     ) -> bool:
-        """Synchronous helper: send keys to the active pane of a window."""
         session = self.get_session()
         if not session:
             logger.debug("No tmux session found")
@@ -885,30 +768,6 @@ class TmuxManager:
         )
 
     async def _ensure_vim_insert_mode(self, window_id: str) -> None:
-        """Enter vim INSERT mode before sending text — only when vim is known on.
-
-        Vim state is observed by status polling: notify_vim_insert_seen sets the
-        cache to True when it renders ``-- INSERT --``. We act only on a
-        positively-confirmed vim window:
-        - True (vim on): capture the pane; if INSERT is not showing we are in
-          NORMAL mode, so send ``i`` to enter INSERT.
-        - False / unknown (None): no-op. We never speculatively type ``i`` here.
-          Doing so leaked a literal ``i`` into the message whenever the pane was
-          not actually in vim NORMAL mode — the common case, since Claude Code's
-          default prompt is not vim. The old probe could not tell ``i entered
-          INSERT`` from ``i typed while already in INSERT``, so it leaked the
-          probe key on capture failures and on stale captures.
-
-        Resilient by construction: a capture failure or an already-INSERT pane
-        sends nothing, so no key can leak. The only ``i`` ever sent is into a
-        window polling has confirmed is in vim and that currently shows no
-        INSERT indicator — i.e. genuine NORMAL mode.
-
-        Residual caveat: if a confirmed-vim window leaves vim mode, the cache
-        stays True until the window is cleaned up, so the first post-exit send
-        may still emit a stray ``i``. Far narrower than the previous
-        every-message leak and only affects users who toggle vim off mid-window.
-        """
         if _vim_state.get(window_id) is not True:
             return
 
@@ -917,9 +776,8 @@ class TmuxManager:
             return
 
         if has_insert_indicator(pane_text):
-            return  # already in INSERT
+            return
 
-        # vim on, no INSERT indicator → NORMAL mode; enter INSERT.
         await self._pane_send_async(
             window_id,
             "i",
@@ -929,25 +787,11 @@ class TmuxManager:
         )
 
     async def _send_literal_then_enter(self, window_id: str, text: str) -> bool:
-        """Send literal text followed by Enter with a delay.
-
-        Claude Code's TUI sometimes interprets a rapid-fire Enter
-        (arriving in the same input batch as the text) as a newline
-        rather than submit.  A 500ms gap lets the TUI process the
-        text before receiving Enter.
-
-        Auto-detects vim NORMAL mode and enters INSERT before sending.
-        Serialized per-window via _vim_locks to prevent interleaved probes.
-
-        Handles ``!`` command mode: sends ``!`` first so the TUI switches
-        to bash mode, waits 1s, then sends the rest.
-        """
         lock = _vim_locks.setdefault(window_id, asyncio.Lock())
         async with lock:
             return await self._send_literal_then_enter_locked(window_id, text)
 
     async def _send_literal_then_enter_locked(self, window_id: str, text: str) -> bool:
-        """Inner send implementation (must be called under per-window lock)."""
         await self._ensure_vim_insert_mode(window_id)
 
         if text.startswith("!"):
@@ -997,20 +841,6 @@ class TmuxManager:
         *,
         raw: bool = False,
     ) -> bool:
-        """Send keys to a specific window.
-
-        Args:
-            window_id: The window ID to send to
-            text: Text to send
-            enter: Whether to press enter after the text
-            literal: If True, send text literally. If False, interpret special keys
-                     like "Up", "Down", "Left", "Right", "Escape", "Enter".
-            raw: If True, bypass TUI-specific workarounds (``!`` prefix splitting,
-                 vim mode detection, Enter delay). Use for plain shell windows.
-
-        Returns:
-            True if successful, False otherwise
-        """
         if literal and enter and not raw:
             return await self._send_literal_then_enter(window_id, text)
 
@@ -1023,7 +853,6 @@ class TmuxManager:
         )
 
     async def kill_window(self, window_id: str) -> bool:
-        """Kill a tmux window by its ID."""
 
         def _sync_kill() -> bool:
             session = self.get_session()
@@ -1050,7 +879,6 @@ class TmuxManager:
         return killed
 
     async def rename_window(self, window_id: str, new_name: str) -> bool:
-        """Rename a tmux window by its ID. Returns True on success."""
 
         def _sync_rename() -> bool:
             session = self.get_session()
@@ -1077,13 +905,7 @@ class TmuxManager:
             self._invalidate_window_cache()
         return renamed
 
-    # ── Pane-level operations ──────────────────────────────────────────
-
     async def list_panes(self, window_id: str) -> list[PaneInfo]:
-        """List all panes in a window.
-
-        Returns an empty list if the window is not found or on error.
-        """
 
         def _sync_list_panes() -> list[PaneInfo]:
             session = self.get_session()
@@ -1108,8 +930,6 @@ class TmuxManager:
                     )
                 return result
             except _TmuxError as exc:
-                # Miniapp polls panes at ~0.2s; a gone window races here. Debug,
-                # not warning — server reset below recovers.
                 logger.debug("Failed to list panes for %s: %s", window_id, exc)
                 self._reset_server()
                 return []
@@ -1121,10 +941,6 @@ class TmuxManager:
         )
 
     async def split_window(self, window_id: str) -> str | None:
-        """Split a window's active pane via libtmux; return the new pane id.
-
-        Returns None when the window is gone or the split fails.
-        """
 
         def _sync_split() -> str | None:
             session = self.get_session()
@@ -1150,17 +966,8 @@ class TmuxManager:
         with_ansi: bool = False,
         window_id: str | None = None,
     ) -> str | None:
-        """Capture visible text of a specific pane (by stable pane ID like '%3').
-
-        Unlike capture_pane() which targets the active pane of a window,
-        this targets a specific pane regardless of whether it is active.
-
-        When window_id is given, the pane must belong to that window (prevents
-        cross-window access via crafted pane IDs).
-        """
         if with_ansi:
             if window_id:
-                # Validate pane belongs to the specified window before capture
                 panes = await self.list_panes(window_id)
                 if not any(p.pane_id == pane_id for p in panes):
                     logger.debug("Pane %s not found in window %s", pane_id, window_id)
@@ -1180,8 +987,6 @@ class TmuxManager:
                 text = text.rstrip()
                 return text if text else None
             except _TmuxError as exc:
-                # Miniapp polls captures at ~0.2s; a gone pane races here. Debug,
-                # not warning — server reset below recovers.
                 logger.debug("Failed to capture pane %s: %s", pane_id, exc)
                 self._reset_server()
                 return None
@@ -1202,14 +1007,6 @@ class TmuxManager:
         literal: bool = True,
         window_id: str | None = None,
     ) -> bool:
-        """Send keys to a specific pane (by stable pane ID like '%3').
-
-        Unlike send_keys() which targets the active pane of a window,
-        this targets a specific pane regardless of whether it is active.
-
-        When window_id is given, the pane must belong to that window (prevents
-        cross-window access via crafted pane IDs).
-        """
 
         def _sync_send() -> bool:
             session = self.get_session()
@@ -1243,11 +1040,6 @@ class TmuxManager:
         *,
         window_id: str | None = None,
     ) -> libtmux.Pane | None:
-        """Find a pane by its stable ID (e.g. '%3').
-
-        When window_id is given, only searches that window's panes (prevents
-        cross-window access). Otherwise searches all windows in the session.
-        """
         windows = session.windows
         if window_id:
             windows = [w for w in windows if w.window_id == window_id]
@@ -1263,14 +1055,12 @@ class TmuxManager:
         launch_command: str,
         agent_args: str,
     ) -> None:
-        """Send launch command to pane, appending agent_args if provided."""
         cmd = launch_command
         if agent_args:
             cmd = f"{cmd} {agent_args}"
         pane.send_keys(cmd, enter=True, literal=True)
 
     async def list_workspaces(self) -> list[WorkspaceRef]:
-        """tmux has no workspace concept — always returns ``[]``."""
         return []
 
     async def create_window(
@@ -1281,44 +1071,25 @@ class TmuxManager:
         agent_args: str = "",
         launch_command: str | None = None,
         *,
-        workspace_id: str | None = None,  # noqa: ARG002 — tmux has no workspaces
+        workspace_id: str | None = None,  # noqa: ARG002
     ) -> tuple[bool, str, str, str]:
-        """Create a new tmux window and optionally start an agent CLI.
-
-        Args:
-            work_dir: Working directory for the new window
-            window_name: Optional window name (defaults to directory name)
-            start_agent: Whether to start the agent CLI command
-            agent_args: Extra arguments appended to the launch command
-                        (e.g. "--continue", "--resume <id>")
-            launch_command: The CLI command to run (e.g. "claude", "codex", "gemini")
-            workspace_id: Ignored — tmux has no workspace concept.
-
-        Returns:
-            Tuple of (success, message, window_name, window_id)
-        """
-        # Validate directory first
         path = Path(work_dir).expanduser().resolve()
         if not path.exists():
             return False, f"Directory does not exist: {work_dir}", "", ""
         if not path.is_dir():
             return False, f"Not a directory: {work_dir}", "", ""
 
-        # Create window name, adding suffix if name already exists
         final_window_name = window_name if window_name else path.name
 
-        # Check for existing window name
         base_name = final_window_name
         counter = 2
         while await self.find_window_by_name(final_window_name):
             final_window_name = f"{base_name}-{counter}"
             counter += 1
 
-        # Create window in thread
         def _create_and_start() -> tuple[bool, str, str, str]:
             session = self.get_or_create_session()
             try:
-                # Create new window
                 window = session.new_window(
                     window_name=final_window_name,
                     start_directory=str(path),
@@ -1327,8 +1098,6 @@ class TmuxManager:
                 new_window_id = window.window_id or ""
                 pane = window.active_pane
 
-                # Disable interactive editors — Telegram users can't see
-                # tmux popups or terminal overlays opened by plugins
                 if pane and new_window_id:
                     pane.send_keys(
                         "export EDITOR=true VISUAL=true",
@@ -1369,21 +1138,12 @@ class TmuxManager:
             self._invalidate_window_cache()
         return result
 
-    # ── Multiplexer Protocol surface ───────────────────────────────────
-    # Neutral-typed wrappers over the libtmux-specific methods above.
-
     async def ensure_session(self) -> None:
-        """Ensure the tmux session exists (``get_or_create_session``)."""
         await asyncio.to_thread(self.get_or_create_session)
 
     async def capture_scrollback(
         self, window_id: str, lines: int = 200
     ) -> CaptureResult | None:
-        """Capture pane text with scrollback, clamped to ``read_max_lines``.
-
-        tmux has no line cap (``read_max_lines is None``), so ``truncated`` is
-        always False here; the clamp exists for backends that cap (herdr).
-        """
         max_lines = self.capabilities.read_max_lines
         effective = lines
         truncated = False
@@ -1396,7 +1156,6 @@ class TmuxManager:
         return CaptureResult(text=text, truncated=truncated)
 
     async def pane_dims(self, window_id: str) -> PaneDims | None:
-        """Return the active pane's column/row dimensions, or None on failure."""
         proc: asyncio.subprocess.Process | None = None
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -1434,7 +1193,6 @@ class TmuxManager:
         literal: bool = True,
         raw: bool = False,
     ) -> bool:
-        """Send text to the active pane (alias of ``send_keys``)."""
         return await self.send_keys(
             window_id, text, enter=enter, literal=literal, raw=raw
         )
@@ -1448,57 +1206,35 @@ class TmuxManager:
         literal: bool = True,
         window_id: str | None = None,
     ) -> bool:
-        """Send text to a specific pane (alias of ``send_keys_to_pane``)."""
         return await self.send_keys_to_pane(
             pane_id, text, enter=enter, literal=literal, window_id=window_id
         )
 
     async def create_worktree_window(
         self,
-        repo_path: str,  # noqa: ARG002 — tmux has no native worktrees
+        repo_path: str,  # noqa: ARG002
         worktree_path: str,  # noqa: ARG002
         branch: str,  # noqa: ARG002
         *,
         window_name: str | None = None,  # noqa: ARG002
         launch_command: str | None = None,  # noqa: ARG002
     ) -> tuple[bool, str, str, str]:
-        """Not supported on tmux (``native_worktrees`` is False).
-
-        Callers gate on ``capabilities.native_worktrees`` and use ccgram's own
-        ``git worktree add`` + ``create_window`` path instead, so this is never
-        reached. Returns a failure tuple for safety rather than raising.
-        """
         return False, "worktree delegation unsupported on tmux", "", ""
 
     async def watch_events(
         self,
-        window_ids: Sequence[str],  # noqa: ARG002 — tmux has no event stream
+        window_ids: Sequence[str],  # noqa: ARG002
     ) -> AsyncGenerator[MuxEvent, None]:
-        """No event stream on tmux (``supports_event_stream`` is False).
-
-        Yields nothing; consumers gate on ``capabilities.supports_event_stream``
-        and never call this. The empty ``for`` loop makes it an async generator.
-        """
-        for _ in ():  # pragma: no cover
+        for _ in ():
             yield MuxEvent(kind="", window_id="")
 
     async def agent_status(
         self,
-        window_id: str,  # noqa: ARG002 — protocol signature
+        window_id: str,  # noqa: ARG002
     ) -> AgentStatus | None:
-        """tmux has no native agent status (``native_agent_status`` is False).
-
-        Returns None so callers fall back to terminal scraping.
-        """
         return None
 
     async def foreground(self, window_id: str) -> ForegroundInfo | None:
-        """Return foreground process info for the active pane via ``ps -t``.
-
-        Reads the window's ``pane_tty`` then the foreground process group
-        leader from ``ps``.  ``cwd`` comes from the window's reported cwd.
-        Returns None when the window is gone or no foreground process exists.
-        """
         window = await self.find_window_by_id(window_id)
         if not window or not window.pane_tty:
             return None
@@ -1516,12 +1252,6 @@ class TmuxManager:
 
     @staticmethod
     async def _ps_foreground(tty_path: str) -> tuple[int, int, list[str]] | None:
-        """Parse ``ps -t <tty>`` for the foreground group leader.
-
-        Returns ``(pid, pgid, argv)`` for the group leader (pid == pgid) among
-        foreground processes (``+`` in stat), or the first foreground process
-        as a fallback.  None on any error or no foreground process.
-        """
         proc: asyncio.subprocess.Process | None = None
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -1551,7 +1281,7 @@ class TmuxManager:
             parsed = TmuxManager._parse_ps_line(line)
             if parsed is None:
                 continue
-            if parsed[0] == parsed[1]:  # pid == pgid → group leader
+            if parsed[0] == parsed[1]:
                 return parsed
             if fallback is None:
                 fallback = parsed
@@ -1559,11 +1289,6 @@ class TmuxManager:
 
     @staticmethod
     def _parse_ps_line(line: str) -> tuple[int, int, list[str]] | None:
-        """Parse one ``ps`` line into ``(pid, pgid, argv)`` if foreground.
-
-        Returns None for non-foreground lines (no ``+`` in stat) or malformed
-        rows.
-        """
         parts = line.split(None, 3)
         if len(parts) < 4:  # noqa: PLR2004
             return None
@@ -1576,8 +1301,4 @@ class TmuxManager:
             return None
 
 
-# Global instance with default session name
 tmux_manager = TmuxManager()
-
-# ``send_to_window`` / ``send_followup_to_window`` moved to
-# ``multiplexer.window_ops`` (backend-neutral; they route through the proxy).

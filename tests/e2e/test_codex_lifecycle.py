@@ -1,5 +1,3 @@
-"""E2E tests for Codex lifecycle — binding, messaging, recovery."""
-
 import asyncio
 import shutil
 
@@ -29,10 +27,8 @@ async def test_basic_lifecycle(e2e_app, work_dir):
 
     window_id, _ = await setup_bound_topic(app, calls, work_dir, provider="codex")
 
-    # Verify agent launched
     await wait_for_pane(tmux, window_id, timeout=30)
 
-    # Wait for agent response delivered to topic
     await wait_for_send(
         calls,
         predicate=lambda d: (

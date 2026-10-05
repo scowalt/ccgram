@@ -1,12 +1,3 @@
-"""Interactive UI callback handlers.
-
-Handles inline keyboard callbacks for AskUserQuestion/ExitPlanMode/Permission UIs:
-  - CB_ASK_* direction/action keys: navigate interactive UI via tmux keys
-  - CB_ASK_REFRESH: refresh the interactive UI display
-
-Key function: handle_interactive_callback (uniform callback handler signature).
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -35,7 +26,6 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-# cb_prefix -> (tmux_key, refresh_ui_after)
 INTERACTIVE_KEY_MAP: dict[str, tuple[str, bool]] = {
     CB_ASK_UP: ("Up", True),
     CB_ASK_DOWN: ("Down", True),
@@ -47,7 +37,6 @@ INTERACTIVE_KEY_MAP: dict[str, tuple[str, bool]] = {
     CB_ASK_TAB: ("Tab", True),
 }
 
-# Answer-toast labels for interactive key callbacks
 INTERACTIVE_KEY_LABELS: dict[str, str] = {
     CB_ASK_ESC: "\u238b Esc",
     CB_ASK_ENTER: "\u23ce Enter",
@@ -55,7 +44,6 @@ INTERACTIVE_KEY_LABELS: dict[str, str] = {
     CB_ASK_TAB: "\u21e5 Tab",
 }
 
-# All interactive prefixes (key map + refresh)
 INTERACTIVE_PREFIXES: tuple[str, ...] = (
     *INTERACTIVE_KEY_MAP,
     CB_ASK_REFRESH,
@@ -63,17 +51,6 @@ INTERACTIVE_PREFIXES: tuple[str, ...] = (
 
 
 def match_interactive_prefix(data: str) -> tuple[str, str, str | None] | None:
-    """Match callback data against interactive UI prefixes.
-
-    Returns (cb_prefix, window_id, pane_id_or_None) or None.
-
-    Callback data format:
-      - ``"aq:enter:@12"``         → window @12, active pane
-      - ``"aq:enter:@12|%5"``      → tmux: window @12, pane %5
-      - ``"aq:enter:w2:t1|w2:p1"`` → herdr: tab w2:t1, pane w2:p1
-    """
-    # Lazy: avoid a module-level import that ruff flags as unused before the
-    # function body is reached; CB_PANE_DELIMITER is a plain string constant.
     from ..callback_data import CB_PANE_DELIMITER
 
     for prefix in INTERACTIVE_PREFIXES:
@@ -93,14 +70,11 @@ async def handle_interactive_callback(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle interactive UI callbacks (AskUserQuestion/ExitPlanMode navigation)."""
     matched = match_interactive_prefix(data)
     if not matched:
         return
 
     cb_prefix, window_id, pane_id = matched
-    # Lazy: callback_helpers ↔ callback_registry ↔ interactive_callbacks
-    # cycle through registration side effects.
     from ..callback_helpers import get_thread_id, user_owns_window
 
     if not user_owns_window(user_id, window_id):
@@ -134,9 +108,6 @@ async def handle_interactive_callback(
         elif sent and not refresh_ui:
             await clear_interactive_msg(user_id, client, thread_id)
         await query.answer(INTERACTIVE_KEY_LABELS.get(cb_prefix, ""))
-
-
-# --- Registry dispatch entry point ---
 
 
 @register(*INTERACTIVE_PREFIXES)

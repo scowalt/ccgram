@@ -1,5 +1,3 @@
-"""Tests for LLM command generation modules."""
-
 from unittest.mock import MagicMock
 
 import pytest

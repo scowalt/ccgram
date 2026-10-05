@@ -1,11 +1,3 @@
-"""Provider and mode selection callbacks for the topic-creation flow.
-
-Handles CB_PROV_SELECT (select provider, then show mode picker or go direct to
-window creation) and CB_MODE_SELECT (select launch mode and create the window).
-
-Both ultimately call ``launch_window`` from ``window_launch_service``.
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -50,14 +42,9 @@ async def _validate_provider_select(
     context: ContextTypes.DEFAULT_TYPE,
     pending_thread_id: int | None,
 ) -> bool:
-    """Validate provider select callback; returns True if request should proceed."""
 
     confirm_thread_id = get_thread_id(update)
     if pending_thread_id is not None and confirm_thread_id != pending_thread_id:
-        # _handle_mode_select clears browse state before calling this, so
-        # _check_ui_guards can no longer catch a leftover worktree flow on
-        # a later message — clear it here or the CREATING re-entrancy flag
-        # sticks and blocks every future worktree confirm.
         clear_worktree_state(context.user_data)
         if context.user_data is not None:
             context.user_data.pop(PENDING_THREAD_ID, None)
@@ -67,7 +54,6 @@ async def _validate_provider_select(
 
     await query.answer()
 
-    # Guard against double-click: if thread already has a window, skip
     if pending_thread_id is not None:
         existing_wid = thread_router.get_window_for_thread(user_id, pending_thread_id)
         if existing_wid is not None:
@@ -91,12 +77,6 @@ async def _handle_provider_select(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle CB_PROV_SELECT: select provider and show mode picker.
-
-    Providers without a YOLO flag (e.g. shell) skip the mode picker
-    and go directly to window creation with approval_mode="normal".
-    """
-    # Lazy: providers package heavy bootstrap
     from ccgram.providers import has_yolo_mode
 
     provider_name = data[len(CB_PROV_SELECT) :]
@@ -119,7 +99,6 @@ async def _handle_provider_select(
         return
 
     if not has_yolo_mode(provider_name):
-        # No mode picker needed — go directly to window creation
         clear_browse_state(context.user_data)
         await launch_window(
             query,
@@ -144,7 +123,6 @@ async def _handle_provider_select(
 
 
 def _parse_mode_select(data: str) -> tuple[str, str] | None:
-    """Parse mode callback data as (provider_name, approval_mode)."""
     raw = data[len(CB_MODE_SELECT) :]
     provider_name, sep, approval_mode = raw.partition(":")
     if not sep:
@@ -159,7 +137,6 @@ async def _handle_mode_select(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle CB_MODE_SELECT: select launch mode and create tmux window."""
     parsed = _parse_mode_select(data)
     if parsed is None:
         await query.answer("Invalid mode", show_alert=True)

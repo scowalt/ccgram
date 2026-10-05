@@ -97,8 +97,6 @@ class TestReads:
         [
             (True, True),
             (False, False),
-            # MagicMock is truthy but not `is True` — verifies the production
-            # guard that prevents a mock attribute from short-circuiting detection.
             (MagicMock(), False),
         ],
     )

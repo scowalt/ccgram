@@ -1,16 +1,3 @@
-"""Transcript reading and processing for agent session files.
-
-Handles the full lifecycle of reading agent transcripts:
-  - Scanning Claude projects for active session files
-  - Incremental byte-offset reads for JSONL providers
-  - Whole-file reads for JSON providers (e.g. Gemini)
-  - Parsing transcript entries into NewMessage objects
-  - mtime caching to skip unchanged files
-  - Pending tool-use state carried across poll cycles
-
-Key class: TranscriptReader.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -42,13 +29,8 @@ _SESSION_SCAN_WARN_SECS = 0.25
 
 
 def _resolve_provider_for_file(window_id: str, file_path: Path) -> Any:
-    """Prefer transcript-path provider hints when a hookful state goes stale."""
     provider_name: str | None = None
     try:
-        # Lazy: window_state_ports.identity_state imports the kernel which
-        # may not yet be wired during early transcript-discovery paths.
-        # RuntimeError comes from the unwired _WindowStoreProxy;
-        # ImportError guards against an unfinished port package on disk.
         from .window_state_ports import identity_state
 
         provider_name = identity_state.get_provider_name(window_id)
@@ -63,14 +45,6 @@ def _resolve_provider_for_file(window_id: str, file_path: Path) -> Any:
         and provider.capabilities.supports_hook
         and registry.is_valid(inferred)
     ):
-        # Throttled debug, not warning: this read-path observation repeats every
-        # poll until session_map corrects the in-memory state. The read itself
-        # self-heals (we return the inferred provider below), and when the hook
-        # is functional session_map._sync_window_from_session_map emits the
-        # authoritative WARNING on the state mutation. Caveat: if the hook is
-        # broken so session_map never updates, that correction (and its WARNING)
-        # never fires and this stays debug-only — accepted, since the read still
-        # works and a per-poll WARNING here would just flood.
         log_throttled(
             logger,
             f"provider-mismatch:{window_id}",
@@ -85,12 +59,6 @@ def _resolve_provider_for_file(window_id: str, file_path: Path) -> Any:
 
 
 class TranscriptReader:
-    """Reads and processes agent transcript files for new messages.
-
-    Owns: mtime cache, pending_tools per session, MonitorState updates.
-    Delegates activity recording to IdleTracker (via session_id).
-    """
-
     def __init__(self, state: MonitorState, idle_tracker: IdleTracker) -> None:
         self._state = state
         self._idle_tracker = idle_tracker
@@ -99,11 +67,9 @@ class TranscriptReader:
         self._catch_up_sessions: set[str] = set()
 
     def mark_catch_up(self, session_id: str) -> None:
-        """Mark a session for catch-up on first read (don't skip to EOF)."""
         self._catch_up_sessions.add(session_id)
 
     def clear_session(self, session_id: str) -> None:
-        """Remove all per-session state for a cleaned-up session."""
         self._state.remove_session(session_id)
         self._file_mtimes.pop(session_id, None)
         self._pending_tools.pop(session_id, None)
@@ -113,7 +79,6 @@ class TranscriptReader:
     def _adopt_tracking_for_file(
         self, session_id: str, file_path: Path
     ) -> TrackedSession | None:
-        """Move offset state when the same transcript appears under a refreshed id."""
         try:
             target = file_path.resolve()
         except _PathResolveError:
@@ -155,11 +120,6 @@ class TranscriptReader:
     async def _offset_after_last_user_entry(
         self, file_path: Path, provider: Any
     ) -> int | None:
-        """Find the byte offset just past the last user entry in a transcript.
-
-        Returns None if no user entry is found (caller should fall back to
-        file_size to avoid replaying an entire old transcript).
-        """
         offset_after_last_user: int | None = None
         try:
             async with aiofiles.open(file_path, "r", encoding="utf-8") as f:
@@ -179,7 +139,6 @@ class TranscriptReader:
         provider: Any,
         window_id: str,
     ) -> tuple[TrackedSession, int, bool]:
-        """Create tracking state for a newly seen transcript file."""
         try:
             st = file_path.stat()
             file_size, current_mtime = st.st_size, st.st_mtime
@@ -223,7 +182,6 @@ class TranscriptReader:
         window_id: str = "",
         current_map: dict[str, dict[str, Any]] | None = None,
     ) -> None:
-        """Process a single session file for new messages."""
         started_at = time.monotonic()
         tracked = self._state.get_session(session_id)
         provider = _resolve_provider_for_file(window_id, file_path)
@@ -309,7 +267,6 @@ class TranscriptReader:
         new_entries: list[dict],
         agent_messages: list[Any],
     ) -> None:
-        """Emit diagnostic timing for one transcript scan when enabled."""
         elapsed_secs = time.monotonic() - started_at
         if not config.diagnostic_logs:
             return
@@ -328,7 +285,6 @@ class TranscriptReader:
     async def _read_new_lines(
         self, session: TrackedSession, file_path: Path, window_id: str = ""
     ) -> list[dict]:
-        """Read new lines from a session file using byte offset."""
         provider = _resolve_provider_for_file(window_id, file_path)
 
         if not provider.capabilities.supports_incremental_read:
@@ -396,7 +352,6 @@ class TranscriptReader:
         file_path: Path,
         provider: Any,
     ) -> list[dict]:
-        """Read a whole-file transcript (e.g. Gemini JSON) via the provider."""
         try:
             new_entries, new_offset = await asyncio.to_thread(
                 provider.read_transcript_file,
@@ -410,10 +365,6 @@ class TranscriptReader:
             return []
 
     async def _get_active_cwds(self) -> set[str]:
-        """Get normalized cwds of all active tmux windows."""
-        # Lazy: tmux_manager imports providers which transitively imports
-        # transcript_reader through provider format modules.
-        # Lazy: tmux_manager pulls providers eagerly; defer until pane lookup runs
         from .multiplexer import multiplexer as tmux_manager
 
         cwds: set[str] = set()
@@ -428,7 +379,6 @@ class TranscriptReader:
     def _scan_projects_sync(
         self, projects_path: Path, active_cwds: set[str]
     ) -> list[SessionInfo]:
-        """Scan filesystem for session files matching active cwds (sync)."""
         sessions: list[SessionInfo] = []
 
         if not projects_path.exists():
@@ -474,8 +424,6 @@ class TranscriptReader:
                             )
 
                 except (json.JSONDecodeError, OSError) as e:
-                    # Degraded discovery: index unreadable, falling back to a
-                    # glob scan below. Worth surfacing — not a per-poll hot path.
                     logger.warning("Error reading index %s: %s", index_file, e)
 
             try:

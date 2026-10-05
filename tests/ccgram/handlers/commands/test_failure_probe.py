@@ -1,5 +1,3 @@
-"""Tests for failure_probe — post-send transcript + pane delta probes."""
-
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 

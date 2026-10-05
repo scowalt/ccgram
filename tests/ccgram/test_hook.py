@@ -190,7 +190,7 @@ class TestInstallMultipleEvents:
         monkeypatch.setattr("ccgram.hook._claude_settings_file", lambda: settings_file)
 
         _install_hook()
-        _install_hook()  # Second install
+        _install_hook()
 
         settings = json.loads(settings_file.read_text())
         for event_type in settings["hooks"]:
@@ -821,16 +821,6 @@ class TestClaudeSettingsFile:
 
 
 class TestNestedSessionDetection:
-    """Hook fired by a nested claude (e.g. claude-mem observer) must not
-    overwrite session_map.json or write events for the bound topic.
-
-    Process model: a tmux pane is hosting a primary claude that the user
-    launched from their shell. The shell put claude in its own pgrp, so
-    primary's PID == pgid == foreground PGID on the tty. Any subprocess claude
-    inherits that pgid (without setpgid) but has a different PID — so its
-    closest-claude-ancestor (itself) does not equal foreground PGID.
-    """
-
     @staticmethod
     def _ps_lines(rows: list[tuple[int, int, int, str, str]]) -> str:
         return "\n".join(
@@ -927,11 +917,6 @@ class TestNestedSessionDetection:
 
 
 class TestNestedHookEndToEnd:
-    """Drive ``hook_main`` end-to-end through ``subprocess.run`` mocking and
-    assert that observer SessionStart/Stop events do NOT poison session_map
-    or events.jsonl.
-    """
-
     _OBSERVER_PAYLOAD = {
         "session_id": "35339b36-8b46-41eb-98fc-df51cd1ff498",
         "cwd": "/Users/alexei/.claude-mem/observer-sessions",

@@ -1,20 +1,3 @@
-"""Resume picker UX flow + transcript scan.
-
-Implements the picker the user sees after tapping "Resume" on a dead
-window's recovery banner: scans Claude Code session JSONL files for the
-bound cwd, renders a 6-row inline keyboard, and binds a freshly created
-tmux window to the picked session.
-
-Public surface:
-  - :class:`_SessionEntry` (internal — entry shape used by the picker)
-  - :func:`scan_sessions_for_cwd` (re-exported from
-    :mod:`handlers.recovery` for legacy callers)
-  - :func:`_build_resume_picker_keyboard`,
-    :func:`_build_empty_resume_keyboard`
-  - :func:`_handle_resume_pick` (handler dispatched from
-    :mod:`recovery_callbacks`)
-"""
-
 from __future__ import annotations
 
 import json
@@ -60,8 +43,6 @@ _MAX_RESUME_SESSIONS = 6
 
 @dataclass
 class _SessionEntry:
-    """A resumable session discovered from project directories."""
-
     session_id: str
     summary: str
     mtime: float = 0.0
@@ -71,8 +52,6 @@ def _build_resume_picker_keyboard(
     sessions: list[_SessionEntry],
     window_id: str,
 ) -> InlineKeyboardMarkup:
-    """Build inline keyboard listing recent sessions for resume."""
-    # Lazy: sibling cycle — resume_command imports from this package.
     from .resume_command import format_session_entry
 
     rows: list[list[InlineKeyboardButton]] = []
@@ -103,12 +82,6 @@ def _build_resume_picker_keyboard(
 
 
 def _build_empty_resume_keyboard(window_id: str) -> InlineKeyboardMarkup:
-    """Build the inline keyboard shown when no sessions exist for the cwd.
-
-    Offers two paths so the user is never stuck on a dead toast:
-      - Browse other projects (cross-project picker via CB_RECOVERY_BROWSE)
-      - Start fresh (reuses the recovery fresh handler)
-    """
 
     return InlineKeyboardMarkup(
         [
@@ -130,13 +103,6 @@ def _build_empty_resume_keyboard(window_id: str) -> InlineKeyboardMarkup:
 
 
 def scan_sessions_for_cwd(cwd: str) -> list[_SessionEntry]:
-    """Scan project directories for sessions matching a working directory.
-
-    Supports both legacy sessions-index.json and bare JSONL files
-    (Claude Code >= Feb 2026 no longer writes index files).
-
-    Returns up to _MAX_RESUME_SESSIONS entries, most-recent file first.
-    """
     if not config.claude_projects_path.exists():
         return []
 
@@ -168,7 +134,6 @@ def _scan_index_for_cwd(
     seen_ids: set[str],
     candidates: list[tuple[float, _SessionEntry]],
 ) -> None:
-    """Scan a sessions-index.json for sessions matching a cwd."""
     try:
         index_data = json.loads(index_file.read_text(encoding="utf-8"))
     except json.JSONDecodeError, OSError:
@@ -212,7 +177,6 @@ def _scan_bare_jsonl_for_cwd(
     seen_ids: set[str],
     candidates: list[tuple[float, _SessionEntry]],
 ) -> None:
-    """Scan bare JSONL files for sessions matching a cwd."""
     try:
         jsonl_iter = project_dir.glob("*.jsonl")
     except OSError:
@@ -253,11 +217,6 @@ async def _handle_resume_pick(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle CB_RECOVERY_PICK: user selected a session from resume picker."""
-    # Lazy: sibling cycle — recovery_banner imports from this module
-    # for scan_sessions_for_cwd; the picker only needs banner's window
-    # creation helper at the moment of selection.
-    # Lazy: resume_picker ↔ recovery_banner cycle
     from .recovery_banner import _create_and_bind_window
 
     idx_str = data[len(CB_RECOVERY_PICK) :]

@@ -1,5 +1,3 @@
-"""Tests for ccgram doctor command."""
-
 import json
 
 import pytest
@@ -95,7 +93,6 @@ class TestFindOrphanedWindows:
 
 
 def _all_hooks_status() -> dict[str, bool]:
-    """Return event status dict with all events installed."""
     return {event: True for event in _HOOK_EVENT_TYPES}
 
 
@@ -146,7 +143,6 @@ class TestCheckHooks:
 
         status, msg, event_status = _check_hooks()
         assert status == "fail"
-        # Populated with {event: False} so doctor --fix can install them.
         assert event_status
         assert all(v is False for v in event_status.values())
 
@@ -227,8 +223,6 @@ class TestDoctorMain:
         monkeypatch.setenv("ALLOWED_USERS", "123")
         monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
 
-        # Isolate from the dev machine's real ~/.codex (codex hooks may be
-        # installed there) so the "not installed" path is exercised.
         monkeypatch.setattr(
             "ccgram.hook._codex_hooks_file",
             lambda: tmp_path / ".codex" / "hooks.json",
@@ -288,8 +282,6 @@ class TestCheckProviderCommand:
 
 
 class _FakeHerdrBackend:
-    """Minimal stand-in for the herdr backend's ``ensure_session`` probe."""
-
     def __init__(self, fail: Exception | None = None) -> None:
         self._fail = fail
 
@@ -422,7 +414,6 @@ class TestDoctorMainHerdrMode:
         monkeypatch.setattr(
             "ccgram.doctor_cmd.shutil.which", lambda _cmd: f"/usr/bin/{_cmd}"
         )
-        # Avoid touching a real herdr socket / settings.json.
         monkeypatch.setattr(
             "ccgram.doctor_cmd._check_herdr",
             lambda: ("pass", "herdr server reachable, protocol OK"),
@@ -440,7 +431,6 @@ class TestDoctorMainHerdrMode:
             ),
         )
 
-        # Orphan scan would shell out to tmux; it must be skipped on herdr.
         def _fail_orphans():
             raise AssertionError("orphan scan must not run on herdr")
 

@@ -1,12 +1,3 @@
-"""Debounced, atomic JSON state persistence.
-
-Extracted from SessionManager to provide reusable state saving with:
-  - schedule_save(): debounced 0.5s save (resets on each call).
-  - do_save(serialize_fn): atomic write via temp+rename.
-  - flush(): immediate save if dirty.
-  - load(): read JSON and return raw dict.
-"""
-
 import asyncio
 import json
 from collections.abc import Callable
@@ -23,8 +14,6 @@ _SaveError = (OSError, TypeError, ValueError)
 
 
 class StatePersistence:
-    """Debounced, atomic JSON file persistence."""
-
     def __init__(self, path: Path, serialize_fn: Callable[[], dict[str, Any]]) -> None:
         self._path = path
         self._serialize_fn = serialize_fn
@@ -32,7 +21,6 @@ class StatePersistence:
         self._dirty = False
 
     def schedule_save(self) -> None:
-        """Schedule debounced save (0.5s delay, resets on each call)."""
         self._dirty = True
         if self._save_timer is not None:
             self._save_timer.cancel()
@@ -40,10 +28,9 @@ class StatePersistence:
             loop = asyncio.get_running_loop()
             self._save_timer = loop.call_later(0.5, self._do_save)
         except RuntimeError:
-            self._do_save()  # No event loop (tests) -> immediate
+            self._do_save()
 
     def _do_save(self) -> None:
-        """Actual write via atomic_write_json."""
         self._save_timer = None
         try:
             state = self._serialize_fn()
@@ -53,7 +40,6 @@ class StatePersistence:
             logger.exception("Failed to save state")
 
     def flush(self) -> None:
-        """Force immediate save. Call on shutdown."""
         if self._save_timer is not None:
             self._save_timer.cancel()
             self._save_timer = None
@@ -61,7 +47,6 @@ class StatePersistence:
             self._do_save()
 
     def load(self) -> dict[str, Any]:
-        """Read JSON file and return raw dict. Returns empty dict if missing/invalid."""
         if not self._path.exists():
             return {}
         try:

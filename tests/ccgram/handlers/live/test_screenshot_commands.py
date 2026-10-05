@@ -1,5 +1,3 @@
-"""Tests for /live and related slash commands in screenshot_callbacks."""
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from telegram.error import TelegramError

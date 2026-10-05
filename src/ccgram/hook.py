@@ -1,18 +1,3 @@
-"""Hook subcommand for Claude Code session and event tracking.
-
-Called by Claude Code hooks (SessionStart, Notification, Stop, SubagentStart,
-SubagentStop, TeammateIdle, TaskCompleted) to maintain a window↔session
-mapping and an append-only event log.  Also provides `--install` to
-auto-configure hooks in settings.json (respects CLAUDE_CONFIG_DIR).
-
-This module must NOT import config.py (which requires TELEGRAM_BOT_TOKEN),
-since hooks run inside tmux panes where bot env vars are not set.
-Config directory resolution uses utils.ccgram_dir() (shared with config.py).
-Claude settings path resolution uses CLAUDE_CONFIG_DIR env var (shared with config.py).
-
-Key functions: hook_main() (CLI entry), _install_hook().
-"""
-
 import fcntl
 import json
 import logging
@@ -36,37 +21,25 @@ from ccgram.multiplexer.self_identify import resolve_self_identity
 
 logger = structlog.get_logger()
 
-# Seconds within which an existing transcript is considered "active" — used
-# to guard against stale SessionStart events overwriting live session_map entries.
 _TRANSCRIPT_ACTIVE_SECS = 30
 _NON_STABLE_SESSION_MAP_PREFIXES = ("herdr:",)
 
-# Validate session_id looks like a UUID
-
 
 def _claude_settings_file() -> Path:
-    """Resolve Claude settings.json path, respecting CLAUDE_CONFIG_DIR."""
     config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
     if config_dir:
         return Path(config_dir).expanduser() / "settings.json"
     return Path.home() / ".claude" / "settings.json"
 
 
-# Current hook command uses the active Python interpreter to avoid PATH issues.
 _CURRENT_HOOK_MARKER = "ccgram.main hook"
-# Older installs used the console script name directly.
 _PATH_HOOK_MARKER = "ccgram hook"
 
-# Expected number of parts when parsing tmux display-message output.
-# Minimum is 3 (session_name\t@id\twindow_name); a fourth pane_tty field is
-# optional so older test mocks keep working with a 3-part stdout.
 _TMUX_FORMAT_PARTS = 3
 _TMUX_FORMAT_PARTS_WITH_TTY = 4
 
-# ps -A output is split into 5 fields: pid, ppid, pgid, stat, command.
 _PS_SNAPSHOT_FIELDS = 5
 
-# Hook event types ccgram handles (order matters for status display)
 _HOOK_EVENT_TYPES: tuple[str, ...] = (
     "SessionStart",
     "Notification",
@@ -79,7 +52,6 @@ _HOOK_EVENT_TYPES: tuple[str, ...] = (
     "TaskCompleted",
 )
 
-# Events that should not block the agent (async: true)
 _ASYNC_EVENTS: frozenset[str] = frozenset(
     {
         "StopFailure",
@@ -93,37 +65,29 @@ _ASYNC_EVENTS: frozenset[str] = frozenset(
 
 
 def _installable_events_for(provider_name: str) -> tuple[str, ...]:
-    """Pull installable_events from an adapter, asserting it exists."""
     adapter = get_hook_adapter(provider_name)
     if adapter is None:
         raise AssertionError(f"no hook adapter registered for {provider_name!r}")
     return adapter.installable_events
 
 
-# Source of truth: each adapter declares its installable_events. We re-export
-# under the legacy names so existing call sites in doctor_cmd keep working
-# without a churny import migration.
 _CODEX_HOOK_EVENTS: tuple[str, ...] = _installable_events_for("codex")
 _GEMINI_HOOK_EVENTS: tuple[str, ...] = _installable_events_for("gemini")
 
 
 def _codex_hooks_file() -> Path:
-    """Return the user-level Codex hooks.json path."""
     return Path.home() / ".codex" / "hooks.json"
 
 
 def _codex_config_file() -> Path:
-    """Return the user-level Codex config.toml path."""
     return Path.home() / ".codex" / "config.toml"
 
 
 def _gemini_settings_file() -> Path:
-    """Return the user-level Gemini settings.json path."""
     return Path.home() / ".gemini" / "settings.json"
 
 
 def _current_hook_command(provider_name: str = "claude") -> str:
-    """Build the hook command bound to the current Python interpreter."""
     command = f"{shlex.quote(sys.executable)} -m ccgram.main hook"
     if provider_name != "claude":
         command += f" --provider {shlex.quote(provider_name)}"
@@ -131,12 +95,10 @@ def _current_hook_command(provider_name: str = "claude") -> str:
 
 
 def _is_current_hook_command(command: str) -> bool:
-    """Return True when the command matches the current module-based hook style."""
     return _CURRENT_HOOK_MARKER in command
 
 
 def _is_any_ccgram_hook_command(command: str) -> bool:
-    """Return True for current, old, or legacy hook command styles."""
     return any(
         marker in command for marker in (_CURRENT_HOOK_MARKER, _PATH_HOOK_MARKER)
     )
@@ -145,7 +107,6 @@ def _is_any_ccgram_hook_command(command: str) -> bool:
 def _has_matching_hook(
     settings: dict, event_type: str, predicate: Callable[[str], bool]
 ) -> bool:
-    """Check if an event has a hook command matching the predicate."""
     hooks = settings.get("hooks", {})
     event_hooks = hooks.get(event_type, [])
 
@@ -163,19 +124,16 @@ def _has_matching_hook(
 
 
 def _has_ccgram_hook(settings: dict, event_type: str) -> bool:
-    """Check if ccgram hook is installed."""
     return _has_matching_hook(settings, event_type, _is_any_ccgram_hook_command)
 
 
 def get_installed_events(settings: dict) -> dict[str, bool]:
-    """Return installation status for each expected hook event type."""
     return {event: _has_ccgram_hook(settings, event) for event in _HOOK_EVENT_TYPES}
 
 
 def _replace_hook_commands(
     settings: dict, event_type: str, predicate: Callable[[str], bool], replacement: str
 ) -> None:
-    """Replace matching hook commands for an event with the given command."""
     event_hooks = settings.get("hooks", {}).get(event_type, [])
     for entry in event_hooks:
         if not isinstance(entry, dict):
@@ -189,7 +147,6 @@ def _replace_hook_commands(
 
 
 def _load_json_settings(path: Path) -> dict[str, Any] | None:
-    """Load a JSON settings file, returning an empty dict when absent."""
     if not path.exists():
         return {}
     try:
@@ -204,13 +161,6 @@ def _load_json_settings(path: Path) -> dict[str, Any] | None:
 
 
 def _json_hook_command_predicate(provider_name: str) -> Callable[[str], bool]:
-    """Build predicate for provider-specific ccgram hook commands.
-
-    Matches `--provider {name}` as a whole token so e.g. `--provider codex-dev`
-    does not also match `--provider codex`. We append a trailing space to the
-    command so a token at the very end of the string also matches the
-    space-delimited needle.
-    """
 
     needle = f" --provider {provider_name} "
 
@@ -221,12 +171,6 @@ def _json_hook_command_predicate(provider_name: str) -> Callable[[str], bool]:
 
 
 def _hook_entry(provider_name: str, timeout_value: int) -> dict[str, Any]:
-    """Build a command hook entry for non-Claude providers.
-
-    ``timeout_value`` is provider-defined: Codex hooks.json uses seconds,
-    Gemini settings.json uses milliseconds. Callers must pass the unit the
-    target schema expects.
-    """
     return {
         "name": "ccgram-session-tracker",
         "type": "command",
@@ -238,10 +182,6 @@ def _hook_entry(provider_name: str, timeout_value: int) -> dict[str, Any]:
 def _install_json_hooks(
     path: Path, provider_name: str, events: tuple[str, ...], timeout_value: int
 ) -> int:
-    """Install ccgram command hooks into a JSON settings file.
-
-    ``timeout_value`` is provider-defined (seconds for Codex, ms for Gemini).
-    """
     settings = _load_json_settings(path)
     if settings is None:
         return 1
@@ -269,8 +209,6 @@ def _install_json_hooks(
 
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        # Lazy: utils brings in subprocess + structlog at import time; not worth
-        # paying that cost on `ccgram --help`, only at hook-install.
         from .utils import atomic_write_json
 
         atomic_write_json(path, settings)
@@ -288,12 +226,6 @@ _CODEX_HOOKS_KEY_RE = re.compile(r"^\s*codex_hooks\s*=\s*(\S+)", re.MULTILINE)
 
 
 def _ensure_codex_feature_flag() -> int:
-    """Ensure user Codex config enables the hooks feature flag.
-
-    Detects any existing ``codex_hooks =`` line (spacing-tolerant). If it's
-    already truthy, no-op. If it's explicitly false, warn and refuse to
-    overwrite — the user opted out. Otherwise insert under ``[features]``.
-    """
     config_file = _codex_config_file()
     if not config_file.exists():
         try:
@@ -335,7 +267,6 @@ _GEMINI_HOOK_TIMEOUT_MS = 5_000
 
 
 def _install_codex_hook() -> int:
-    """Install user-level Codex hooks and enable the feature flag."""
     if _ensure_codex_feature_flag() != 0:
         return 1
     return _install_json_hooks(
@@ -344,14 +275,12 @@ def _install_codex_hook() -> int:
 
 
 def _install_gemini_hook() -> int:
-    """Install user-level Gemini hooks."""
     return _install_json_hooks(
         _gemini_settings_file(), "gemini", _GEMINI_HOOK_EVENTS, _GEMINI_HOOK_TIMEOUT_MS
     )
 
 
 def _uninstall_json_hooks(path: Path, provider_name: str) -> int:
-    """Remove provider-specific ccgram hooks from a JSON settings file."""
     settings = _load_json_settings(path)
     if settings is None:
         return 1
@@ -385,7 +314,6 @@ def _uninstall_json_hooks(path: Path, provider_name: str) -> int:
         print(f"No {provider_name} hooks found in {path} — nothing to remove.")
         return 0
     try:
-        # Lazy: same rationale as _install_json_hooks.
         from .utils import atomic_write_json
 
         atomic_write_json(path, settings)
@@ -397,7 +325,6 @@ def _uninstall_json_hooks(path: Path, provider_name: str) -> int:
 
 
 def _json_hook_status(path: Path, provider_name: str, events: tuple[str, ...]) -> int:
-    """Print provider-specific JSON hook status."""
     settings = _load_json_settings(path)
     if settings is None:
         return 1
@@ -423,10 +350,6 @@ def _json_hook_status(path: Path, provider_name: str, events: tuple[str, ...]) -
 
 
 def _install_hook(provider_name: str = "claude") -> int:  # noqa: PLR0912
-    """Install ccgram hooks for all event types into provider settings.
-
-    Returns 0 on success, 1 on error.
-    """
     match provider_name:
         case "codex":
             return _install_codex_hook()
@@ -445,7 +368,6 @@ def _install_hook(provider_name: str = "claude") -> int:  # noqa: PLR0912
     settings_file = _claude_settings_file()
     settings_file.parent.mkdir(parents=True, exist_ok=True)
 
-    # Read existing settings
     settings: dict = {}
     if settings_file.exists():
         try:
@@ -508,7 +430,6 @@ def _install_hook(provider_name: str = "claude") -> int:  # noqa: PLR0912
         print(f"All hooks already installed in {settings_file}")
         return 0
 
-    # Write back
     try:
         settings_file.write_text(
             json.dumps(settings, indent=2, ensure_ascii=False) + "\n"
@@ -525,10 +446,6 @@ def _install_hook(provider_name: str = "claude") -> int:  # noqa: PLR0912
 
 
 def _uninstall_hook(provider_name: str = "claude") -> int:  # noqa: PLR0911
-    """Remove ccgram hooks from provider settings.
-
-    Returns 0 on success, 1 on error.
-    """
     match provider_name:
         case "codex":
             return _uninstall_json_hooks(_codex_hooks_file(), "codex")
@@ -555,7 +472,6 @@ def _uninstall_hook(provider_name: str = "claude") -> int:  # noqa: PLR0911
         print(f"Error reading {settings_file}: {e}", file=sys.stderr)
         return 1
 
-    # Check if any ccgram hooks are installed
     any_installed = any(
         _has_ccgram_hook(settings, event) for event in _HOOK_EVENT_TYPES
     )
@@ -563,7 +479,6 @@ def _uninstall_hook(provider_name: str = "claude") -> int:  # noqa: PLR0911
         print("Hook not installed — nothing to uninstall.")
         return 0
 
-    # Remove ccgram hook entries from all event types
     hooks_section = settings.get("hooks", {})
     for event_type in _HOOK_EVENT_TYPES:
         event_hooks = hooks_section.get(event_type, [])
@@ -601,10 +516,6 @@ def _uninstall_hook(provider_name: str = "claude") -> int:  # noqa: PLR0911
 
 
 def _hook_status(provider_name: str = "claude") -> int:  # noqa: PLR0911
-    """Show per-event hook installation status.
-
-    Returns 0 if all installed, 1 if any missing.
-    """
     match provider_name:
         case "codex":
             return _json_hook_status(_codex_hooks_file(), "codex", _CODEX_HOOK_EVENTS)
@@ -652,15 +563,6 @@ def _hook_status(provider_name: str = "claude") -> int:  # noqa: PLR0911
 
 
 def _resolve_herdr_tab_id(pane_id: str) -> str | None:
-    """Resolve a herdr pane id to its containing tab id.
-
-    Runs ``herdr pane get <pane_id>`` and extracts ``result["pane"]["tab_id"]``.
-    The socket path is picked up from ``$HERDR_SOCKET_PATH`` by the herdr CLI
-    automatically (same as the multiplexer backend's subprocess runner).
-
-    Returns None on any failure (herdr not installed, socket down, pane gone)
-    so the caller skips the session_map write rather than binding a phantom id.
-    """
     try:
         result = subprocess.run(
             ["herdr", "pane", "get", pane_id],
@@ -703,11 +605,6 @@ def _resolve_herdr_tab_id(pane_id: str) -> str | None:
 
 
 def _resolve_window_id(pane_id: str) -> tuple[str, str, str, str] | None:
-    """Resolve tmux pane ID to (session_window_key, window_id, window_name, pane_tty).
-
-    Returns None if resolution fails. pane_tty is the pane's controlling tty path
-    (e.g. ``/dev/ttys012``) or "" when older tmux mocks omit the field.
-    """
     try:
         result = subprocess.run(
             [
@@ -743,11 +640,6 @@ def _resolve_window_id(pane_id: str) -> tuple[str, str, str, str] | None:
 
 
 def _ps_snapshot() -> dict[int, tuple[int, int, str, str]]:
-    """Return ``{pid: (ppid, pgid, stat, command_basename)}`` for all processes.
-
-    Empty dict on subprocess failure or unparseable output — callers must
-    fail-open when the snapshot is empty.
-    """
     try:
         result = subprocess.run(
             ["ps", "-A", "-o", "pid=,ppid=,pgid=,stat=,command="],
@@ -778,7 +670,6 @@ def _ps_snapshot() -> dict[int, tuple[int, int, str, str]]:
 def _foreground_pgid_on_tty(
     snapshot: dict[int, tuple[int, int, str, str]], pane_tty: str
 ) -> int | None:
-    """Return the foreground process group id on ``pane_tty``, or None."""
     if not pane_tty or not snapshot:
         return None
     tty_name = pane_tty.removeprefix("/dev/")
@@ -807,7 +698,6 @@ def _foreground_pgid_on_tty(
 def _closest_claude_ancestor(
     snapshot: dict[int, tuple[int, int, str, str]], start_pid: int
 ) -> int | None:
-    """Walk parent chain from ``start_pid``; return the closest claude PID, or None."""
     cur = start_pid
     visited: set[int] = set()
     for _ in range(40):
@@ -825,17 +715,6 @@ def _closest_claude_ancestor(
 
 
 def _is_nested_session(pane_tty: str) -> bool:
-    """Return True if the hook was fired by a nested (non-foreground) claude.
-
-    The "primary" claude in a tmux pane is launched by the user's shell, so
-    its PID equals the foreground process group id on the pane's tty. Any
-    claude spawned beneath that primary (e.g. an MCP-server-launched observer
-    such as claude-mem) is a *descendant* — its PID differs from the
-    foreground PGID even though it shares the pgid via inheritance.
-
-    Fails open: returns False on any subprocess error or missing data so
-    hook delivery is never made *more* fragile than the status quo.
-    """
     if not pane_tty:
         return False
     snapshot = _ps_snapshot()
@@ -856,18 +735,11 @@ def _write_event(
     window_key: str,
     data: dict[str, Any],
 ) -> None:
-    """Append one JSONL event line to events.jsonl with file locking."""
-    # Lazy: hook.py runs as `python -m ccgram.hook` from Claude Code on
-    # every notification; deferring utils import until an event actually
-    # fires keeps the latency-sensitive fast path lean.
-    # Lazy: utils.ccgram_dir resolves $CCGRAM_DIR at runtime
     from .utils import ccgram_dir
 
     events_file = ccgram_dir() / "events.jsonl"
     events_file.parent.mkdir(parents=True, exist_ok=True)
 
-    # Lazy: hooks.state_files only imported when an event fires (same rationale
-    # as the utils import above: keep the hook fast path lean).
     from .hooks.state_files import serialize_event_record
 
     event_line = json.dumps(
@@ -895,8 +767,6 @@ def _update_session_map(
     tmux_session_name: str,
     provider_name: str = "claude",
 ) -> None:
-    """Update session_map.json for a SessionStart event."""
-    # Lazy: same hook fast-path rationale as ``_write_event``.
     from .utils import ccgram_dir, atomic_write_json
 
     map_file = ccgram_dir() / "session_map.json"
@@ -920,12 +790,8 @@ def _update_session_map(
                                 type(parsed).__name__,
                             )
                     except json.JSONDecodeError:
-                        # Corrupted JSON — preserve the file for inspection
-                        # instead of silently overwriting with near-empty data.
                         backup = map_file.with_suffix(".json.corrupt")
                         try:
-                            # Lazy: shutil only needed in the error path of
-                            # backing up a corrupted session_map.json.
                             import shutil
 
                             shutil.copy2(map_file, backup)
@@ -938,12 +804,6 @@ def _update_session_map(
                     except OSError:
                         logger.warning("Failed to read session_map.json")
 
-                # Guard against stale SessionStart overwriting a live entry for
-                # stable-ID backends: if the existing entry's transcript was
-                # written recently (within 30s), it's likely still live — keep
-                # it. Non-stable backends (herdr) can reuse the same opaque id
-                # for a different tab after restart, so a different session_id
-                # must win even when the old transcript is fresh.
                 preserve_fresh_existing = not session_window_key.startswith(
                     _NON_STABLE_SESSION_MAP_PREFIXES
                 )
@@ -960,20 +820,16 @@ def _update_session_map(
                                     session_window_key,
                                     int(time.time() - existing_mtime),
                                 )
-                                # Still write to events.jsonl (already done
-                                # above), just skip the session_map overwrite.
                                 return
                         except OSError:
-                            pass  # existing transcript gone — let new entry win
+                            pass
 
-                # Lazy: same hook fast-path rationale as _write_event.
                 from .hooks.state_files import serialize_session_map_entry
 
                 session_map[session_window_key] = serialize_session_map_entry(
                     session_id, cwd, window_name, transcript_path, provider_name
                 )
 
-                # Clean up old-format key ("session:window_name") if it exists
                 old_key = f"{tmux_session_name}:{window_name}"
                 if old_key != session_window_key and old_key in session_map:
                     del session_map[old_key]
@@ -993,14 +849,12 @@ def _update_session_map(
 
 
 def _encode_pi_cwd_dirname(cwd: str) -> str:
-    """Encode cwd using Pi's session directory convention."""
     stripped = cwd.lstrip("/\\").rstrip("/\\")
     encoded = stripped.replace("/", "-").replace("\\", "-").replace(":", "-")
     return f"--{encoded}--"
 
 
 def _read_pi_session_id(path: Path) -> str:
-    """Read a Pi transcript header session id, returning empty on failure."""
     try:
         with open(path, encoding="utf-8") as handle:
             first_line = handle.readline()
@@ -1019,7 +873,6 @@ def _read_pi_session_id(path: Path) -> str:
 
 
 def _resolve_pi_transcript_path(session_id: str, cwd: str) -> str:
-    """Find a Pi transcript path when hook-runner omitted it."""
     if not cwd or not session_id:
         return ""
     session_dir = (
@@ -1051,7 +904,6 @@ def _resolve_pi_transcript_path(session_id: str, cwd: str) -> str:
 def _resolve_transcript_path(
     provider_name: str, session_id: str, cwd: str, transcript_path: str
 ) -> str:
-    """Return transcript path from payload or provider-specific fallback."""
     if provider_name == "pi":
         if transcript_path and session_id in Path(transcript_path).name:
             return transcript_path
@@ -1073,8 +925,6 @@ def _resolve_transcript_path(
 
 
 def _read_session_map_entry(session_window_key: str) -> dict[str, str]:
-    """Return the current session_map entry for ``session_window_key`` or {}."""
-    # Lazy: same hook fast-path rationale as ``_write_event``.
     from .utils import ccgram_dir
 
     map_file = ccgram_dir() / "session_map.json"
@@ -1098,21 +948,8 @@ def _refresh_session_map_if_stale(
     payload_cwd: str,
     payload_transcript_path: str,
 ) -> None:
-    """Refresh ``session_map.json`` when a non-SessionStart event reports a
-    different session_id or provider than the stored entry.
-
-    Some installs (notably Pi via cc-thingz hook-runner) deliver Stop/Subagent
-    hooks without a matching SessionStart through this hook path, so the map
-    can keep pointing at the previous provider's session. We use values the
-    hook payload already carries — no external scanning — to avoid the
-    recovery anti-pattern called out in PR #51.
-    """
     existing = _read_session_map_entry(session_window_key)
     if not existing:
-        # SessionStart owns initial creation; never extend the map from a
-        # non-SessionStart event. Missing entry means no prior session was
-        # tracked here — leave the fallback (cwd-based discovery in
-        # SessionMonitor) to handle it.
         return
     cwd = payload_cwd or existing.get("cwd", "")
     transcript_path = _resolve_transcript_path(
@@ -1127,8 +964,6 @@ def _refresh_session_map_if_stale(
         )
     ):
         return
-    # Backend prefix token: split on the FIRST colon so herdr keys
-    # ("herdr:w2:t1") yield "herdr", not "herdr:w2" (the tab id has a colon).
     tmux_session_name = session_window_key.split(":", 1)[0]
     _update_session_map(
         session_window_key,
@@ -1150,14 +985,6 @@ def _refresh_session_map_if_stale(
 
 
 def _provider_from_pane_tty(pane_tty: str) -> ProviderName | None:
-    """Best-effort provider detection from foreground tty process commands.
-
-    This is a last-resort fallback; the primary paths are the explicit
-    ``provider_name`` field and the ``/.provider/`` transcript path prefix
-    checked in ``detect_provider_from_payload``.  JS-wrapped Pi (e.g.
-    ``node ~/.pi/agent/cli.js``) is not matched here — it is caught by the
-    ``/.pi/`` transcript path check instead.
-    """
     if not pane_tty:
         return None
     tty_name = pane_tty.removeprefix("/dev/")
@@ -1185,18 +1012,6 @@ def _provider_from_pane_tty(pane_tty: str) -> ProviderName | None:
 def _locate_primary_window(
     session_id: str, event: str, provider_name: str = "claude"
 ) -> tuple[str, str, str] | None:
-    """Resolve TMUX_PANE → primary window, or None to drop the hook.
-
-    Returns ``(session_window_key, window_id, window_name)`` for the foreground
-    claude in the pane. Returns ``None`` when the pane can't be resolved or
-    when a nested claude (e.g. claude-mem observer) fired the hook — the
-    nested case is logged at info so the rejection is visible to operators.
-
-    Identity resolution is backend-neutral via ``resolve_self_identity``: tmux
-    panes resolve through ``_resolve_window_id`` (``display-message``), herdr
-    panes resolve pane→tab via ``_resolve_herdr_tab_id`` so the session_map key
-    becomes ``herdr:<tab_id>`` (matching ``list_windows``).
-    """
     identity = resolve_self_identity(
         os.environ,
         tmux_query=_resolve_window_id,
@@ -1223,8 +1038,6 @@ def _locate_primary_window(
         session_id,
         event,
     )
-    # pane_tty is "" for herdr (no tty exposed), so _is_nested_session fails
-    # open to False there — the nested-observer guard stays a tmux-only no-op.
     if provider_name == "claude" and _is_nested_session(identity.pane_tty):
         logger.info(
             "Skipping hook from nested claude (window_key=%s, session_id=%s, event=%s)",
@@ -1237,13 +1050,6 @@ def _locate_primary_window(
 
 
 def _clear_session_map_entry(session_window_key: str, session_id: str) -> None:
-    """Remove session_map entry on SessionEnd so the next SessionStart isn't blocked.
-
-    Without this, the stale-SessionStart guard in _update_session_map would
-    reject a new session after /clear because the old transcript was recently
-    written to.
-    """
-    # Lazy: hook runs as a standalone entrypoint; defer app utility imports.
     from .utils import atomic_write_json, ccgram_dir
 
     map_file = ccgram_dir() / "session_map.json"
@@ -1277,7 +1083,6 @@ def _clear_session_map_entry(session_window_key: str, session_id: str) -> None:
 def _process_hook_stdin(
     provider_name: str | None = None,
 ) -> NormalizedHookEvent | None:
-    """Process an agent hook event from stdin."""
     logger.debug("Processing hook event from stdin")
     try:
         raw_payload = json.load(sys.stdin)
@@ -1299,8 +1104,6 @@ def _process_hook_stdin(
         )
     detected_provider = provider_name or payload_provider
     if detected_provider is None:
-        # Provider fallback only uses tmux pane_tty. Herdr exposes no tty, so do
-        # not pay a blocking herdr pane→tab subprocess before _locate_primary_window.
         identity = resolve_self_identity(os.environ, tmux_query=_resolve_window_id)
         if identity:
             detected_provider = _provider_from_pane_tty(identity.pane_tty)
@@ -1329,8 +1132,6 @@ def _process_hook_stdin(
     session_window_key, _window_id, window_name = located
 
     if event == "SessionStart":
-        # Backend prefix token (see _refresh_session_map_if_stale): split on the
-        # first colon so herdr keys ("herdr:w2:t1") yield "herdr".
         tmux_session_name = session_window_key.split(":", 1)[0]
         transcript_path = _resolve_transcript_path(
             detected_provider,
@@ -1360,8 +1161,6 @@ def _process_hook_stdin(
         return normalized
 
     if event == "SessionEnd":
-        # Clear session_map entry so the next SessionStart isn't rejected by
-        # the stale-entry guard (e.g. after /clear).
         _clear_session_map_entry(session_window_key, normalized.session_id)
     else:
         _refresh_session_map_if_stale(
@@ -1377,7 +1176,6 @@ def _process_hook_stdin(
 
 
 def _configure_hook_logging() -> None:
-    """Keep hook diagnostics off stdout, which some providers parse as protocol."""
     logging.basicConfig(
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         level=logging.DEBUG,
@@ -1403,11 +1201,8 @@ def hook_main(
     status: bool = False,
     provider_name: str = "claude",
 ) -> None:
-    """Process a Claude Code hook event from stdin, or manage hook installation."""
     _configure_hook_logging()
 
-    # Lazy: hook.py must not import config.py, but hook identity needs .env-backed
-    # backend selection (CCGRAM_MULTIPLEXER) before stdin processing.
     from .utils import load_ccgram_env
 
     load_ccgram_env()
@@ -1422,11 +1217,6 @@ def hook_main(
     if status:
         sys.exit(_hook_status(provider_name))
 
-    # Pass None for the implicit Claude default so detect_provider_from_payload
-    # gets first say (an explicit `--provider claude` invocation deliberately
-    # keeps the explicit flag to surface the mismatch warning when payload
-    # heuristics disagree). The CLI default also resolves to "claude", so the
-    # None path covers the common case of an unannotated hook command.
     normalized = _process_hook_stdin(
         provider_name if provider_name != "claude" else None
     )

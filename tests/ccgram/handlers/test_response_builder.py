@@ -1,5 +1,3 @@
-"""Tests for response_builder.build_response_parts."""
-
 from ccgram.handlers.response_builder import build_response_parts
 from ccgram.expandable_quote import EXPANDABLE_QUOTE_END as EXP_END
 from ccgram.expandable_quote import EXPANDABLE_QUOTE_START as EXP_START
@@ -15,9 +13,7 @@ class TestBuildResponseParts:
         long_text = "a" * 4000
         parts = build_response_parts(long_text, is_complete=True, role="user")
         assert len(parts) == 1
-        # Should contain truncation marker
         assert "\u2026" in parts[0]
-        # Should be shorter than original
         assert len(parts[0]) < len(long_text)
 
     def test_thinking_content_truncated_at_500_chars(self):
@@ -59,14 +55,11 @@ class TestBuildResponseParts:
         assert "Thinking" not in parts[0]
 
     def test_returns_raw_markdown(self):
-        """Response builder should return raw markdown (entity conversion at send time)."""
         parts = build_response_parts("**bold** text", is_complete=True)
         assert len(parts) == 1
-        # Raw markdown keeps ** markers (entity conversion happens at send time)
         assert "**bold**" in parts[0]
 
     def test_expandable_quote_sentinels_preserved(self):
-        """Sentinels should pass through for conversion at send time."""
         text = f"{EXP_START}quote content{EXP_END}"
         parts = build_response_parts(text, is_complete=True)
         assert len(parts) == 1

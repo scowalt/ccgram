@@ -1,5 +1,3 @@
-"""Tests for callback registry — registration, dispatch, and handler loading."""
-
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -16,7 +14,6 @@ from ccgram.handlers.callback_registry import (
 
 @pytest.fixture
 def clean_registry():
-    """Clear the registry before and after each test."""
     saved = dict(_registry)
     _registry.clear()
     yield

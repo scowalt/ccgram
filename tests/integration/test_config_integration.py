@@ -1,5 +1,3 @@
-"""Integration tests for Config — real .env files and filesystem."""
-
 import pytest
 
 from ccgram.config import Config

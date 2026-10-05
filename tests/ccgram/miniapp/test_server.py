@@ -42,7 +42,6 @@ async def test_app_route_rejects_token_signed_for_other_bot(client: TestClient):
 
 
 async def test_static_files_served(client: TestClient):
-    # static/index.html exists; /static/index.html should serve it raw
     resp = await client.get("/static/index.html")
     assert resp.status == 200
     body = await resp.text()

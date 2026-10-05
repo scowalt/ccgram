@@ -1,15 +1,3 @@
-"""Transcript discovery for hookless providers.
-
-Discovers and registers transcripts for providers without hook support
-(Codex, Gemini). Also handles provider auto-detection from pane process
-and shell ↔ agent transitions.
-
-Key components:
-  - discover_and_register_transcript: main discovery function called per topic
-  - _detect_and_apply_provider: provider auto-detection from running process
-  - _find_and_register_transcript: transcript search for hookless providers
-"""
-
 import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -31,7 +19,6 @@ from ...telegram_client import TelegramClient
 from ...multiplexer import multiplexer as tmux_manager
 from ...window_state_ports import identity_state
 
-# Legacy patch aliases retained for older tests/callers that monkeypatch this module.
 _CONFIG_ALIAS = config
 _WINDOW_STORE_ALIAS = identity_state.window_store
 window_store = _WINDOW_STORE_ALIAS
@@ -45,7 +32,6 @@ logger = structlog.get_logger()
 
 
 def _window_states() -> dict[str, "WindowState"]:
-    """Return window states while supporting old and new test patch points."""
     store = window_store
     if store is _WINDOW_STORE_ALIAS:
         store = identity_state.window_store
@@ -55,7 +41,6 @@ def _window_states() -> dict[str, "WindowState"]:
 def _identity_from_state(
     window_id: str, state: "WindowState"
 ) -> identity_state.IdentityProjection:
-    """Build an identity projection from the active window-store alias."""
     transcript_path = getattr(state, "transcript_path", "") or ""
     window_name = getattr(state, "window_name", "")
     approval_mode = getattr(state, "approval_mode", "normal")
@@ -75,7 +60,6 @@ def _identity_from_state(
 
 
 def _get_identity(window_id: str) -> identity_state.IdentityProjection | None:
-    """Return identity while honoring legacy and port-level window-store patches."""
     state = _window_states().get(window_id)
     if state is None:
         return identity_state.get_identity(window_id)
@@ -83,9 +67,6 @@ def _get_identity(window_id: str) -> identity_state.IdentityProjection | None:
 
 
 def _session_id_already_bound(session_id: str, window_id: str) -> bool:
-    """Return True if another currently bound window already uses ``session_id``."""
-    # Lazy: thread_router may not be installed in some test paths; fail open
-    # if it isn't available so discovery can still continue with this window.
     from ...thread_router import thread_router
 
     try:
@@ -103,7 +84,6 @@ def _session_id_already_bound(session_id: str, window_id: str) -> bool:
 
 
 def _window_claim_rank(window_id: str) -> tuple[int, str]:
-    """Sort native tmux window IDs before foreign IDs using numeric order."""
     if window_id.startswith("@"):
         try:
             return (0, f"{int(window_id[1:]):09d}")
@@ -115,7 +95,6 @@ def _window_claim_rank(window_id: str) -> tuple[int, str]:
 def _same_cwd_provider_peer_exists(
     window_id: str, provider_name: str, cwd: str
 ) -> bool:
-    """Return True when another tracked window has the same provider and cwd."""
     if not cwd:
         return False
     for other_window_id in _window_states():
@@ -135,7 +114,6 @@ def _claimed_hookless_sessions(
     *,
     exclude_window_id: str,
 ) -> tuple[set[str], set[str]]:
-    """Collect session IDs and transcript paths already claimed by other windows."""
     claimed_session_ids: set[str] = set()
     claimed_transcript_paths: set[str] = set()
     current_state = window_states.get(exclude_window_id)
@@ -172,7 +150,6 @@ async def _detect_and_apply_provider(
     chat_id: int = 0,
     thread_id: int = 0,
 ) -> None:
-    """Detect provider from pane process and apply transitions."""
     if identity_state.is_provider_manually_overridden(window_id):
         return
     detected = await detect_provider_from_pane(
@@ -190,8 +167,6 @@ async def _detect_and_apply_provider(
     if detected and detected != identity.provider_name:
         old_provider = identity.provider_name
         session_manager.set_window_provider(window_id, detected, cwd=w.cwd or None)
-        # Lazy: providers/__init__.py reaches back into transcript code
-        # via provider format modules.
         from ...providers import get_provider_for_window
 
         new_caps = get_provider_for_window(window_id, detected)
@@ -200,8 +175,6 @@ async def _detect_and_apply_provider(
         )
         if new_caps and new_caps.capabilities.chat_first_command_path is True:
             identity_state.clear_transcript_path(window_id)
-            # Lazy: shell.shell_prompt_orchestrator hits the recovery
-            # subpackage's discovery code via send-keys callbacks.
             from ..shell.shell_prompt_orchestrator import ensure_setup
 
             await ensure_setup(
@@ -212,10 +185,8 @@ async def _detect_and_apply_provider(
                 thread_id=thread_id,
             )
         elif old_caps and old_caps.capabilities.chat_first_command_path is True:
-            # Lazy: same shell ↔ recovery cycle as above.
             from ..shell.shell_capture import clear_shell_monitor_state
 
-            # Lazy: same shell ↔ recovery cycle as above.
             from ..shell.shell_prompt_orchestrator import (
                 clear_state as clear_orchestrator,
             )
@@ -233,19 +204,8 @@ def _resolve_providers_to_try(
     identity: identity_state.IdentityProjection,
     w: "TmuxWindow | None",
 ) -> list[tuple[str, "AgentProvider"]] | None:
-    """Determine which providers to probe for transcripts.
-
-    Returns a list of (name, provider) pairs, or ``None`` to signal the
-    caller should set up a shell provider.
-    """
-    # Lazy: hoisting forms polling/__init__ → window_tick →
-    # recovery.transcript_discovery → polling_state partial-init
-    # cycle (worker-order-dependent; verified during F6.2). polling_types
-    # is leaf-level — Task 5 of Round 5 may hoist this once cycle test covers it.
-    # Lazy: polling_types is leaf-pure; importing here at module load would touch the polling subpackage __init__
     from ..polling.polling_types import is_shell_prompt
 
-    # Lazy: providers registry reaches back through transcripts
     from ...providers import registry
 
     if identity.provider_name:
@@ -255,7 +215,7 @@ def _resolve_providers_to_try(
         return [(provider.capabilities.name, provider)]
 
     if w and is_shell_prompt(w.pane_current_command):
-        return None  # signals caller to set up shell
+        return None
 
     return [
         (name, registry.get(name))
@@ -272,7 +232,6 @@ async def _find_and_register_transcript(
     *,
     process_restarted: bool = False,
 ) -> None:
-    """Search for transcripts among candidate providers and register if found."""
     window_key = f"{session_map_prefix()}{window_id}"
 
     transcript_path_str = (
@@ -369,11 +328,12 @@ async def _find_and_register_transcript(
 def _hook_already_resolved(
     window_id: str, identity: identity_state.IdentityProjection
 ) -> bool:
-    """True when a hookful provider has already populated transcript_path."""
     if not identity.provider_name:
         return False
     provider = get_provider_for_window(window_id, identity.provider_name)
-    return bool(provider.capabilities.supports_hook is True and identity.transcript_path)
+    return bool(
+        provider.capabilities.supports_hook is True and identity.transcript_path
+    )
 
 
 def _foreground_process_restarted(
@@ -383,7 +343,6 @@ def _foreground_process_restarted(
     old_identity: identity_state.IdentityProjection,
     new_identity: identity_state.IdentityProjection,
 ) -> bool:
-    """True when the same provider is running in a new foreground process group."""
     return bool(
         before_pgid
         and after_pgid
@@ -401,10 +360,8 @@ async def _switch_to_shell(
     chat_id: int,
     thread_id: int,
 ) -> None:
-    """Provider-switch to shell and clear transcript bookkeeping."""
     session_manager.set_window_provider(window_id, "shell")
     identity_state.clear_transcript_path(window_id)
-    # Lazy: same shell ↔ recovery cycle as _detect_and_apply_provider.
     from ..shell.shell_prompt_orchestrator import ensure_setup
 
     await ensure_setup(
@@ -424,15 +381,8 @@ async def discover_and_register_transcript(
     user_id: int = 0,
     thread_id: int = 0,
 ) -> None:
-    """Discover and register transcript for hookless providers (Codex, Gemini).
-
-    Also handles provider auto-detection from pane process name
-    and shell ↔ agent transitions with prompt marker setup.
-    """
-    # Lazy: same polling/__init__ cycle as _resolve_providers_to_try.
     from ..polling.polling_types import is_shell_prompt
 
-    # Lazy: thread_router proxy resolved when transcript discovery is invoked
     from ...thread_router import thread_router
 
     identity = _get_identity(window_id)

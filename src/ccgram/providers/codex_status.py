@@ -1,10 +1,3 @@
-"""Codex status snapshot helpers.
-
-Builds a Telegram-friendly status message from Codex JSONL transcripts.
-Codex slash commands like ``/status`` may not emit assistant transcript
-messages; this snapshot provides a reliable fallback.
-"""
-
 import json
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -13,12 +6,10 @@ from typing import Any
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
-    """Return *value* as dict when possible."""
     return value if isinstance(value, dict) else {}
 
 
 def _as_int(value: Any) -> int | None:
-    """Convert ints/floats to int."""
     if isinstance(value, bool):
         return None
     if isinstance(value, int):
@@ -29,13 +20,11 @@ def _as_int(value: Any) -> int | None:
 
 
 def _fmt_int(value: Any) -> str:
-    """Format a numeric value with grouping, fallback to '?'."""
     parsed = _as_int(value)
     return f"{parsed:,}" if parsed is not None else "?"
 
 
 def _fmt_epoch_utc(value: Any) -> str:
-    """Format UNIX epoch seconds as UTC timestamp."""
     parsed = _as_int(value)
     if parsed is None:
         return "?"
@@ -43,13 +32,11 @@ def _fmt_epoch_utc(value: Any) -> str:
 
 
 def _display_cwd(cwd: str) -> str:
-    """Compress home path for display."""
     home = str(Path.home())
     return cwd.replace(home, "~", 1) if cwd.startswith(home) else cwd
 
 
 def _parse_json_object(raw_line: str) -> dict[str, Any] | None:
-    """Parse one JSON object line."""
     line = raw_line.strip()
     if not line:
         return None
@@ -65,7 +52,6 @@ def _iter_json_entries(
     *,
     start_offset: int = 0,
 ) -> Iterator[dict[str, Any]]:
-    """Yield parsed JSON object entries from transcript."""
     with path.open(encoding="utf-8") as handle:
         if start_offset > 0:
             handle.seek(start_offset)
@@ -76,7 +62,6 @@ def _iter_json_entries(
 
 
 def _entry_has_assistant_output(entry: dict[str, Any]) -> bool:
-    """True when entry contains assistant-visible output."""
     entry_type = entry.get("type")
     payload = _as_dict(entry.get("payload"))
 
@@ -107,7 +92,6 @@ def has_codex_assistant_output_since(
     transcript_path: str,
     offset: int,
 ) -> bool:
-    """Check whether transcript contains assistant output after offset."""
     path = Path(transcript_path)
     if not path.exists():
         return False
@@ -121,7 +105,6 @@ def has_codex_assistant_output_since(
 
 
 def _format_token_lines(last_token_info: dict[str, Any]) -> list[str]:
-    """Format token and rate-limit lines."""
     total_usage = _as_dict(last_token_info.get("total_token_usage"))
     if not total_usage:
         return ["- token stats: unavailable (no `token_count` event yet)"]
@@ -169,10 +152,6 @@ def build_codex_status_snapshot(
     session_id: str = "",
     cwd: str = "",
 ) -> str | None:
-    """Build a status snapshot from a Codex transcript.
-
-    Returns None when the transcript cannot be read or has no JSON entries.
-    """
     path = Path(transcript_path)
     if not path.exists():
         return None

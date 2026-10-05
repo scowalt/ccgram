@@ -1,5 +1,3 @@
-"""Integration tests for MonitorState — real file I/O with tmp_path."""
-
 import pytest
 
 from ccgram.monitor_state import MonitorState, TrackedSession

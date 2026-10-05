@@ -125,7 +125,6 @@ async def test_list_limit_clamped_to_max(app_client):
     resp = await c.get(f"/api/transcript/{tok}?limit=99999", headers=_hdr())
     assert resp.status == 200
     data = await resp.json()
-    # total is small, but the endpoint must still accept oversized limit values.
     assert len(data["messages"]) <= MAX_LIMIT
 
 
@@ -162,7 +161,6 @@ async def test_search_finds_case_insensitive(app_client):
     match = data["matches"][0]
     assert match["index"] == 2
     assert "FOO" in match["entry"]["text"]
-    # Context entries on either side
     assert match["before"]["text"] == "hi back"
     assert match["after"]["text"] == "ok"
 
@@ -229,8 +227,6 @@ async def test_search_empty_session_returns_404():
 
 
 async def test_auth_scopes_to_token_window():
-    """Token's window_id is the only one passed to the reader — even with a path
-    that names another window, the reader must only see the token's window."""
     per_window = {
         "ccgram:@1": [_msg(0, text="window1 only")],
         "ccgram:@2": [_msg(0, text="window2 only")],
@@ -251,5 +247,4 @@ async def test_build_app_includes_transcript_routes():
         getattr(r.resource, "canonical", str(r.resource)) for r in app.router.routes()
     }
     assert any("/api/transcript" in p for p in paths)
-    # Both routes present
     assert any("/search" in p for p in paths if "/api/transcript" in p)

@@ -1,10 +1,3 @@
-"""Integration tests for PTB dispatch routing to shell handler.
-
-Uses real PTB Application with _do_post patch to verify that text messages
-in shell-bound topics route through to handle_shell_message, and that
-callback queries with shell prefixes dispatch to handle_shell_callback.
-"""
-
 import os
 from datetime import datetime
 from unittest.mock import AsyncMock, patch

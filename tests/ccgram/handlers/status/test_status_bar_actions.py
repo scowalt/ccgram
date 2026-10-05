@@ -171,7 +171,6 @@ class TestBuildDashboardButton:
     def test_returns_none_for_whitespace_url(self):
         from ccgram.handlers.status.status_bar_actions import build_dashboard_button
 
-        # Config strips at load, but defensively guard against runtime mutation.
         with patch(f"{MOD}.config") as cfg:
             cfg.miniapp_base_url = ""
             assert build_dashboard_button("@0", 42) is None
@@ -193,7 +192,6 @@ class TestBuildDashboardButton:
         assert btn.text == "\U0001fa9f Dashboard"
         assert isinstance(btn.web_app, WebAppInfo)
         assert btn.web_app.url == "https://miniapp.example/app/signed-tok"
-        # No trailing-slash duplication from base_url.
         assert "//app/" not in btn.web_app.url
         mock_sign.assert_called_once_with(
             bot_token="bot:abc", window_id="@7", user_id=42

@@ -1,5 +1,3 @@
-"""Unit tests for CLI argument parsing and env var application."""
-
 import os
 
 import pytest
@@ -12,7 +10,6 @@ _ALL_ENV_VARS = ["CCGRAM_LOG_LEVEL", *[env for _, env in _FLAG_TO_ENV]]
 
 @pytest.fixture(autouse=True)
 def _clean_env():
-    """Ensure apply_args_to_env changes don't leak between tests."""
     saved = {var: os.environ.get(var) for var in _ALL_ENV_VARS}
     yield
     for var, value in saved.items():

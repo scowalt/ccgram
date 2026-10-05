@@ -1,24 +1,3 @@
-"""Transcript surface — paginated history + substring search per window.
-
-Two routes registered by :func:`register_transcript_routes`:
-
-- ``GET /api/transcript/{token}`` — cursor-paginated message list. Optional
-  query params: ``cursor`` (integer offset, default ``0``) and ``limit``
-  (default ``50``, capped at ``MAX_LIMIT``). Returns ``{messages, total,
-  next_cursor}``; ``next_cursor`` is ``None`` when the page contained the
-  tail of the transcript.
-
-- ``GET /api/transcript/{token}/search`` — case-insensitive substring search
-  over the message ``text`` field. Required query param ``q``. Returns
-  ``{matches}`` where each match carries ``index``, the matching entry, and
-  one preceding/following entry (``before``/``after``) so the SPA can render
-  light context without a second round-trip.
-
-Auth follows the same model as the terminal websocket: the token in the
-path is the only authority for ``window_id`` — there is no path-level
-``window_id`` to spoof.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -46,10 +25,6 @@ _READER_KEY: web.AppKey[Reader] = web.AppKey("transcript_reader")
 
 
 async def _default_reader(window_id: str) -> list[dict[str, Any]]:
-    """Read all messages for ``window_id`` via the global session resolver."""
-    # Lazy: tests substitute alternate readers before any request
-    # arrives; the singleton lookup stays inside the default factory.
-    # Lazy: miniapp routes resolve singletons per-request so tests can stub them
     from ...session_query import get_recent_messages
 
     messages, _ = await get_recent_messages(window_id)
@@ -60,13 +35,11 @@ _INIT_DATA_HEADER = "X-Telegram-Init-Data"
 
 
 def _init_data_from_header(request: web.Request) -> str | None:
-    """Read initData from the header only — keep secrets out of URLs/logs."""
     raw = request.headers.get(_INIT_DATA_HEADER)
     return raw or None
 
 
 def _verify(request: web.Request) -> str | web.Response:
-    """Return ``window_id`` from the path token + initData, or a 403 response."""
     token = request.match_info["token"]
     bot_token = request.app[_BOT_TOKEN_KEY]
     init_data = _init_data_from_header(request)
@@ -150,9 +123,6 @@ async def _handle_search(request: web.Request) -> web.Response:
         if needle not in text.casefold():
             continue
         if len(matches) >= MAX_SEARCH_RESULTS:
-            # Result cap reached — surface a truncated flag so the SPA can
-            # show a "more results — refine your query" hint instead of
-            # implying the cap is the whole match count.
             truncated = True
             break
         matches.append(
@@ -180,11 +150,6 @@ def register_transcript_routes(
     bot_token: str,
     reader: Reader | None = None,
 ) -> None:
-    """Attach transcript list/search routes to ``app``.
-
-    ``reader`` is injected by tests; production passes ``None`` to use the
-    global session resolver.
-    """
     app[_BOT_TOKEN_KEY] = bot_token
     app[_READER_KEY] = reader or _default_reader
     app.router.add_get("/api/transcript/{token}", _handle_list)

@@ -1,16 +1,3 @@
-"""Shell provider infrastructure — prompt detection, marker setup, shell inventory.
-
-Separated from ``shell.py`` (which holds the slim ``ShellProvider`` class)
-so the provider boundary stays clean: ``shell.py`` is just the
-``AgentProvider`` implementation, and this module owns everything else
-that handlers and the rest of ccgram need to drive a shell session
-(prompt-marker matching, interactive-shell detection, prompt setup,
-known shell inventory).
-
-Future shell-like providers can compose against this infrastructure
-without subclassing ``ShellProvider``.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -30,9 +17,7 @@ _WARNED_INVALID_MODE = False
 
 
 def _get_prompt_mode() -> str:
-    """Return the configured prompt mode (``wrap`` or ``replace``)."""
     global _WARNED_INVALID_MODE  # noqa: PLW0603
-    # Lazy: config singleton resolved at call time
     from ccgram.config import config
 
     mode = getattr(config, "prompt_mode", "wrap") or "wrap"
@@ -47,8 +32,6 @@ def _get_prompt_mode() -> str:
 
 
 def _get_marker_prefix() -> str:
-    """Return the configured prompt marker prefix (used in ``replace`` mode)."""
-    # Lazy: config singleton resolved at call time
     from ccgram.config import config
 
     return getattr(config, "prompt_marker", _DEFAULT_MARKER) or _DEFAULT_MARKER
@@ -56,7 +39,6 @@ def _get_marker_prefix() -> str:
 
 @functools.cache
 def _compile_replace_re(prefix: str) -> re.Pattern[str]:
-    """Compile prompt regex for ``replace`` mode (cached per unique prefix)."""
     return re.compile(rf"^{re.escape(prefix)}:(\d+)❯\s?(.*)")
 
 
@@ -65,12 +47,6 @@ _WRAP_RE = re.compile(r"⌘(\d+)⌘\s?(.*)$")
 
 @dataclass(frozen=True)
 class PromptMatch:
-    """Typed result from prompt marker matching.
-
-    Replaces raw ``re.Match`` group access with named fields so consumers
-    never depend on regex internals.
-    """
-
     sequence_number: int
     """Monotonic counter (exit code of the last command)."""
 
@@ -85,7 +61,6 @@ class PromptMatch:
 
 
 def _match_to_prompt_match(m: re.Match[str], line: str) -> PromptMatch:
-    """Convert a regex match into a typed ``PromptMatch``."""
     num = int(m.group(1))
     return PromptMatch(
         sequence_number=num,
@@ -96,13 +71,6 @@ def _match_to_prompt_match(m: re.Match[str], line: str) -> PromptMatch:
 
 
 def match_prompt(line: str) -> PromptMatch | None:
-    """Match a prompt marker in *line*, respecting the current prompt mode.
-
-    In ``replace`` mode the marker is at line start (``re.match``).
-    In ``wrap`` mode the marker can appear anywhere (``re.search``).
-
-    Returns a typed ``PromptMatch`` or ``None``.
-    """
     if _get_prompt_mode() == "replace":
         m = _compile_replace_re(_get_marker_prefix()).match(line)
     else:
@@ -120,14 +88,7 @@ async def has_prompt_marker(
     *,
     capture_fn: Callable[[str], Awaitable[str | None]] | None = None,
 ) -> bool:
-    """Check if the prompt marker is present in the pane.
-
-    ``capture_fn`` is optional and injectable for tests — defaults to
-    ``tmux_manager.capture_pane`` so production callers need no changes.
-    """
     if capture_fn is None:
-        # Lazy: tmux_manager imports providers; lazy fallback when tests
-        # don't inject capture_fn keeps the providers ↔ tmux_manager cycle broken.
         from ccgram.multiplexer import multiplexer as tmux_manager
 
         capture_fn = tmux_manager.capture_pane
@@ -138,23 +99,10 @@ async def has_prompt_marker(
 
 
 def get_shell_name() -> str:
-    """Return the basename of the bot process's $SHELL (e.g. 'fish', 'zsh').
-
-    Sync fallback — for pane-accurate detection use ``detect_pane_shell()``.
-    """
     return os.environ.get("SHELL", "").rsplit("/", 1)[-1]
 
 
 async def detect_pane_shell(window_id: str) -> str:
-    """Detect the shell running in a pane via the multiplexer seam.
-
-    Prefers ``pane_current_command`` (tmux names the shell there); when the
-    backend leaves it empty or non-shell (herdr carries the agent name, empty
-    for a bare shell), falls back to the pane's foreground process argv via
-    ``Multiplexer.foreground``. Only if neither identifies a known shell does it
-    fall back to the bot's own ``$SHELL``, which may not match the pane.
-    """
-    # Lazy: tmux_manager pulls providers; resolved per-call
     from ccgram.multiplexer import multiplexer as tmux_manager
 
     window = await tmux_manager.find_window_by_id(window_id)
@@ -175,7 +123,6 @@ async def detect_pane_shell(window_id: str) -> str:
 
 
 def _wrap_setup_commands(shell: str) -> str:
-    """Return the shell command that appends a ⌘N⌘ marker to the prompt."""
     fish = (
         "builtin functions --query __ccgram_orig_prompt; or begin; "
         "builtin functions --copy fish_prompt __ccgram_orig_prompt 2>/dev/null; "
@@ -213,7 +160,6 @@ def _wrap_setup_commands(shell: str) -> str:
 
 
 def _replace_setup_commands(shell: str, prefix: str) -> str:
-    """Return the shell command that replaces the prompt with {prefix}:N❯."""
     cmds = {
         "fish": f'function fish_prompt; printf "{prefix}:$status❯ "; end',
         "bash": f"PS1='{prefix}:$?❯ '",
@@ -225,18 +171,6 @@ def _replace_setup_commands(shell: str, prefix: str) -> str:
 
 
 async def _is_interactive_shell(window_id: str) -> bool:
-    """Check if the pane has an interactive shell at a prompt (not running a script).
-
-    Inspects the pane's foreground process via the multiplexer seam. A shell
-    running a script (e.g. ``bash ./scripts/restart.sh``) has child processes
-    in the foreground group, while an idle interactive shell is its own
-    foreground leader with a single bare argv like ``-bash``, ``fish``, or
-    ``/bin/zsh``.
-
-    Returns True if the shell looks interactive, False if it's running a script
-    or if detection fails (fail-safe: don't send C-c to unknown targets).
-    """
-    # Lazy: multiplexer proxy pulls providers; resolved per-call.
     from ccgram.multiplexer import multiplexer
 
     fg = await multiplexer.foreground(window_id)
@@ -258,28 +192,11 @@ async def setup_shell_prompt(
     capture_fn: Callable[[str], Awaitable[str | None]] | None = None,
     send_keys_fn: Callable[..., Awaitable[bool]] | None = None,
 ) -> None:
-    """Configure the shell prompt with a detectable marker.
-
-    In ``wrap`` mode the existing prompt is preserved and a small ``⌘N⌘``
-    suffix is appended.  In ``replace`` mode the prompt is fully replaced
-    with ``{prefix}:N❯``.
-
-    No-op if the marker is already present in the pane (idempotent).
-    Set ``clear=False`` when attaching to an existing session to
-    preserve scrollback context.
-
-    ``capture_fn`` and ``send_keys_fn`` are optional and injectable for
-    tests — default to ``tmux_manager.capture_pane`` and
-    ``tmux_manager.send_keys`` so production callers need no changes.
-    """
-    # Lazy: config singleton resolved at call time
     from ccgram.config import config
 
-    # Never send prompt setup to ccgram's own window — the C-c would kill the bot
     if config.own_window_id and window_id == config.own_window_id:
         return
 
-    # Safety: verify the shell is actually idle at a prompt, not running a script.
     if not await _is_interactive_shell(window_id):
         return
 
@@ -287,8 +204,6 @@ async def setup_shell_prompt(
         return
 
     if send_keys_fn is None:
-        # Lazy: tmux_manager imports providers; lazy fallback for the same
-        # cycle-break reason as has_prompt_marker above.
         from ccgram.multiplexer import multiplexer as tmux_manager
 
         send_keys_fn = tmux_manager.send_keys

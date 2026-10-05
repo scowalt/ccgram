@@ -1,5 +1,3 @@
-"""Tests for StatePersistence — debounced atomic JSON persistence."""
-
 from __future__ import annotations
 
 import asyncio
@@ -56,9 +54,6 @@ class TestScheduleSaveWithLoop:
     async def test_fires_after_delay(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Drive the debounced save without waiting wall-clock time: schedule
-        # immediately, drain the loop until the timer fires, and assert the
-        # write landed.
         path = tmp_path / "state.json"
         sp = StatePersistence(path, lambda: {"fired": True})
 
@@ -88,7 +83,7 @@ class TestDoSaveErrorHandling:
 
         sp = StatePersistence(path, bad_serializer)
         sp._dirty = True
-        sp._do_save()  # must not raise
+        sp._do_save()
         assert not path.exists()
 
     def test_dirty_not_cleared_on_save_error(self, tmp_path: Path) -> None:
@@ -154,7 +149,6 @@ class TestLoad:
         assert sp.load() == {}
 
     def test_returns_empty_dict_on_os_error(self, tmp_path: Path) -> None:
-        # A directory path raises IsADirectoryError (OSError subclass) on read_text.
-        path = tmp_path  # tmp_path is a directory
+        path = tmp_path
         sp = StatePersistence(path, lambda: {})
         assert sp.load() == {}

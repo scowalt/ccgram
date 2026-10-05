@@ -609,7 +609,7 @@ class TestTruncateCaption:
     def test_truncates_at_whitespace(self):
         from ccgram.handlers.messaging_pipeline.message_queue import _truncate_caption
 
-        text = ("word " * 220).rstrip()  # > 1024 chars
+        text = ("word " * 220).rstrip()
         result = _truncate_caption(text)
         assert len(result) <= 1024
         assert result.endswith("…")
@@ -618,9 +618,9 @@ class TestTruncateCaption:
     def test_no_whitespace_still_within_limit(self):
         from ccgram.handlers.messaging_pipeline.message_queue import _truncate_caption
 
-        text = "x" * 1100  # no spaces
+        text = "x" * 1100
         result = _truncate_caption(text)
-        assert len(result) <= 1024  # must not exceed limit
+        assert len(result) <= 1024
 
     def test_exact_limit_unchanged(self):
         from ccgram.handlers.messaging_pipeline.message_queue import _truncate_caption

@@ -1,9 +1,3 @@
-"""Whisper transcription provider abstraction.
-
-Provides a pluggable interface for audio transcription using OpenAI-compatible
-APIs (OpenAI, Groq, etc.).
-"""
-
 import os
 
 from .base import WhisperTranscriber
@@ -20,11 +14,6 @@ _PROVIDERS = {
 
 
 def get_transcriber() -> WhisperTranscriber | None:
-    """Create and return a Whisper transcriber based on config.
-
-    Returns None if whisper_provider is not configured (empty string).
-    """
-    # Lazy: config singleton resolved by factory call
     from ccgram.config import config
 
     provider = config.whisper_provider

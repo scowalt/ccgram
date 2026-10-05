@@ -15,7 +15,6 @@ from ccgram.providers.process_detection import (
 
 
 def _fg(argv: list[str], pgid: int) -> ForegroundInfo:
-    """Build a ForegroundInfo as the multiplexer seam would return it."""
     return ForegroundInfo(pid=pgid, pgid=pgid, argv=argv, cwd="/tmp")
 
 
@@ -72,9 +71,6 @@ class TestClassifyProviderFromArgs:
 
 
 class TestClassifyProviderFromArgv:
-    """``classify_provider_from_argv`` is the list-native core; the string
-    variant just splits and delegates."""
-
     @pytest.mark.parametrize(
         ("argv", "expected"),
         [

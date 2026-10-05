@@ -1,6 +1,3 @@
-"""Tests for polling strategy classes: state management, RC debounce,
-autoclose timers, pane alerts, probe failures, and content-hash caching."""
-
 import time
 from unittest.mock import patch
 

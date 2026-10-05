@@ -12,7 +12,6 @@ def save_calls() -> list[int]:
 
 @pytest.fixture
 def store(monkeypatch, save_calls: list[int]) -> WindowStateStore:
-    """Fresh store wired into every port module + window_state_store."""
     s = WindowStateStore(
         schedule_save=lambda: save_calls.append(1),
         on_hookless_provider_switch=lambda _wid: None,

@@ -46,8 +46,6 @@ class FakePaneList:
 
 
 class FakePaneCapture:
-    """Per-(window, pane) capture stub returning preset frames or blocking."""
-
     def __init__(self, frames_by_pane):
         self._frames = {k: list(v) for k, v in frames_by_pane.items()}
         self.calls: list[tuple[str, str]] = []
@@ -165,7 +163,6 @@ async def test_panes_endpoint_returns_four_panes():
         resp = await c.get(f"/api/panes/{tok}", headers=_init_headers())
         data = await resp.json()
         assert [p["pane_id"] for p in data["panes"]] == ["%5", "%6", "%7", "%8"]
-        # Blocked state preserved end-to-end.
         assert data["panes"][3]["state"] == "blocked"
 
 
@@ -199,7 +196,6 @@ async def test_websocket_streams_specific_pane_when_query_set():
             assert frame["type"] == "frame"
             assert frame["text"] == "pane six frame"
             await ws.close()
-        # Active-pane capture must not be called when ?pane is set.
         assert active.calls == []
         assert pane_capture.calls and pane_capture.calls[0] == (WINDOW_ID, "%6")
 
@@ -239,7 +235,7 @@ async def test_websocket_per_pane_capture_failure_emits_error():
         tok = sign_token(bot_token=BOT, window_id=WINDOW_ID, user_id=42)
         async with c.ws_connect(f"/ws/terminal/{tok}?pane=%255") as ws:
             await _ws_authenticate(ws)
-            await _read_one(ws)  # hello
+            await _read_one(ws)
             err = await _read_one(ws)
             assert err["type"] == "error"
             frame = await _read_one(ws)
@@ -249,7 +245,6 @@ async def test_websocket_per_pane_capture_failure_emits_error():
 
 
 async def test_websocket_rejects_pane_outside_token_window():
-    """tmux pane ids are server-global; token must scope pane access."""
     pane_capture = FakePaneCapture({"%99": ["foreign frame"]})
     panes = FakePaneList(
         {
@@ -260,7 +255,6 @@ async def test_websocket_rejects_pane_outside_token_window():
     app = _make_app(pane_capture=pane_capture, pane_list=panes)
     async with TestClient(TestServer(app)) as c:
         tok = sign_token(bot_token=BOT, window_id=WINDOW_ID, user_id=42)
-        # Token is for WINDOW_ID, but %99 belongs to ccgram:@99 — must 403.
         resp = await c.get(f"/ws/terminal/{tok}?pane=%2599")
         assert resp.status == 403
         assert pane_capture.calls == []
@@ -274,8 +268,8 @@ async def test_subscription_lifecycle_per_pane_disconnect_stops_capture():
         tok = sign_token(bot_token=BOT, window_id=WINDOW_ID, user_id=42)
         async with c.ws_connect(f"/ws/terminal/{tok}?pane=%255") as ws:
             await _ws_authenticate(ws)
-            await _read_one(ws)  # hello
-            await _read_one(ws)  # frame
+            await _read_one(ws)
+            await _read_one(ws)
             await ws.close()
         await asyncio.sleep(0.05)
         baseline = len(pane_capture.calls)
@@ -302,7 +296,6 @@ async def test_panes_endpoint_empty_window():
 
 
 async def test_panes_endpoint_window_isolation():
-    """Token for window A must not be able to read panes for window B."""
     panes = FakePaneList(
         {
             "ccgram:@1": [_pane("%1")],

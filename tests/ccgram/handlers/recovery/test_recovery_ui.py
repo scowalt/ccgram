@@ -29,18 +29,12 @@ from ccgram.handlers.user_state import (
     RECOVERY_WINDOW_ID,
 )
 
-# After Round 5 split: _handle_fresh/continue/resume/back/cancel/browse,
-# _create_and_bind_window, build_recovery_keyboard, _recovery_help_text,
-# scan_sessions_for_cwd (re-imported here), session_manager, thread_router,
-# tmux_manager, etc. all live in recovery_banner. Keeping the constant name
-# minimises diff against pre-split tests.
 _RC = "ccgram.handlers.recovery.recovery_banner"
 _RP = "ccgram.handlers.recovery.resume_picker"
 
 
 @pytest.fixture(autouse=True)
 def _patch_recovery_session_manager():
-    """Mock session_manager writes (set_window_*) so tests don't hit real state."""
     with patch(f"{_RC}.session_manager"):
         yield
 

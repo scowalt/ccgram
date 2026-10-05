@@ -1,11 +1,3 @@
-"""Last-reply retrieval and /last command handler.
-
-Provides ``send_last_reply`` which delivers the most recent assistant reply
-(AI providers) or last command+output (shell) to a Telegram topic. Overflow
-text (>4096 chars) is sent as a .txt document. ``last_command`` is the
-PTB command handler entry point.
-"""
-
 from __future__ import annotations
 
 import structlog
@@ -31,23 +23,8 @@ async def send_last_reply(
     thread_id: int | None,
     window_id: str,
 ) -> None:
-    """Send the last assistant reply or shell command output to a topic.
-
-    AI providers: walks messages from the most recent user turn forward and
-    collects contiguous assistant text blocks. Falls back to the most recent
-    assistant text anywhere in history. Replies "No reply yet." when there is
-    none.
-
-    Shell provider: captures scrollback (200 lines, plain) and extracts the
-    last command+output block via ``extract_last_shell_block``. Replies
-    "No command output found." when no block is found.
-
-    Text >4096 chars is written to a temp .txt file and sent as a document.
-    """
-    # Lazy: providers module pulls in all provider implementations at registration
     from ..providers import get_provider_for_window
 
-    # Lazy: last_unit only needed for the shell path
     from ..last_unit import extract_last_shell_block
 
     provider_name = get_window_provider(window_id)
@@ -61,7 +38,6 @@ async def send_last_reply(
     elif caps.supports_structured_transcript:
         text = await _extract_last_ai_reply(window_id)
     else:
-        # Provider without structured transcript (e.g. unknown); best-effort scrollback
         scrollback = await tmux_manager.capture_pane_scrollback(window_id, history=200)
         text = scrollback.strip() if scrollback else "No reply yet."
 
@@ -69,13 +45,10 @@ async def send_last_reply(
 
 
 async def _extract_last_ai_reply(window_id: str) -> str:
-    """Extract last assistant reply from the transcript for an AI provider."""
-    # Lazy: session_query wraps session_resolver which does JSONL discovery
     from .. import session_query
 
     messages, _ = await session_query.get_recent_messages(window_id)
 
-    # Try the last-turn path first; fall back to most-recent assistant text.
     result = _collect_last_turn_blocks(messages)
     if result:
         return result
@@ -83,7 +56,6 @@ async def _extract_last_ai_reply(window_id: str) -> str:
 
 
 def _collect_last_turn_blocks(messages: list[dict]) -> str:
-    """Return joined assistant text blocks after the last user message, or ''."""
     last_user_idx: int | None = None
     for i in range(len(messages) - 1, -1, -1):
         if messages[i].get("role") == "user":
@@ -106,7 +78,6 @@ def _collect_last_turn_blocks(messages: list[dict]) -> str:
 
 
 def _most_recent_assistant_text(messages: list[dict]) -> str:
-    """Return the most recent assistant text message, or 'No reply yet.'."""
     for msg in reversed(messages):
         if msg.get("role") == "assistant" and msg.get("content_type") == "text":
             t = (msg.get("text") or "").strip()
@@ -122,19 +93,14 @@ async def _deliver(
     window_id: str,
     text: str,
 ) -> None:
-    """Send text as a message or .txt document if it exceeds Telegram's limit."""
-    # Lazy: messaging_pipeline ↔ handler cycle through status_bubble
     from .messaging_pipeline.message_sender import safe_send
 
     if len(text) <= _TELEGRAM_MAX:
         await safe_send(client, chat_id, text, message_thread_id=thread_id)
         return
 
-    # Overflow: write to temp file and send as document
-    # Lazy: only used in this overflow branch
     import tempfile
 
-    # Lazy: only used in this overflow branch
     from pathlib import Path
 
     tmp_path: str | None = None
@@ -167,17 +133,12 @@ async def _deliver(
 
 
 async def last_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /last — send the most recent reply or shell output to this topic."""
-    # Lazy: config singleton resolved at call time so tests can swap it
     from ..config import config
 
-    # Lazy: utils pulls in chat-id helpers that reach back into handlers
     from ..utils import handle_general_topic_message, is_general_topic
 
-    # Lazy: messaging_pipeline ↔ handler cycle through status_bubble
     from .messaging_pipeline.message_sender import safe_reply
 
-    # Lazy: PTBTelegramClient only needed when we have a real bot context
     from ..telegram_client import PTBTelegramClient
 
     user = update.effective_user
@@ -186,7 +147,6 @@ async def last_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -> N
     if not update.message:
         return
 
-    # Lazy: callback_helpers only used when we have a real update
     from .callback_helpers import get_thread_id
 
     thread_id = get_thread_id(update)

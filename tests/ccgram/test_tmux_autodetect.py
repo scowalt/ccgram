@@ -1,5 +1,3 @@
-"""Unit tests for tmux auto-detection and duplicate instance prevention."""
-
 import subprocess
 from unittest.mock import patch
 

@@ -1076,7 +1076,6 @@ class TestTypingAction:
         message = AsyncMock(spec=Message)
 
         async def slow_generate(*args, **kwargs):  # noqa: ARG001
-            # 0.25 s with refresh 0.05 s ⇒ at least 4 pulses + initial.
             await asyncio.sleep(0.25)
             return CommandResult(command="ls", explanation="", is_dangerous=False)
 
@@ -1103,7 +1102,6 @@ class TestTypingAction:
 
             await handle_shell_message(bot, 1, 42, "@0", "list files", message)
 
-        # immediate fire + ≥3 pulses while LLM was sleeping (timing-tolerant).
         assert bot.send_chat_action.await_count >= 3
 
     async def test_typing_pulse_cancelled_after_completion(self) -> None:
@@ -1140,7 +1138,6 @@ class TestTypingAction:
             count_after_complete = bot.send_chat_action.await_count
             await asyncio.sleep(0.1)
 
-        # No further pulses — task was cancelled.
         assert bot.send_chat_action.await_count == count_after_complete
 
     async def test_typing_pulse_cancelled_on_llm_error(self) -> None:
@@ -1202,7 +1199,6 @@ class TestTypingAction:
             mock_tm.find_window_by_id = AsyncMock(return_value=None)
             mock_tm.capture_pane = AsyncMock(return_value=None)
 
-            # Must not raise.
             await handle_shell_message(bot, 1, 42, "@0", "!ls", message)
 
 
@@ -1240,7 +1236,6 @@ class TestRunningReaction:
         from ccgram.handlers.reactions import REACT_RUNNING
 
         assert args[3] == REACT_RUNNING
-        # mark_telegram_command receives the user-msg id for completion react
         mock_mark.assert_called_once_with("@0", "ls", 1, 42, 4242)
 
     async def test_handle_shell_message_no_message_skips_reaction(self) -> None:

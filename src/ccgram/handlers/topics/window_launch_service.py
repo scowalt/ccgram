@@ -1,14 +1,3 @@
-"""Window creation and topic-binding service for the directory-browser flow.
-
-Extracts the launch sequence from directory_callbacks._create_window_and_bind
-into a self-contained service module.  Callers build a ``WindowLaunchRequest``
-and call ``launch_window``; the result is a ``WindowLaunchResult``.
-
-CRITICAL ordering invariant (MC-2967):
-  create_window() → register_pending_creation(window_id)
-  must have NO await between them.  See the inline comment for full context.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -55,34 +44,22 @@ __all__ = [
 
 @dataclass
 class WindowLaunchRequest:
-    """Parameters for the window-creation + topic-binding step."""
-
     user_id: int
     thread_id: int | None
     provider_name: str
     cwd: str
     mode: str
     pending_text: str | None
-    # Worktree metadata is NOT carried in this request. It flows through
-    # context.user_data via PENDING_WORKTREE_PATH / PENDING_WORKTREE_BRANCH /
-    # PENDING_WORKTREE_REPO keys, read directly by _persist_worktree_state and
-    # _create_topic_window.
 
 
 @dataclass
 class WindowLaunchResult:
-    """Outcome of ``launch_window``."""
-
     success: bool
     window_id: str | None = None
     error_message: str | None = None
 
 
-# ── helpers ──────────────────────────────────────────────────────────────────
-
-
 def _cwd_within(cwd: str, worktree_path: str) -> bool:
-    """True if *cwd* is the worktree root or nested inside it."""
     try:
         c = Path(cwd).resolve()
         w = Path(worktree_path).resolve()
@@ -94,14 +71,6 @@ def _cwd_within(cwd: str, worktree_path: str) -> bool:
 def _persist_worktree_state(
     window_id: str, cwd: str, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Persist a pending worktree path/branch onto the new window state.
-
-    Only persists when the window's *cwd* is the pending worktree path
-    (or a subdirectory of it — the new topic may be rooted at a subdir
-    of the fresh checkout) so a stale path from an earlier aborted
-    attempt can't attach to an unrelated window. Always clears the
-    worktree flow keys afterwards.
-    """
     user_data = context.user_data
     worktree_path = user_data.get(PENDING_WORKTREE_PATH) if user_data else None
     worktree_branch = user_data.get(PENDING_WORKTREE_BRANCH) if user_data else None
@@ -113,13 +82,6 @@ def _persist_worktree_state(
 async def _abort_topic_creation(
     query: CallbackQuery, message: str, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Surface a window-creation failure and drop all pending-topic state.
-
-    The error message carries no keyboard, so the user must restart the
-    flow. Clearing the pending worktree state (including the re-entrancy
-    flag) keeps a sticky "creating" guard from rejecting every future
-    worktree confirm — the worktree, if any, was already created on disk.
-    """
     await safe_edit(query, f"❌ {message}")
     if context.user_data is not None:
         context.user_data.pop(PENDING_THREAD_ID, None)
@@ -134,13 +96,6 @@ async def _create_topic_window(
     chosen_workspace_id: str | None,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> tuple[bool, str, str, str]:
-    """Create the topic's window, returning ``(success, message, name, id)``.
-
-    Native worktree delegation (herdr): when the flow carries a pending worktree
-    intent, one ``worktree create`` makes the checkout + grouped workspace + the
-    window in a single step. Gated on ``native_worktrees``; tmux always takes the
-    ``create_window`` branch (its worktree was already created on disk earlier).
-    """
     ud = context.user_data
     wt_repo = ud.get(PENDING_WORKTREE_REPO) if ud else None
     wt_branch = ud.get(PENDING_WORKTREE_BRANCH) if ud else None
@@ -161,11 +116,8 @@ async def _create_topic_window(
 
 
 async def _wait_for_shell_ready(window_id: str, *, attempts: int = 5) -> None:
-    """Wait for a freshly created tmux window to show a shell prompt."""
-    # Lazy: only needed inside the shell-detection branch
     import os
 
-    # Lazy: providers package heavy bootstrap
     from ccgram.providers.shell import KNOWN_SHELLS
 
     for _ in range(attempts):
@@ -178,12 +130,6 @@ async def _wait_for_shell_ready(window_id: str, *, attempts: int = 5) -> None:
 
 
 async def _accept_yolo_confirmation(window_id: str, *, timeout: float = 8.0) -> bool:
-    """Detect and accept Claude Code's bypass permissions confirmation prompt.
-
-    When launched with --dangerously-skip-permissions, Claude Code shows a
-    TUI confirmation where "No, exit" is the default selection. Sends
-    Down+Enter to select the "Yes" option so the session can start.
-    """
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     while loop.time() < deadline:
@@ -204,26 +150,11 @@ async def _accept_yolo_confirmation(window_id: str, *, timeout: float = 8.0) -> 
     return False
 
 
-# ── main entry point ──────────────────────────────────────────────────────────
-
-
 async def launch_window(  # noqa: PLR0915, C901
     query: CallbackQuery,
     context: ContextTypes.DEFAULT_TYPE,
     request: WindowLaunchRequest,
 ) -> WindowLaunchResult:
-    """Create a tmux window, bind to the pending topic, and forward pending text.
-
-    Shared by _handle_mode_select (after mode picker) and _handle_provider_select
-    (when mode picker is skipped for providers without YOLO flags).
-
-    CRITICAL (MC-2967): ``create_window`` → ``register_pending_creation(wid)``
-    must have NO await between them.  The provider's SessionStart hook fires
-    inside the new pane within seconds; the SessionMonitor's 1 s poll cycle would
-    otherwise see an unbound window and auto-create a duplicate Telegram topic
-    before ``bind_thread`` runs below.
-    """
-    # Lazy: providers package heavy bootstrap
     from ccgram.providers import resolve_launch_command
 
     user_id = request.user_id
@@ -246,11 +177,6 @@ async def launch_window(  # noqa: PLR0915, C901
         return WindowLaunchResult(success=False, error_message=message)
     clear_workspace_state(context.user_data)
 
-    # Race-guard: tag this window as "directory flow in progress" BEFORE any
-    # subsequent await. The provider's SessionStart hook fires inside the new
-    # tmux pane within seconds; the SessionMonitor's 1s poll cycle would
-    # otherwise see an unbound window and auto-create a duplicate Telegram
-    # topic before bind_thread() runs below. See MC-2967 for full repro.
     topic_orchestration.register_pending_creation(created_wid)
 
     user_preferences.update_user_mru(user_id, selected_path)
@@ -273,7 +199,6 @@ async def launch_window(  # noqa: PLR0915, C901
 
     provider_caps = provider_registry.get(provider_name).capabilities
     if provider_caps.chat_first_command_path:
-        # Lazy: shell ↔ topics cycle via window_callbacks adoption flow.
         from ..shell.shell_prompt_orchestrator import ensure_setup
 
         await _wait_for_shell_ready(created_wid)
@@ -287,10 +212,6 @@ async def launch_window(  # noqa: PLR0915, C901
         chat = query_message.chat if query_message else None
         if chat and chat.type in ("group", "supergroup"):
             thread_router.set_group_chat_id(user_id, pending_thread_id, chat.id)
-        # Bind is durable now — handle_new_window's `_is_window_already_bound`
-        # check will find the binding, so the pending-creation race-guard can
-        # be released. (Late SessionMonitor polls are still safe: they will
-        # take the already-bound branch instead.)
         topic_orchestration.clear_pending_creation(created_wid)
 
     provider = provider_registry.get(provider_name)
@@ -329,13 +250,9 @@ async def launch_window(  # noqa: PLR0915, C901
             context.user_data.pop(PENDING_THREAD_TEXT, None)
             context.user_data.pop(PENDING_THREAD_ID, None)
 
-        # Chat-first providers (shell): route through NL→command approval flow
         if provider_caps.chat_first_command_path:
-            # Lazy: telegram_client wraps PTB Bot; shell.shell_commands
-            # ↔ topics cycle through approval callback wiring.
             from ...telegram_client import PTBTelegramClient
 
-            # Lazy: shell.shell_commands ↔ topics cycle through approval wiring.
             from ..shell.shell_commands import handle_shell_message
 
             await handle_shell_message(
@@ -354,7 +271,6 @@ async def launch_window(  # noqa: PLR0915, C901
                     user_id,
                     send_msg,
                 )
-                # Lazy: telegram_client wraps PTB Bot.
                 from ...telegram_client import PTBTelegramClient
 
                 await safe_send(

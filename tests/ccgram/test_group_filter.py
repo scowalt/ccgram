@@ -1,9 +1,3 @@
-"""Tests for group filtering (TASK-002).
-
-Verifies that when CCGRAM_GROUP_ID is set, only updates from that group are
-processed; when unset, all updates pass through.
-"""
-
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -28,23 +22,16 @@ def _make_update(*, chat_id: int | None = -100999, user_id: int = 100) -> MagicM
 
 
 def _has_chat_filter(f: filters.BaseFilter) -> bool:
-    """Check if a filter tree contains a filters.Chat instance.
-
-    Uses string representation which reliably includes "filters.Chat(...)"
-    for merged filters (e.g. "filters.TEXT and filters.Chat(-100123)").
-    """
     return "filters.Chat" in str(f)
 
 
 class TestGroupFilterModule:
     def test_default_is_filters_all(self) -> None:
-        """In test env CCGRAM_GROUP_ID is unset, so _group_filter should be ALL."""
         from ccgram.bot import _group_filter
 
         assert _group_filter is filters.ALL
 
     def test_conditional_logic(self) -> None:
-        """Verify the ternary expression that creates _group_filter."""
         group_id = -100123
         result = filters.Chat(chat_id=group_id) if group_id else filters.ALL
         assert isinstance(result, filters.Chat)

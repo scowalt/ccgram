@@ -410,14 +410,6 @@ class TestBackoffBehavior:
 
 
 class TestTickBoundWindowsIsolatedRuntime:
-    """Verify _tick_bound_windows threads runtime into tick_window.
-
-    Pre-seeding the isolated runtime's lifecycle as dead-notified causes
-    tick_window to early-return before calling discover_and_register_transcript.
-    This confirms the coordinator honours the injected runtime rather than
-    the default singletons.
-    """
-
     async def test_isolated_runtime_used_not_default(self):
         from ccgram.handlers.polling.polling_runtime import (
             PollingRuntime,
@@ -425,8 +417,6 @@ class TestTickBoundWindowsIsolatedRuntime:
         )
         from ccgram.topic_state_registry import topic_state
 
-        # Snapshot/restore topic_state so PollingRuntime.create() registrations
-        # don't leak into other tests.
         snapshot = {
             scope: list(bucket) for scope, bucket in topic_state._cleanups.items()
         }
@@ -459,9 +449,7 @@ class TestTickBoundWindowsIsolatedRuntime:
                 ]
                 await _tick_bound_windows(bot, window_lookup, runtime=isolated)
 
-            # tick_window early-returns on dead-notified; discover never reached.
             mock_discover.assert_not_called()
-            # Default runtime was not consulted — its lifecycle is clean.
             assert not default.lifecycle.is_dead_notified(user_id, thread_id, wid)
         finally:
             for scope, bucket in topic_state._cleanups.items():

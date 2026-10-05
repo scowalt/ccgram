@@ -1,9 +1,3 @@
-"""CCGram — Command & Control Bot for AI coding agents via tmux.
-
-Package entry point. Exports the version string only; all functional
-modules are imported lazily by main.py to keep startup fast.
-"""
-
 try:
     from ._version import __version__
 except ImportError:

@@ -1,5 +1,3 @@
-"""Tests for WindowView projection and SessionManager.view_window."""
-
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
@@ -14,7 +12,6 @@ from ccgram.window_view import WindowView
 
 
 def _wire_store() -> SessionManager:
-    """Instantiate a fresh SessionManager so window_store has a real save callback."""
     with patch.object(SessionManager, "_load_state"):
         return SessionManager()
 
@@ -46,7 +43,6 @@ class TestWindowViewProjection:
             session_id="",
             origin="manual_discovered",
         )
-        # cleanup
         window_store.window_states.pop("@1", None)
 
     def test_view_window_normalizes_empty_strings(self) -> None:

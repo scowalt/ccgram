@@ -1,16 +1,3 @@
-"""File search, listing and upload utilities for the /send command.
-
-Provides utilities for the /send Telegram command:
-  - _is_image: detect image files by extension
-  - _find_files: glob/exact/substring file search with security filtering
-  - _list_directory: directory listing with security filtering and sorting
-  - _format_file_label: human-readable inline keyboard button labels
-  - build_file_browser: build paginated inline keyboard for directory browsing
-  - build_search_results: build inline keyboard for search result selection
-  - upload_file: send a file to Telegram (photo or document)
-  - send_command: handle the /send command
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -62,7 +49,6 @@ _MB = 1024 * 1024
 
 
 def _safe_mtime(p: Path) -> float:
-    """Return mtime or 0.0 if the file disappeared (TOCTOU guard)."""
     try:
         return p.stat().st_mtime
     except OSError:
@@ -70,16 +56,10 @@ def _safe_mtime(p: Path) -> float:
 
 
 def _is_image(path: Path) -> bool:
-    """Return True if *path* has an image file extension."""
     return path.suffix.lower() in _IMAGE_EXTENSIONS
 
 
 def _walk_filtered(cwd: Path, depth_limit: int) -> list[Path]:
-    """Walk *cwd* with in-place pruning of excluded dirs, yielding file paths.
-
-    Stops descending once a directory's depth relative to *cwd* reaches
-    *depth_limit*. Files at depths up to *depth_limit* are included.
-    """
     cwd_resolved = cwd.resolve()
     files: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(cwd):
@@ -98,18 +78,6 @@ def _walk_filtered(cwd: Path, depth_limit: int) -> list[Path]:
 
 
 def _find_files(cwd: Path, pattern: str) -> list[Path]:
-    """Search for files matching *pattern* under *cwd*.
-
-    Dispatch rules:
-    - Pattern contains ``*`` or ``?``: fnmatch filter against filenames.
-    - Otherwise: try exact relative path first; if not found, case-insensitive
-      substring match on filenames.
-
-    Uses ``os.walk`` with in-place directory pruning so excluded trees
-    (``node_modules``, ``.venv``, etc.) are never descended into. Results
-    are filtered via ``validate_sendable``, capped at ``config.send_max_results``,
-    and sorted by mtime descending.
-    """
     is_glob = "*" in pattern or "?" in pattern
 
     if not is_glob:
@@ -136,14 +104,6 @@ def _find_files(cwd: Path, pattern: str) -> list[Path]:
 
 
 def _list_directory(path: Path, cwd: Path) -> tuple[list[Path], list[Path]]:
-    """List *path* contents, separated into (dirs, files).
-
-    Filtering:
-    - Directories: exclude names matching ``is_excluded_dir``.
-    - Files: exclude those where ``validate_sendable`` returns non-None.
-
-    Both lists are sorted alphabetically by name (case-insensitive).
-    """
     dirs: list[Path] = []
     files: list[Path] = []
 
@@ -160,12 +120,6 @@ def _list_directory(path: Path, cwd: Path) -> tuple[list[Path], list[Path]]:
 
 
 def _format_file_label(path: Path, cwd: Path) -> str:
-    """Return a button label string ``"{rel_path} ({size})"`` for *path*.
-
-    Size is formatted as B, KB, or MB. The total label is capped at 30 characters:
-    when it exceeds that, the path portion is truncated with ``…`` while the size
-    suffix is always preserved.
-    """
     try:
         rel = str(path.relative_to(cwd))
     except ValueError:
@@ -187,8 +141,6 @@ def _format_file_label(path: Path, cwd: Path) -> str:
 
     max_len = 30
     if len(label) > max_len:
-        # Truncate path portion, keep size suffix. Guard against a suffix
-        # longer than max_len (negative slice would truncate from the end).
         max_path_len = max(0, max_len - len(suffix) - 1)
         rel = rel[:max_path_len] + "…"
         label = rel + suffix
@@ -197,7 +149,6 @@ def _format_file_label(path: Path, cwd: Path) -> str:
 
 
 def _make_item_button(item: Path, idx: int, cwd: Path) -> InlineKeyboardButton:
-    """Return a single InlineKeyboardButton for *item* at position *idx*."""
     if item.is_dir():
         return InlineKeyboardButton(
             f"📁 {item.name}", callback_data=f"{CB_SEND_DIR}{idx}"
@@ -210,7 +161,6 @@ def _make_item_button(item: Path, idx: int, cwd: Path) -> InlineKeyboardButton:
 def _pack_into_rows(
     buttons_flat: list[InlineKeyboardButton],
 ) -> list[list[InlineKeyboardButton]]:
-    """Pack a flat list of buttons into rows of _BUTTONS_PER_ROW."""
     rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
     for btn in buttons_flat:
@@ -228,11 +178,6 @@ def build_file_browser(
     cwd: Path,
     page: int,
 ) -> tuple[str, InlineKeyboardMarkup, list[Path]]:
-    """Build a paginated inline keyboard for browsing files under *cwd*.
-
-    Returns (display_text, markup, items) where *items* is the full list of
-    Path objects (dirs first, then files) used to resolve button indices.
-    """
     dirs, files = _list_directory(current_path, cwd)
     items: list[Path] = dirs + files
 
@@ -282,11 +227,6 @@ def build_search_results(
     cwd: Path,
     query: str = "",
 ) -> tuple[str, InlineKeyboardMarkup, list[Path]]:
-    """Build an inline keyboard for selecting a file from search results.
-
-    Shows up to ``_ITEMS_PER_PAGE * 3`` matches with no pagination or parent nav.
-    Returns (display_text, markup, matches).
-    """
     shown = matches[: _ITEMS_PER_PAGE * 3]
 
     flat = [_make_item_button(path, idx, cwd) for idx, path in enumerate(shown)]
@@ -304,11 +244,6 @@ def build_search_results(
 async def upload_file(
     client: TelegramClient, chat_id: int, thread_id: int, path: Path
 ) -> Message | None:
-    """Send *path* to the given Telegram chat/thread as photo or document.
-
-    Returns the resulting Telegram ``Message`` so callers can target it for
-    follow-up reactions or replies. Re-raises ``TelegramError`` on failure.
-    """
     try:
         with path.open("rb") as fh:
             if _is_image(path):
@@ -337,7 +272,6 @@ def _cache_browser_state(
     items: list[Path],
     window_id: str,
 ) -> None:
-    """Persist browser/search state into PTB user_data for callback handlers."""
     user_data[SEND_PATH_KEY] = str(cwd)
     user_data[SEND_CWD_KEY] = str(cwd)
     user_data[SEND_PAGE_KEY] = 0
@@ -353,7 +287,6 @@ async def open_file_browser(
     window_id: str,
     cwd: Path,
 ) -> None:
-    """Open the /send file browser — public entry point for the toolbar Send button."""
     text, markup, items = build_file_browser(cwd, cwd, 0)
     _cache_browser_state(user_data, cwd, items, window_id)
     await safe_send(
@@ -372,7 +305,6 @@ async def _upload_with_feedback(
     thread_id: int,
     path: Path,
 ) -> None:
-    """Upload *path*, replying with a human-readable error on TelegramError."""
     try:
         await upload_file(PTBTelegramClient(context.bot), chat_id, thread_id, path)
     except TelegramError as exc:
@@ -388,7 +320,6 @@ async def _dispatch_search(
     thread_id: int,
     window_id: str,
 ) -> None:
-    """Handle glob/substring search dispatch for send_command."""
     assert context.user_data is not None
 
     is_glob = "*" in pattern or "?" in pattern
@@ -435,15 +366,6 @@ async def _dispatch_search(
 
 
 async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /send — search for and upload a file from the session's CWD to Telegram.
-
-    Dispatch modes:
-    - No args: show paginated file browser at CWD root.
-    - Glob pattern (contains * or ?): search with _find_files; upload if single match,
-      show search results keyboard if multiple, error if none.
-    - Text: try exact path first; if exists and passes security, upload directly.
-      Otherwise fall back to _find_files substring search.
-    """
     if not update.message:
         return
     user = update.effective_user

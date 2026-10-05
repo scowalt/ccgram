@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import textwrap
 from pathlib import Path
@@ -583,6 +584,98 @@ def test_class_body_try_block_caught(lint_module, tmp_path: Path) -> None:
     violations = lint_module.find_violations(path)
     assert len(violations) == 1
     assert "from .foo import bar" in violations[0][1]
+
+
+@pytest.fixture
+def metadata_repository(lint_module, tmp_path: Path, monkeypatch):
+    root = tmp_path / "repo"
+    scripts = root / "scripts"
+    scripts.mkdir(parents=True)
+    monkeypatch.setattr(lint_module, "__file__", str(scripts / "lint_lazy_imports.py"))
+    metadata = scripts / "lazy_imports.json"
+    metadata.write_text(
+        json.dumps(
+            [
+                {
+                    "path": "example.py",
+                    "scope": "Widget.fn",
+                    "import": "from .foo import bar",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return root, metadata
+
+
+def test_metadata_approved_import_passes(lint_module, metadata_repository) -> None:
+    root, _ = metadata_repository
+    path = _write(
+        root,
+        "example.py",
+        """
+        class Widget:
+            def fn(self):
+                from .foo import bar
+                return bar
+    """,
+    )
+    assert lint_module.find_violations(path) == []
+
+
+def test_metadata_approval_survives_line_changes(
+    lint_module, metadata_repository
+) -> None:
+    root, _ = metadata_repository
+    path = _write(
+        root,
+        "example.py",
+        """
+        unrelated = 1
+
+        class Widget:
+            def fn(self):
+                from .foo import bar
+                return bar
+    """,
+    )
+    assert lint_module.find_violations(path) == []
+
+
+@pytest.mark.parametrize(
+    ("name", "scope", "statement"),
+    [
+        ("moved.py", "fn", "from .foo import bar"),
+        ("example.py", "moved", "from .foo import bar"),
+        ("example.py", "fn", "from .baz import bar"),
+        ("example.py", "fn", "from .foo import bar as other"),
+    ],
+)
+def test_metadata_stale_or_unapproved_import_fails(
+    lint_module, metadata_repository, name: str, scope: str, statement: str
+) -> None:
+    root, _ = metadata_repository
+    path = _write(
+        root, name, f"class Widget:\n    def {scope}(self):\n        {statement}\n"
+    )
+    assert len(lint_module.find_violations(path)) == 1
+
+
+def test_missing_metadata_fails_closed(lint_module, metadata_repository) -> None:
+    root, metadata = metadata_repository
+    path = _write(root, "example.py", "def fn():\n    from .foo import bar\n")
+    metadata.unlink()
+    with pytest.raises(FileNotFoundError):
+        lint_module.find_violations(path)
+
+
+def test_outside_repository_does_not_inherit_approval(
+    lint_module, metadata_repository, tmp_path: Path
+) -> None:
+    outside = tmp_path / "external"
+    outside.mkdir()
+    path = _write(outside, "example.py", "def fn():\n    from .foo import bar\n")
+    assert len(lint_module.find_violations(path)) == 1
 
 
 def test_documented_import_in_match_case_passes(lint_module, tmp_path: Path) -> None:

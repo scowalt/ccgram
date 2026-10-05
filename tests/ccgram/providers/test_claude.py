@@ -163,8 +163,6 @@ class TestModeShortLabel:
 
 
 class TestParseTranscriptEntries:
-    """Characterization: parse_transcript_entries wraps ParsedEntry fields into AgentMessage."""
-
     def _entry(self, msg_type: str, content: list) -> dict:
         return {
             "type": msg_type,

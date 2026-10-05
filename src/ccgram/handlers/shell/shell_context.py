@@ -1,14 +1,3 @@
-"""Shared shell-provider context — LLM context gathering and secret redaction.
-
-Extracted from ``shell_commands`` so that ``shell_capture`` can use
-``gather_llm_context`` and ``redact_for_llm`` without importing back into
-``shell_commands``. This removes the highest-volume mutual import between
-the two shell modules.
-
-The functions here have no per-window state — they're pure helpers that
-look up shell metadata and apply regex-based redaction.
-"""
-
 from __future__ import annotations
 
 import functools
@@ -17,7 +6,6 @@ import shutil
 
 from ...window_query import view_window
 
-# Modern CLI tools we hint to the LLM as preferred replacements when present.
 _MODERN_TOOLS: dict[str, str] = {
     "fd": "find replacement (use fd syntax: fd PATTERN, fd --type file, NOT find syntax)",
     "rg": "grep replacement (use rg PATTERN, NOT grep syntax)",
@@ -31,7 +19,6 @@ _MODERN_TOOLS: dict[str, str] = {
 
 @functools.cache
 def _detect_shell_tools() -> str:
-    """Detect available modern CLI tools on PATH (cached)."""
     available = []
     for tool, desc in _MODERN_TOOLS.items():
         if shutil.which(tool):
@@ -39,7 +26,6 @@ def _detect_shell_tools() -> str:
     return ", ".join(available)
 
 
-# Patterns redacted from terminal output before sending to the LLM
 _SENSITIVE_RE = re.compile(
     r"(?i)"
     r"(?:export\s+\w*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH)\w*\s*=\s*\S+)"
@@ -50,15 +36,10 @@ _SENSITIVE_RE = re.compile(
 
 
 def redact_for_llm(text: str) -> str:
-    """Strip sensitive patterns from terminal text before sending to an LLM."""
     return _SENSITIVE_RE.sub("[REDACTED]", text)
 
 
 async def gather_llm_context(window_id: str) -> dict[str, str]:
-    """Gather cwd, shell type, and available tools for LLM calls."""
-    # Lazy: providers.shell pulls in shell_infra; load only when context
-    # is actually requested (LLM-enabled topics).
-    # Lazy: providers.shell heavy bootstrap
     from ...providers.shell import detect_pane_shell
 
     shell = await detect_pane_shell(window_id)

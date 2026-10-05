@@ -27,7 +27,7 @@ from ccgram.providers.base import StatusUpdate
 
 @pytest.fixture(autouse=True)
 def _reset():
-    terminal_poll_state._states.clear()  # no public clear_all method
+    terminal_poll_state._states.clear()
     lifecycle_strategy.reset_autoclose_state()
     lifecycle_strategy.reset_typing_state()
     lifecycle_strategy.reset_dead_notification_state()
@@ -649,7 +649,6 @@ class TestPaneLifecycleNotify:
         ):
             mock_tr.resolve_chat_id.return_value = 42
             await window_tick._notify_pane_lifecycle(bot, 1, "@0", 100, transitions)
-        # Created (%5) and closed (%6) only — state-change (%7) is skipped
         assert mock_send.await_count == 2
         texts = [call.args[2] for call in mock_send.call_args_list]
         assert any("➕" in t and "%5" in t and "created" in t for t in texts)
@@ -659,7 +658,6 @@ class TestPaneLifecycleNotify:
         from ccgram.handlers.polling import window_tick
         from ccgram.window_state_store import window_store
 
-        # Global default ON, but per-window override OFF wins.
         window_store.set_pane_lifecycle_notify("@0", False)
         bot = AsyncMock(spec=Bot)
         with (
@@ -749,7 +747,6 @@ class TestPaneLifecycleNotify:
             ),
         ):
             mock_tr.resolve_chat_id.return_value = 42
-            # Should swallow and log
             await window_tick._notify_pane_lifecycle(bot, 1, "@0", 100, transitions)
 
     async def test_empty_transitions_short_circuits(self):

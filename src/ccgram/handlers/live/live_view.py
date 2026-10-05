@@ -1,17 +1,3 @@
-"""Live terminal view — auto-refreshing screenshot via editMessageMedia.
-
-Manages active live view sessions: one per topic (user_id, thread_id).
-The tick function is called from the polling loop every config.live_view_interval
-seconds. Each tick captures the pane, hashes the content, and edits the
-Telegram message only when the terminal has changed.
-
-Key functions:
-  - start_live_view / stop_live_view / get_live_view: state management
-  - tick_live_views: periodic refresh (called from periodic_tasks)
-  - build_live_keyboard: inline keyboard shown during live view
-  - content_hash: md5 digest for change detection
-"""
-
 import contextlib
 import hashlib
 import io
@@ -36,8 +22,6 @@ logger = structlog.get_logger()
 
 @dataclass
 class LiveViewState:
-    """State for one active live view session."""
-
     chat_id: int
     message_id: int
     thread_id: int
@@ -53,35 +37,28 @@ _active_views: dict[tuple[int, int], LiveViewState] = {}
 
 
 def start_live_view(state: LiveViewState) -> None:
-    """Register a new live view session for a topic."""
     _active_views[(state.user_id, state.thread_id)] = state
 
 
 def stop_live_view(user_id: int, thread_id: int) -> LiveViewState | None:
-    """Stop and return the live view for a topic, or None if not active."""
     return _active_views.pop((user_id, thread_id), None)
 
 
 def get_live_view(user_id: int, thread_id: int) -> LiveViewState | None:
-    """Look up the live view for a topic."""
     return _active_views.get((user_id, thread_id))
 
 
 def is_live(user_id: int, thread_id: int) -> bool:
-    """Check if a topic has an active live view."""
     return (user_id, thread_id) in _active_views
 
 
 def content_hash(text: str) -> str:
-    """Compute a fast content hash for change detection."""
     return hashlib.md5(text.encode(), usedforsecurity=False).hexdigest()
 
 
 def build_live_keyboard(
     window_id: str, pane_id: str | None = None
 ) -> InlineKeyboardMarkup:
-    """Build inline keyboard for live view: quick keys + stop button."""
-    # Lazy: pane delimiter constant
     from ..callback_data import CB_PANE_DELIMITER
 
     target = f"{window_id}{CB_PANE_DELIMITER}{pane_id}" if pane_id else window_id
@@ -113,7 +90,6 @@ def _clear_live_view(user_id: int, thread_id: int) -> None:
 
 
 async def tick_live_views(client: TelegramClient) -> None:
-    """Refresh all active live views. Called from periodic_tasks."""
 
     effective_timeout = config.live_view_timeout
     interval = config.live_view_interval
@@ -131,7 +107,6 @@ async def _tick_one_view(
     timeout: int,
     interval: int,
 ) -> None:
-    """Refresh a single live view."""
     try:
         if now - view.start_time > timeout:
             _active_views.pop(key, None)
@@ -184,7 +159,6 @@ async def _tick_one_view(
 
 
 async def _capture_pane(view: LiveViewState, window_id: str) -> str | None:
-    """Capture pane text for a live view."""
     if view.pane_id:
         return await tmux_manager.capture_pane_by_id(
             view.pane_id, with_ansi=True, window_id=view.window_id
@@ -193,8 +167,6 @@ async def _capture_pane(view: LiveViewState, window_id: str) -> str | None:
 
 
 async def _edit_caption(client: TelegramClient, view: LiveViewState, text: str) -> None:
-    """Best-effort edit of the live view message caption on stop."""
-    # Lazy: live_view ↔ screenshot_callbacks bidirectional cycle.
     from .screenshot_callbacks import build_screenshot_keyboard
 
     keyboard = build_screenshot_keyboard(view.window_id, pane_id=view.pane_id)

@@ -1,5 +1,3 @@
-"""Tests for generic LLM text completion (complete() method and get_text_completer)."""
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx

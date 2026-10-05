@@ -1,10 +1,3 @@
-"""Integration tests for PTB Application handler dispatch.
-
-Tests that handlers are correctly registered and PTB routes updates
-to the right handler functions. Uses real PTB Application with mocked
-external dependencies (Bot API, TmuxManager, SessionManager).
-"""
-
 import os
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -57,7 +50,6 @@ def _make_update(
 
 @pytest.fixture
 async def app():
-    """Real PTB Application with ccgram handlers registered."""
     token = os.environ["TELEGRAM_BOT_TOKEN"]
     application = Application.builder().token(token).build()
 
@@ -244,7 +236,6 @@ async def test_unknown_command_forwarded(app) -> None:
 
 
 async def test_command_priority_over_text(app) -> None:
-    """Commands like /history should be handled by CommandHandler, not text_handler."""
     update = _make_update("/history", bot=app.bot)
 
     with (

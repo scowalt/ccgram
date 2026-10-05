@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>ccgram dashboard</title>
-    <!-- CCGRAM_PAYLOAD -->
+    <meta name="ccgram-payload-slot">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         :root {
@@ -116,9 +116,6 @@
             const tg = window.Telegram && window.Telegram.WebApp;
             const meta = document.querySelector('meta[name="ccgram-payload"]');
             const status = document.getElementById('ccgram-status');
-            // Surfaces (terminal/panes/transcript) check this flag at startup
-            // so they don't pound the server with 403s when auth is impossible
-            // (page opened outside Telegram, or initData missing/expired).
             window.__ccgramAuthFailed = false;
             window.__ccgramAuthMessage = '';
             function failAuth(msg) {

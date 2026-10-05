@@ -1,5 +1,3 @@
-"""Tests for menu_sync — provider command menu cache + scoped registration."""
-
 from typing import TYPE_CHECKING, cast
 from types import SimpleNamespace
 

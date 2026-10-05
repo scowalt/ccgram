@@ -1,14 +1,3 @@
-"""Auto-create Telegram forum topics for newly detected tmux windows.
-
-Handles topic creation with flood-control backoff, provider auto-detection,
-and post-restart adoption of unbound windows.
-
-Core responsibilities:
-  - handle_new_window(): create a topic when a new tmux window appears
-  - adopt_unbound_windows(): post-restart recovery of orphaned windows
-  - Rate-limited topic creation with per-chat exponential backoff
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -36,25 +25,18 @@ from ..status.topic_emoji import strip_emoji_prefix
 
 logger = structlog.get_logger()
 
-# Per-chat backoff for auto topic creation after Telegram flood control.
-# chat_id -> monotonic timestamp when next attempt is allowed.
 _topic_create_retry_until: dict[int, float] = {}
 _TOPIC_CREATE_RETRY_BUFFER_SECONDS = 1
 
-# Transient retry on transport timeouts / network errors when creating a topic.
-# Two attempts (one retry) with a short backoff is enough for brief blips —
-# longer outages are caught by the existing flood-control backoff.
 _TOPIC_CREATE_TRANSIENT_RETRIES = 1
 _TOPIC_CREATE_TRANSIENT_BACKOFF_S = 1.0
 
-# Windows where auto-topic creation failed with a permanent error (permissions).
 _topic_create_failed_windows: set[str] = set()
 
 
 async def _create_forum_topic_with_retry(
     client: TelegramClient, chat_id: int, topic_name: str
 ):
-    """Call ``client.create_forum_topic`` with one retry on TimedOut/NetworkError."""
     last_exc: TelegramError | None = None
     for attempt in range(_TOPIC_CREATE_TRANSIENT_RETRIES + 1):
         try:
@@ -71,70 +53,28 @@ async def _create_forum_topic_with_retry(
 
 
 def clear_topic_create_retry(chat_id: int, _thread_id: int = 0) -> None:
-    """Clear topic creation retry backoff for this chat.
-
-    NOT registered in TopicStateRegistry — the backoff is self-managing:
-    entries expire via the time check in create_topic_in_chat() and are
-    cleared on successful topic creation.  Clearing on every topic teardown
-    would bypass Telegram's flood-control gate prematurely.
-    """
     _topic_create_retry_until.pop(chat_id, None)
 
 
 def _is_window_already_bound(window_id: str) -> bool:
-    """Check if a window is already bound to any topic."""
     return thread_router.has_window(window_id)
 
 
-# In-flight directory-flow window creations. Keyed by tmux window_id, value is
-# the monotonic expiry timestamp. Set by directory_callbacks._create_window_and_bind
-# right after `tmux_manager.create_window` returns and BEFORE any subsequent
-# `await` (so the SessionMonitor poll cycle can't slip in and fire
-# handle_new_window before the bind completes).
-#
-# Without this, the bug at MC-2967 / MC-3015 / MC-3030 fires:
-#   1. directory flow calls tmux_manager.create_window → tmux pane spawns
-#   2. claude-code (or other provider) boots inside, fires SessionStart hook
-#   3. SessionMonitor reads events.jsonl on its 1s poll, builds NewWindowEvent
-#   4. handle_new_window checks _is_window_already_bound — still False, because
-#      directory_callbacks hasn't reached `thread_router.bind_thread()` yet
-#   5. handle_new_window auto-creates a *new* Telegram topic and binds the
-#      window to it
-#   6. directory_callbacks then runs `bind_thread` for the original topic, but
-#      thread_router only stores one binding per window — original topic stays
-#      unbound forever ("Will deliver once the agent starts")
-#
-# The pending set lets handle_new_window detect "this window is owned by a
-# directory flow that's about to bind, do not create a duplicate topic." A
-# 30s TTL is the safety net in case directory_callbacks crashes before
-# clearing the entry — handle_new_window will eventually reclaim the window.
 _pending_user_creations: dict[str, float] = {}
 _PENDING_CREATION_TTL_S = 30.0
 
 
 def register_pending_creation(window_id: str) -> None:
-    """Mark a tmux window as owned by an in-flight directory-flow bind.
-
-    Call BEFORE any `await` between tmux window creation and
-    `thread_router.bind_thread`. Pair with `clear_pending_creation` (or rely on
-    the TTL) once the bind is complete.
-    """
     if not window_id:
         return
     _pending_user_creations[window_id] = time.monotonic() + _PENDING_CREATION_TTL_S
 
 
 def clear_pending_creation(window_id: str) -> None:
-    """Remove a window's pending-creation marker (idempotent)."""
     _pending_user_creations.pop(window_id, None)
 
 
 def _is_pending_user_creation(window_id: str) -> bool:
-    """Return True iff a directory flow is mid-creation for this window.
-
-    Expired entries are evicted lazily on read so a crashed directory flow
-    can't permanently shadow a window from auto-topic-creation.
-    """
     expires_at = _pending_user_creations.get(window_id)
     if expires_at is None:
         return False
@@ -145,11 +85,6 @@ def _is_pending_user_creation(window_id: str) -> bool:
 
 
 async def _auto_detect_provider(window_id: str) -> None:
-    """Auto-detect provider from the running process if not already set.
-
-    detect_provider_from_command returns "" for unrecognized commands (shells),
-    so we only persist when a known CLI is confidently identified.
-    """
     view = window_query.view_window(window_id)
     if view and view.provider_name:
         return
@@ -181,7 +116,6 @@ async def _auto_detect_provider(window_id: str) -> None:
 
 
 def collect_target_chats(window_id: str) -> set[int]:
-    """Collect unique group chat IDs for topic creation."""
     seen_chats: set[int] = set()
     for user_id, thread_id, _ in thread_router.iter_thread_bindings():
         chat_id = thread_router.resolve_chat_id(user_id, thread_id)
@@ -213,7 +147,6 @@ def collect_target_chats(window_id: str) -> set[int]:
 def _bind_topic_to_user(
     thread_id: int, window_id: str, chat_id: int, topic_name: str
 ) -> None:
-    """Bind a newly created topic to a user in the given chat."""
     for user_id, tid, _ in thread_router.iter_thread_bindings():
         if thread_router.resolve_chat_id(user_id, tid) == chat_id:
             thread_router.bind_thread(
@@ -233,7 +166,6 @@ def _bind_topic_to_user(
 async def create_topic_in_chat(
     client: TelegramClient, chat_id: int, window_id: str, topic_name: str
 ) -> None:
-    """Create a forum topic in one chat with backoff handling."""
     retry_until = _topic_create_retry_until.get(chat_id, 0.0)
     now = time.monotonic()
     if now < retry_until:
@@ -298,7 +230,6 @@ async def create_topic_in_chat(
 async def _topic_exists(
     client: TelegramClient, chat_id: int, thread_id: int
 ) -> bool | None:
-    """Probe a Telegram topic. True=exists, False=gone, None=unknown."""
     try:
         msg = await client.send_message(
             chat_id,
@@ -318,7 +249,6 @@ async def _topic_exists(
 async def _rebind_existing_topic_by_name(
     event: NewWindowEvent, client: TelegramClient, topic_name: str
 ) -> bool:
-    """Bind a stale same-name topic to a newly discovered manual window."""
     clean_topic_name = strip_emoji_prefix(topic_name)
     matches: list[tuple[int, int, str, int]] = []
     bindings = list(thread_router.iter_thread_bindings())
@@ -377,11 +307,6 @@ async def _rebind_existing_topic_by_name(
 
 
 async def handle_new_window(event: NewWindowEvent, client: TelegramClient) -> None:
-    """Create or bind a Telegram forum topic for a newly detected tmux window.
-
-    Skips if the window is already bound. Reuses one stale same-name topic when
-    it still exists; otherwise creates one topic per unique group chat.
-    """
     if _is_window_already_bound(event.window_id):
         logger.debug(
             "New window %s already bound, skipping topic creation", event.window_id
@@ -414,15 +339,12 @@ async def handle_new_window(event: NewWindowEvent, client: TelegramClient) -> No
 
 
 async def adopt_unbound_windows(client: TelegramClient) -> None:
-    """Auto-adopt known-but-unbound windows (post-restart recovery)."""
     all_windows = await tmux_manager.list_windows()
     live_ids = {w.window_id for w in all_windows}
     live_pairs = [(w.window_id, w.window_name) for w in all_windows]
     audit = session_manager.audit_state(live_ids, live_pairs)
     orphaned = [i for i in audit.issues if i.category == "orphaned_window"]
     if orphaned:
-        # Lazy: bidirectional cycle with sync_command (see
-        # sync_command._adopt_orphaned_windows for details).
         from ..sync_command import _adopt_orphaned_windows
 
         await _adopt_orphaned_windows(client, orphaned)

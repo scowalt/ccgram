@@ -1,5 +1,3 @@
-"""Tests for status recall callback handling."""
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from ccgram.handlers.callback_data import CB_STATUS_RECALL

@@ -1,10 +1,5 @@
 from ccgram.last_unit import extract_last_shell_block
 
-# Wrap-mode markers: ⌘N⌘ with optional ANSI around them.
-# Bare prompt: marker followed only by ANSI reset codes (strip → empty after strip)
-# Command echo: marker followed by ANSI reset + command text (non-empty after strip)
-# The conftest sets replace mode by default; tests that use wrap markers must
-# request the _wrap_mode fixture to override it for the duration of the test.
 
 _RESET = "\x1b[0m"
 _DIM = "\x1b[2m"
@@ -50,7 +45,6 @@ def test_extract_command_running_returns_none(_wrap_mode: None) -> None:
 
 
 def test_extract_with_bracketed_paste_around_marker(_wrap_mode: None) -> None:
-    # tmux -e capture commonly emits private-mode CSI on prompt lines.
     bare_with_paste = f"{_BRACKETED_PASTE}{BARE}{_BRACKETED_PASTE}"
     echo_with_paste = f"{_BRACKETED_PASTE}{ECHO}"
     scrollback = _scrollback("earlier", echo_with_paste, OUTPUT, bare_with_paste)
@@ -59,7 +53,6 @@ def test_extract_with_bracketed_paste_around_marker(_wrap_mode: None) -> None:
 
 
 def test_extract_bare_prompt_with_trailing_cursor_movement(_wrap_mode: None) -> None:
-    # Cursor-movement CSI after the marker must not be misread as command text.
     bare_with_cursor = f"{BARE}{_CURSOR_UP}"
     scrollback = _scrollback("earlier", ECHO, OUTPUT, bare_with_cursor)
     result = extract_last_shell_block(scrollback)
@@ -67,7 +60,6 @@ def test_extract_bare_prompt_with_trailing_cursor_movement(_wrap_mode: None) -> 
 
 
 def test_extract_picks_last_completed_command(_wrap_mode: None) -> None:
-    # Multiple commands in scrollback — extraction starts at the most recent echo.
     scrollback = _scrollback(
         f"user@host $ {_DIM}⌘0⌘{_RESET} echo old",
         "old",
@@ -82,7 +74,6 @@ def test_extract_picks_last_completed_command(_wrap_mode: None) -> None:
 
 
 def test_extract_replace_mode_happy_path() -> None:
-    # Replace mode marker: {prefix}:N❯ at line start. conftest defaults to replace.
     echo = "ccgram:0❯ ls -la"
     bare = "ccgram:0❯ "
     scrollback = _scrollback("earlier", echo, OUTPUT, bare)

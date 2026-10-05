@@ -1,5 +1,3 @@
-"""Unit tests for the push event-stream consumer (EventStreamMonitor)."""
-
 from __future__ import annotations
 
 import asyncio
@@ -27,7 +25,7 @@ async def test_dispatch_window_died_clears_cache_and_notifies_bound_users() -> N
     fake_router = MagicMock()
     fake_router.iter_thread_bindings.return_value = [
         (7, 42, "w2:t1"),
-        (7, 99, "w9:t9"),  # different window — must not be notified
+        (7, 99, "w9:t9"),
     ]
     with (
         patch(
@@ -49,8 +47,8 @@ async def test_supervisor_restarts_watch_on_set_change(monkeypatch) -> None:
 
     async def fake_watch(window_ids):
         started.append(list(window_ids))
-        await asyncio.Event().wait()  # block until cancelled (live stream)
-        yield  # pragma: no cover — unreachable; makes this an async generator
+        await asyncio.Event().wait()
+        yield
 
     monkeypatch.setattr("ccgram.event_stream_monitor._SET_POLL_INTERVAL", 0.01)
     fake_mux = MagicMock()
@@ -61,9 +59,9 @@ async def test_supervisor_restarts_watch_on_set_change(monkeypatch) -> None:
     monitor = EventStreamMonitor(MagicMock(), lambda: holder["ids"])
     monitor.start()
     try:
-        await asyncio.sleep(0.05)  # start watch with {w2:t1}
-        holder["ids"] = {"w2:t1", "w3:t1"}  # change the bound set
-        await asyncio.sleep(0.05)  # supervisor detects + restarts
+        await asyncio.sleep(0.05)
+        holder["ids"] = {"w2:t1", "w3:t1"}
+        await asyncio.sleep(0.05)
     finally:
         monitor.stop()
         await asyncio.sleep(0.02)

@@ -59,9 +59,6 @@ def _make_view(
     )
 
 
-# ── State lifecycle ──────────────────────────────────────────────────────
-
-
 class TestLifecycle:
     def test_start_and_get(self):
         view = _make_view()
@@ -104,9 +101,6 @@ class TestLifecycle:
         assert is_live(1, 20)
 
 
-# ── Content hash ─────────────────────────────────────────────────────────
-
-
 class TestContentHash:
     def test_deterministic(self):
         assert content_hash("hello") == content_hash("hello")
@@ -118,9 +112,6 @@ class TestContentHash:
         h = content_hash("")
         assert isinstance(h, str)
         assert len(h) == 32
-
-
-# ── Cleanup registry ─────────────────────────────────────────────────────
 
 
 class TestCleanup:
@@ -136,9 +127,6 @@ class TestCleanup:
         from ccgram.handlers.live.live_view import _clear_live_view
 
         _clear_live_view(1, 42)
-
-
-# ── Keyboard builders ────────────────────────────────────────────────────
 
 
 class TestBuildLiveKeyboard:
@@ -242,9 +230,6 @@ class TestBuildToolbarKeyboard:
         assert any("Live" in label for label in row1_labels)
 
     def test_live_callback_data(self):
-        # After the toolbar refactor, all buttons use the single CB_TOOLBAR
-        # prefix; the suffix is "<window_id>:<action_name>". The live action
-        # dispatches internally to the screenshot handler with CB_LIVE_START.
         from ccgram.handlers.callback_data import CB_TOOLBAR
 
         with patch(
@@ -256,9 +241,6 @@ class TestBuildToolbarKeyboard:
         live_btn = [btn for btn in flat if "Live" in btn.text][0]
         assert isinstance(live_btn.callback_data, str)
         assert live_btn.callback_data == f"{CB_TOOLBAR}@0:live"
-
-
-# ── Tick function ────────────────────────────────────────────────────────
 
 
 class TestTickLiveViews:
@@ -468,9 +450,6 @@ class TestTickLiveViews:
         assert "window closed" in call_kwargs["caption"]
 
 
-# ── _edit_caption ────────────────────────────────────────────────────────
-
-
 class TestEditCaption:
     async def test_edits_caption_with_keyboard(self):
         view = _make_view()
@@ -486,9 +465,6 @@ class TestEditCaption:
         bot = AsyncMock(spec=Bot)
         bot.edit_message_caption = AsyncMock(side_effect=TelegramError("gone"))
         await _edit_caption(bot, view, "Done")
-
-
-# ── Callback handlers ───────────────────────────────────────────────────
 
 
 def _make_query(
@@ -737,9 +713,6 @@ class TestHandleLiveStop:
         assert "Stopped" in query.answer.call_args.args[0]
 
 
-# ── _handle_keys live view guard ────────────────────────────────────────
-
-
 class TestHandleKeysLiveGuard:
     async def test_skips_refresh_when_live_view_active(self):
         from ccgram.handlers.status.status_bar_actions import _handle_keys
@@ -814,9 +787,6 @@ class TestHandleKeysLiveGuard:
 
             await asyncio.sleep(0.05)
         mock_img.assert_awaited_once()
-
-
-# ── RetryAfter timedelta branch ─────────────────────────────────────────
 
 
 class TestRetryAfterTimedelta:

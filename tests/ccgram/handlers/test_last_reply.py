@@ -1,5 +1,3 @@
-"""Tests for last_reply.send_last_reply and last_command handler."""
-
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch

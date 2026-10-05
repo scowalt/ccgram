@@ -89,9 +89,6 @@ class TestDetectPaneShell:
     @pytest.fixture
     def mock_tmux(self):
         with patch("ccgram.multiplexer.multiplexer") as mock_tm:
-            # Default: no foreground process (backends that don't surface the
-            # shell in pane_current_command fall through to the env). Tests that
-            # exercise the foreground path override this.
             mock_tm.foreground = AsyncMock(return_value=None)
             yield mock_tm
 
@@ -193,8 +190,6 @@ class TestDetectPaneShell:
     async def test_detects_shell_from_foreground_when_command_empty(
         self, mock_tmux, argv: list[str], expected: str
     ) -> None:
-        # herdr leaves pane_current_command empty for a bare shell; the shell is
-        # identified from the foreground process via the seam, not the bot $SHELL.
         from ccgram.multiplexer.base import ForegroundInfo
 
         mock_tmux.find_window_by_id = AsyncMock(
@@ -211,8 +206,6 @@ class TestDetectPaneShell:
             assert await detect_pane_shell("@0") == expected
 
     async def test_foreground_non_shell_falls_back_to_env(self, mock_tmux) -> None:
-        # A non-shell foreground (e.g. a JS agent runtime) is not a shell match;
-        # detection still falls back to the env shell name.
         from ccgram.multiplexer.base import ForegroundInfo
 
         mock_tmux.find_window_by_id = AsyncMock(

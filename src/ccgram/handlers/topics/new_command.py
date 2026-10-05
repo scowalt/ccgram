@@ -1,12 +1,3 @@
-"""``/start`` handler — welcome message for the bot.
-
-Authorization is checked first. On unauthorized access an explanatory
-reply is sent. Any in-progress directory-browser, worktree-picker, and
-pending-thread state on the user is cleared (the full abort reset, same
-as cancel) so a stranded re-entrancy guard or stale picker does not
-interfere with the next interaction.
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

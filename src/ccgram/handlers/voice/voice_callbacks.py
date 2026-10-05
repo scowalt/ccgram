@@ -1,12 +1,3 @@
-"""Voice transcription callbacks — handle confirm (send to agent) and discard actions.
-
-Handles the inline keyboard callbacks triggered after voice message transcription:
-  - vc:send:<msg_id>: Send transcribed text to the bound agent window
-  - vc:drop:<msg_id>: Discard the transcription and delete the confirmation message
-
-Key function: handle_voice_callback
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -38,7 +29,6 @@ logger = structlog.get_logger()
 async def handle_voice_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Handle voice transcription confirm/discard callbacks."""
     query = update.callback_query
     if not query or not query.data:
         return
@@ -47,13 +37,12 @@ async def handle_voice_callback(
     if not user:
         return
 
-    # Ensure the message is accessible (not expired/deleted)
     if not isinstance(query.message, Message):
         await query.answer("Message no longer available")
         return
 
     try:
-        parts = query.data.split(":", 2)  # ["vc", "send"/"drop", "<msg_id>"]
+        parts = query.data.split(":", 2)
         action = parts[1]
         message_id = int(parts[2])
     except IndexError, ValueError:
@@ -76,7 +65,6 @@ async def _handle_send(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle vc:send — forward transcribed text to the agent window."""
     pending_store = (
         context.user_data.get(VOICE_PENDING, {}) if context.user_data else {}
     )
@@ -94,15 +82,12 @@ async def _handle_send(
 
     client = PTBTelegramClient(msg.get_bot())
 
-    # 👀 ack: persistent "I see you" indicator on the original voice message.
     await react(client, msg.chat.id, message_id, REACT_SEEN)
 
-    # Shell provider: route through LLM for NL→command generation
     provider = get_provider_for_window(
         window_id, provider_name=get_window_provider(window_id)
     )
     if provider.capabilities.chat_first_command_path and thread_id is not None:
-        # Lazy: shell.shell_commands ↔ voice via approval callback wiring.
         from ..shell.shell_commands import handle_shell_message
 
         try:
@@ -129,11 +114,6 @@ async def _handle_send(
 async def _ack_delivered(
     client: PTBTelegramClient, msg: Message, query: CallbackQuery, message_id: int
 ) -> None:
-    """Replace the previous "✓ Sent" toast with a persistent reaction.
-
-    Order matters: REACT_DONE replaces the prior 👀; ack_reaction (if user
-    configured ``CCGRAM_ACK_REACTION``) overrides REACT_DONE in turn.
-    """
     await react(client, msg.chat.id, message_id, REACT_DONE)
     await ack_reaction(client, msg.chat.id, message_id)
     try:
@@ -149,7 +129,6 @@ async def _handle_drop(
     message_id: int,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle vc:drop — discard the transcription and delete the confirm message."""
     if context.user_data is not None:
         context.user_data.get(VOICE_PENDING, {}).pop((msg.chat.id, message_id), None)
 
@@ -159,9 +138,6 @@ async def _handle_drop(
         logger.warning("Failed to delete voice confirm message on discard: %s", e)
 
     await query.answer("Discarded")
-
-
-# --- Registry dispatch entry point ---
 
 
 @register(CB_VOICE)

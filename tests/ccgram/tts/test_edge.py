@@ -51,7 +51,7 @@ async def test_synthesize_wraps_edge_exceptions_as_tts_error(monkeypatch):
 
         async def stream(self):
             raise WebSocketError("connection dropped")
-            yield  # make it a generator
+            yield
 
     monkeypatch.setattr("ccgram.tts.edge._edge_tts_available", True)
     monkeypatch.setattr("ccgram.tts.edge.Communicate", FailingCommunicate)

@@ -1,12 +1,3 @@
-"""Tests for the backend-neutral topic-mapping projection (Task 10).
-
-Covers:
-* ``is_agent_topic_window`` — the capability-gated discovery filter that decides
-  whether a multiplexer window surfaces as its own Telegram topic.
-* herdr topic filtering, where ``window_id`` is the tab id and native agent
-  status decides whether the tab should surface as a Telegram topic.
-"""
-
 from __future__ import annotations
 
 import pytest
@@ -21,7 +12,6 @@ from ccgram.session_resolver import session_resolver
 from ccgram.thread_router import thread_router
 from ccgram.window_state_store import WindowState, window_store
 
-# tmux-like: no native agent status → every window is a topic.
 TMUX_CAPS = MultiplexerCapabilities(
     name="tmux",
     ids_stable_across_restart=True,
@@ -58,8 +48,8 @@ class TestIsAgentTopicWindow:
     @pytest.mark.parametrize(
         ("command", "expected"),
         [
-            ("claude", True),  # tmux surfaces agent windows...
-            ("", True),  # ...and bare/shell windows alike (unchanged behavior)
+            ("claude", True),
+            ("", True),
             ("zsh", True),
         ],
     )
@@ -69,10 +59,10 @@ class TestIsAgentTopicWindow:
     @pytest.mark.parametrize(
         ("command", "expected"),
         [
-            ("claude", True),  # an agent pane is a topic
+            ("claude", True),
             ("codex", True),
-            ("", False),  # a bare shell pane is NOT a topic on herdr
-            ("   ", False),  # whitespace-only label is not an agent
+            ("", False),
+            ("   ", False),
         ],
     )
     def test_herdr_only_agent_tabs(self, command: str, expected: bool) -> None:
@@ -90,22 +80,16 @@ class TestFormatAgentTopicPrefix:
     @pytest.mark.parametrize(
         ("workspace", "tab", "expected"),
         [
-            # Lone tab → "<workspace> ▸ <tab>".
             ("ccgram", "herdr-support", "ccgram ▸ herdr-support"),
             ("ccgram", "ralphex", "ccgram ▸ ralphex"),
-            # Same workspace, different tab labels → distinct titles (no collision).
             ("ccgram", "herdr-support", "ccgram ▸ herdr-support"),
             ("ccgram", "ralphex", "ccgram ▸ ralphex"),
-            # Numeric / auto-generated tab labels still render usefully.
             ("myproject", "tab-1", "myproject ▸ tab-1"),
             ("myproject", "Tab 1", "myproject ▸ Tab 1"),
-            # Shell tab (no agent) renders the same way — label is tab name.
             ("ccgram", "zsh", "ccgram ▸ zsh"),
-            # Missing parts degrade without a stray separator.
             ("", "herdr-support", "herdr-support"),
             ("ccgram", "", "ccgram"),
             ("", "", ""),
-            # Whitespace is trimmed off every part.
             ("  ccgram  ", "  herdr-support  ", "ccgram ▸ herdr-support"),
         ],
     )
@@ -115,11 +99,6 @@ class TestFormatAgentTopicPrefix:
         assert format_agent_topic_prefix(workspace, tab) == expected
 
     def test_same_agent_different_tabs_are_distinct(self) -> None:
-        """Two tabs in the same workspace with different labels produce distinct titles.
-
-        This is the core requirement: "ccgram ▸ herdr-support" and
-        "ccgram ▸ ralphex" are distinct even when both run claude.
-        """
         label_a = format_agent_topic_prefix("ccgram", "herdr-support")
         label_b = format_agent_topic_prefix("ccgram", "ralphex")
         assert label_a == "ccgram ▸ herdr-support"
@@ -127,7 +106,6 @@ class TestFormatAgentTopicPrefix:
         assert label_a != label_b
 
     def test_rename_changes_label_not_identity(self) -> None:
-        """Renaming the workspace re-renders the label; the tab id is the key."""
         before = format_agent_topic_prefix("ccgram", "herdr-support")
         after = format_agent_topic_prefix("ccgram-v2", "herdr-support")
         assert before == "ccgram ▸ herdr-support"

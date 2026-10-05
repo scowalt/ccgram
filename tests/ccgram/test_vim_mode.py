@@ -1,5 +1,3 @@
-"""Tests for vim mode detection and auto-INSERT recovery in tmux_manager."""
-
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -20,9 +18,6 @@ def _reset():
     reset_vim_state()
     yield
     reset_vim_state()
-
-
-# ── has_insert_indicator ──────────────────────────────────────────────
 
 
 class TestHasInsertIndicator:
@@ -62,9 +57,6 @@ class TestHasInsertIndicator:
         assert has_insert_indicator(pane) is False
 
 
-# ── notify / clear / reset ─────────────────────────────────────────────
-
-
 class TestVimStateCache:
     def test_notify_sets_true(self):
         notify_vim_insert_seen("@1")
@@ -96,9 +88,6 @@ class TestVimStateCache:
         assert _vim_locks == {}
 
 
-# ── _ensure_vim_insert_mode ────────────────────────────────────────────
-
-
 def _make_manager() -> TmuxManager:
     m = TmuxManager.__new__(TmuxManager)
     m.session_name = "test"
@@ -122,7 +111,6 @@ class TestEnsureVimInsertMode:
         send.assert_not_called()
 
     async def test_unknown_state_skips_entirely(self, manager):
-        """Unknown vim state never speculatively probes — no 'i' can leak."""
         assert "@1" not in _vim_state
         with (
             patch.object(manager, "capture_pane", new_callable=AsyncMock) as cap,
@@ -164,7 +152,6 @@ class TestEnsureVimInsertMode:
         assert _vim_state["@1"] is True
 
     async def test_cache_true_capture_failure_sends_nothing(self, manager):
-        """Capture failure on a vim window sends nothing — resilient, no leak."""
         _vim_state["@1"] = True
         with (
             patch.object(
@@ -175,9 +162,6 @@ class TestEnsureVimInsertMode:
             await manager._ensure_vim_insert_mode("@1")
         send.assert_not_called()
         assert _vim_state["@1"] is True
-
-
-# ── Self-correction scenarios ──────────────────────────────────────────
 
 
 class TestSelfCorrection:
@@ -195,17 +179,13 @@ class TestSelfCorrection:
         assert _vim_state["@1"] is True
 
 
-# ── _send_literal_then_enter integration ───────────────────────────────
-
-
 class TestSendLiteralVimIntegration:
     @pytest.fixture()
     def manager(self):
         return _make_manager()
 
     async def test_vim_check_runs_before_text_send(self, manager):
-        """_send_literal_then_enter calls _ensure_vim_insert_mode first."""
-        _vim_state["@1"] = False  # fast path — skip vim check
+        _vim_state["@1"] = False
         with (
             patch.object(
                 manager, "_ensure_vim_insert_mode", new_callable=AsyncMock
@@ -218,7 +198,6 @@ class TestSendLiteralVimIntegration:
         vim_check.assert_awaited_once_with("@1")
 
     async def test_per_window_lock_serializes_sends(self, manager):
-        """Concurrent sends to the same window are serialized by lock."""
         import asyncio
 
         order = []
@@ -239,12 +218,8 @@ class TestSendLiteralVimIntegration:
                 manager._send_literal_then_enter("@1", "a"),
                 manager._send_literal_then_enter("@1", "b"),
             )
-        # Both calls should complete; lock ensures no interleaving of probe+send
         assert order.count("vim_start") == 2
         assert order.count("vim_end") == 2
-
-
-# ── Polling + cleanup integration ──────────────────────────────────────
 
 
 class TestPollingAndCleanupIntegration:
@@ -259,7 +234,6 @@ class TestPollingAndCleanupIntegration:
         assert "@5" not in _vim_state
 
     async def test_cleanup_clears_vim_state_with_window_id(self):
-        """clear_topic_state calls clear_vim_state when window_id is provided."""
         from ccgram.handlers.cleanup import clear_topic_state
 
         _vim_state["@7"] = True
@@ -273,7 +247,6 @@ class TestPollingAndCleanupIntegration:
         assert "@7" not in _vim_state
 
     async def test_cleanup_skips_vim_state_without_window_id(self):
-        """clear_topic_state does NOT call clear_vim_state when window_id is None."""
         from ccgram.handlers.cleanup import clear_topic_state
 
         _vim_state["@7"] = True
@@ -284,11 +257,9 @@ class TestPollingAndCleanupIntegration:
         ):
             mock_tr.resolve_chat_id.return_value = -100
             await clear_topic_state(1, 42, client=AsyncMock(), window_id=None)
-        # Vim state for @7 should remain untouched
         assert _vim_state["@7"] is True
 
     async def test_update_status_calls_notify_when_insert_in_tail(self):
-        """Polling calls notify_vim_insert_seen when INSERT is in last 3 lines."""
         with (
             patch(
                 "ccgram.multiplexer.tmux.tmux_manager.find_window_by_id",
@@ -338,7 +309,6 @@ class TestPollingAndCleanupIntegration:
         mock_notify.assert_called_once_with("@9")
 
     async def test_update_status_skips_notify_when_insert_not_in_tail(self):
-        """Polling does NOT call notify when INSERT is only in historical output."""
         with (
             patch(
                 "ccgram.multiplexer.tmux.tmux_manager.find_window_by_id",

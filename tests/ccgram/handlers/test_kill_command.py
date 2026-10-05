@@ -1,5 +1,3 @@
-"""Tests for session kill via sessions dashboard (two-step confirmation)."""
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

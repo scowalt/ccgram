@@ -9,7 +9,6 @@ from ccgram.utils import task_done_callback
 
 @pytest.fixture(autouse=True)
 def _configure_structlog_for_caplog():
-    """Configure structlog to route through stdlib logging so caplog works."""
     structlog.configure(
         processors=[
             structlog.stdlib.add_log_level,

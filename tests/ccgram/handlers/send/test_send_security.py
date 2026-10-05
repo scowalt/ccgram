@@ -1,5 +1,3 @@
-"""Tests for src/ccgram/handlers/send/send_security.py."""
-
 from __future__ import annotations
 
 import subprocess

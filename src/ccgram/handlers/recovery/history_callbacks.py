@@ -1,12 +1,3 @@
-"""History pagination callback handler.
-
-Handles inline keyboard callbacks for navigating through message history pages.
-Dispatches CB_HISTORY_PREV and CB_HISTORY_NEXT callbacks to page through
-history results.
-
-Key function: handle_history_callback (uniform callback handler signature).
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -24,7 +15,6 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-# Minimum parts in history callback data: page:window_id:start:end
 _HISTORY_CB_PARTS_MIN = 4
 
 
@@ -35,28 +25,20 @@ async def handle_history_callback(
     _update: Update,
     _context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle history pagination callbacks (CB_HISTORY_PREV / CB_HISTORY_NEXT).
-
-    Callback data format: hp:<page>:<window_id>:<start>:<end>
-    or hn:<page>:<window_id>:<start>:<end>.
-    Old format (no byte range): hp:<page>:<window_id>.
-    """
-    prefix_len = len(CB_HISTORY_PREV)  # same length for both
+    prefix_len = len(CB_HISTORY_PREV)
     rest = data[prefix_len:]
     try:
         parts = rest.split(":")
         if len(parts) < _HISTORY_CB_PARTS_MIN:
-            # Old format without byte range: page:window_id
             offset_str, window_id = rest.split(":", 1)
             start_byte, end_byte = 0, 0
         else:
-            # New format: page:window_id:start:end (window_id may contain colons)
             offset_str = parts[0]
             start_byte = int(parts[-2])
             end_byte = int(parts[-1])
             window_id = ":".join(parts[1:-2])
         offset = int(offset_str)
-    except (ValueError, IndexError):  # fmt: skip
+    except ValueError, IndexError:
         await query.answer("Invalid data")
         return
 
@@ -69,15 +51,10 @@ async def handle_history_callback(
             edit=True,
             start_byte=start_byte,
             end_byte=end_byte,
-            # Don't pass user_id for pagination - offset update only on initial view
-            # This prevents offset from going backwards if new messages arrive while paging
         )
     else:
         await safe_edit(query, "Window no longer exists.")
     await query.answer("Page updated")
-
-
-# --- Registry dispatch entry point ---
 
 
 @register(CB_HISTORY_PREV, CB_HISTORY_NEXT)

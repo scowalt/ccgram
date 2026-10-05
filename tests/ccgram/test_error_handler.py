@@ -1,5 +1,3 @@
-"""Tests for bot-level error handler, shutdown notification, and signal diagnostics."""
-
 import contextlib
 import io
 import signal

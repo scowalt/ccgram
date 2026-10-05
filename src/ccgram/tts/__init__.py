@@ -1,15 +1,9 @@
-"""TTS subpackage — text-to-speech synthesis providers.
-
-Public re-exports, shared text-preparation utility, and provider factory.
-"""
-
 from __future__ import annotations
 
 import os
 import re
 from typing import Callable, Iterable
 
-# ccgram.config only imports stdlib + dotenv + utils — no cycle risk.
 from ccgram.config import config
 from .base import SpeechSynthesizer, TtsAudio, TtsSynthesisError
 
@@ -18,20 +12,16 @@ _USER_PREFIX = "\U0001f464 "
 
 
 def _make_edge() -> SpeechSynthesizer:
-    # Lazy: optional dep; only load edge_tts when provider=edge
     from .edge import EdgeTtsSynthesizer
 
     return EdgeTtsSynthesizer(voice=config.tts_voice)
 
 
 def _make_openai() -> SpeechSynthesizer:
-    # Key resolution: CCGRAM_TTS_API_KEY → OPENAI_API_KEY.
-    # CCGRAM_LLM_API_KEY is intentionally excluded — it may be a non-OpenAI key.
     api_key = config.tts_api_key or os.getenv("OPENAI_API_KEY", "")
     if not api_key:
         msg = "No API key for OpenAI TTS: set CCGRAM_TTS_API_KEY or OPENAI_API_KEY"
         raise ValueError(msg)
-    # Lazy: keep openai module load deferred until this provider is selected
     from .openai import OpenAITtsSynthesizer
 
     return OpenAITtsSynthesizer(
@@ -48,8 +38,6 @@ _PROVIDERS: dict[str, Callable[[], SpeechSynthesizer]] = {
 
 
 def prepare_tts_text(parts: Iterable[str]) -> str:
-    """Merge message parts into a clean, plain-text string for TTS."""
-    # Lazy: avoids pulling in Telegram at import time
     from ccgram.entity_formatting import convert_to_entities
 
     cleaned_parts: list[str] = []
@@ -65,10 +53,6 @@ def prepare_tts_text(parts: Iterable[str]) -> str:
 
 
 def get_synthesizer() -> SpeechSynthesizer | None:
-    """Return a SpeechSynthesizer based on config, or None if TTS is disabled.
-
-    Returns None if tts_provider is not configured (empty string).
-    """
     provider = config.tts_provider
     if not provider:
         return None

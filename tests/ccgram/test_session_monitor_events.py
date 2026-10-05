@@ -1,5 +1,3 @@
-"""Tests for session monitor hook event reading."""
-
 import json
 from pathlib import Path
 
@@ -36,7 +34,6 @@ class TestReadHookEvents:
 
         monitor.set_hook_event_callback(cb)
 
-        # Write two events
         events_file.write_text(
             json.dumps(
                 {
@@ -65,7 +62,6 @@ class TestReadHookEvents:
         assert received[0].event_type == "Stop"
         assert received[1].event_type == "Notification"
 
-        # Second read should return nothing (offset advanced)
         received.clear()
         await monitor._read_hook_events()
         assert len(received) == 0
@@ -80,7 +76,6 @@ class TestReadHookEvents:
     async def test_missing_file(
         self, monitor: SessionMonitor, events_file: Path
     ) -> None:
-        # File doesn't exist — no error
         received: list[HookEvent] = []
         monitor.set_hook_event_callback(lambda e: received.append(e))  # type: ignore[arg-type, return-value]
         await monitor._read_hook_events()
@@ -115,7 +110,6 @@ class TestReadHookEvents:
     async def test_truncation_detection(
         self, monitor: SessionMonitor, events_file: Path
     ) -> None:
-        # Write a long line, read it, then truncate the file
         line = json.dumps(
             {
                 "ts": 1.0,
@@ -136,11 +130,10 @@ class TestReadHookEvents:
         await monitor._read_hook_events()
         assert len(received) == 1
 
-        # Simulate file truncation (smaller than previous offset)
         events_file.write_text("")
         received.clear()
         await monitor._read_hook_events()
-        assert len(received) == 0  # No events in empty file
+        assert len(received) == 0
 
     async def test_no_callback_set(
         self, monitor: SessionMonitor, events_file: Path
@@ -157,7 +150,6 @@ class TestReadHookEvents:
             )
             + "\n"
         )
-        # No callback set — should not crash
         await monitor._read_hook_events()
 
 

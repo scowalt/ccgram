@@ -492,9 +492,6 @@ class TestCheckPassiveShellOutput:
 
 @pytest.mark.usefixtures("_clean_monitor_state")
 class TestScrollbackTruncation:
-    """The herdr read cap (1000 lines) clips scrollback; a clipped capture must
-    surface a truncation notice rather than read as the full command output."""
-
     @pytest.mark.asyncio()
     async def test_truncated_capture_prepends_notice(self) -> None:
         from ccgram.handlers.shell.shell_capture import (
@@ -563,11 +560,6 @@ class TestScrollbackTruncation:
 @pytest.mark.usefixtures("_clean_monitor_state")
 @pytest.mark.usefixtures("_clean_monitor_state")
 class TestPassiveTruncatedTail:
-    """A command longer than the backend's readable history scrolls its echo
-    out of even a full-cap capture. On capped backends (herdr) the captured
-    tail is still relayed, flagged truncated, instead of dropping all output;
-    uncapped backends (tmux) keep the echo-anchored behavior."""
-
     @staticmethod
     def _mux(capture: CaptureResult, cap: int | None) -> MagicMock:
         mux = MagicMock()
@@ -623,9 +615,6 @@ class TestPassiveTruncatedTail:
         mock_sent = MagicMock()
         mock_sent.message_id = 700
 
-        # A Telegram-issued command (evidence it actually ran) whose echo fell
-        # outside the readable window: output lines + a completed bare prompt,
-        # no prompt-with-command above it. The visible tail is still relayed.
         mark_telegram_command("@0", "yes | head -100000", 1, 42)
         pane = "997\n998\n999\n1000\nccgram:0❯"
         mux = self._mux(CaptureResult(text=pane, truncated=False), 1000)
@@ -648,14 +637,9 @@ class TestPassiveTruncatedTail:
 
     @pytest.mark.asyncio()
     async def test_stale_scrollback_above_fresh_prompt_not_relayed(self) -> None:
-        """Regression: an existing herdr shell bound with ``clear=False`` keeps
-        old scrollback above the new ``ccgram:0❯`` prompt. With no command run
-        in this prompt session (fresh monitor state), the echoless-tail recovery
-        must treat it as idle and relay nothing — not dump stale scrollback."""
         from ccgram.handlers.shell.shell_capture import check_passive_shell_output
 
         bot = AsyncMock(spec=Bot)
-        # Old output preserved by clear=False, then the freshly set-up prompt.
         pane = "old output\nccgram:0❯"
         mux = self._mux(CaptureResult(text=pane, truncated=False), 1000)
         with (
@@ -687,14 +671,10 @@ class TestPassiveTruncatedTail:
             mock_tr.resolve_chat_id.return_value = -100
             await check_passive_shell_output(bot, 1, 42, "@0", pane)
 
-        # Uncapped backend: no echo found → nothing relayed (no ambiguous tail).
         mock_send.assert_not_awaited()
 
     @pytest.mark.asyncio()
     async def test_in_flight_tail_edits_existing_message(self) -> None:
-        """A long command relayed while its echo was visible must keep editing
-        the same message once the echo scrolls out and only an echoless tail is
-        left — not spawn a second message."""
         from ccgram.handlers.shell.shell_capture import (
             _shell_monitor_state,
             check_passive_shell_output,
@@ -719,28 +699,21 @@ class TestPassiveTruncatedTail:
             patch(f"{_MOD}.tmux_manager", mux),
         ):
             mock_tr.resolve_chat_id.return_value = -100
-            # Poll 1: echo visible, command in progress → first relay (new msg).
             mux.capture_scrollback = AsyncMock(
                 return_value=CaptureResult(text=in_progress, truncated=False)
             )
             await check_passive_shell_output(bot, 1, 42, "@0", in_progress)
-            # Poll 2: echo scrolled out, command completed → echoless tail.
             mux.capture_scrollback = AsyncMock(
                 return_value=CaptureResult(text=completed_tail, truncated=False)
             )
             await check_passive_shell_output(bot, 1, 42, "@0", completed_tail)
 
-        # One send (poll 1), then an edit of that same message (poll 2) — not a
-        # second send.
         mock_send.assert_awaited_once()
         mock_edit.assert_awaited()
         assert _shell_monitor_state["@0"].msg_id == 700
 
     @pytest.mark.asyncio()
     async def test_consecutive_echoless_commands_get_separate_messages(self) -> None:
-        """Two Telegram commands that each complete within a single poll with
-        their echo already scrolled out must each get their own message — the
-        second must not overwrite the first."""
         from ccgram.handlers.shell.shell_capture import (
             check_passive_shell_output,
             mark_telegram_command,
@@ -777,7 +750,6 @@ class TestPassiveTruncatedTail:
             )
             await check_passive_shell_output(bot, 1, 42, "@0", pane_b)
 
-        # Two distinct sends, no edit of the first command's message.
         assert mock_send.await_count == 2
         mock_edit.assert_not_awaited()
 
@@ -1032,7 +1004,7 @@ class TestPassiveRelayFormatting:
 
         assert _shell_monitor_state["@0"].exit_code_sent is True
         assert mock_edit.called
-        edit_text = mock_edit.call_args[0][3]  # (bot, chat_id, msg_id, text)
+        edit_text = mock_edit.call_args[0][3]
         assert "exit 127" in edit_text
 
     @pytest.mark.asyncio()
@@ -1074,8 +1046,6 @@ class TestPassiveRelayFormatting:
 
         assert mock_react.call_args.args[3] == REACT_DONE
         assert mock_react.call_args.args[2] == 600
-        # Once consumed on success, message_id is cleared so re-runs of the
-        # same poll cycle don't double-react.
         assert _shell_monitor_state["@0"].telegram_message_id == 0
         reset_shell_monitor_state()
 
@@ -1108,9 +1078,7 @@ class TestPassiveRelayFormatting:
                 new_callable=AsyncMock,
                 return_value=CaptureResult(text=pane),
             ),
-            patch(
-                f"{_MOD}._maybe_suggest_fix", new_callable=AsyncMock
-            ),  # silence LLM path
+            patch(f"{_MOD}._maybe_suggest_fix", new_callable=AsyncMock),
             patch(f"{_MOD}.react", new_callable=AsyncMock) as mock_react,
         ):
             mock_sm.resolve_chat_id.return_value = -100
@@ -1131,7 +1099,6 @@ class TestPassiveRelayFormatting:
         )
 
         reset_shell_monitor_state()
-        # No message_id passed — typical for legacy callers.
         mark_telegram_command("@0", "ls", 1, 42)
 
         bot = AsyncMock(spec=Bot)
@@ -1212,8 +1179,6 @@ class TestCaptureWithScrollback:
 
     @pytest.mark.asyncio()
     async def test_delegates_clamp_and_surfaces_truncation(self) -> None:
-        # The line cap lives in the backend: shell passes its requested depth
-        # straight through and surfaces the backend's truncated flag.
         from ccgram.handlers.shell.shell_capture import _capture_with_scrollback
 
         clamped = CaptureResult(text="tail only", truncated=True)

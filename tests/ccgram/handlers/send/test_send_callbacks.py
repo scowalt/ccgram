@@ -1,5 +1,3 @@
-"""Tests for src/ccgram/handlers/send/send_callbacks.py."""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -160,7 +158,6 @@ class TestHandleFile:
             await _dispatch(update, ctx)
 
         mock_upload.assert_awaited_once()
-        # Toast replaced with persistent ✅ reaction on the uploaded file.
         query.answer.assert_awaited_once_with()
         assert SEND_WINDOW_ID_KEY not in ctx.user_data
         query.message.delete.assert_awaited_once()

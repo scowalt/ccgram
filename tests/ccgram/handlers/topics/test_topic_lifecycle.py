@@ -169,10 +169,7 @@ class TestCheckUnboundWindowTtl:
 
 
 class TestHerdrKillPaths:
-    """Kill paths route through the multiplexer proxy regardless of window-ID format."""
-
     async def test_herdr_unbound_window_killed_via_proxy(self):
-        """herdr-format window ID w1:t1 is passed through the proxy to kill_window."""
         herdr_id = "w1:t1"
         ws = terminal_poll_state.get_state(herdr_id)
         ws.unbound_timer = time.monotonic() - 100
@@ -204,7 +201,6 @@ class TestHerdrKillPaths:
         mock_tmux.kill_window.assert_called_once_with(herdr_id)
 
     async def test_herdr_deleted_topic_kills_window_via_proxy(self):
-        """probe_topic_existence kills the herdr window via proxy on topic deletion."""
         bot = AsyncMock(spec=Bot)
         bot.unpin_all_forum_topic_messages = AsyncMock(
             side_effect=BadRequest("Topic_id_invalid")
@@ -296,7 +292,6 @@ class TestProbeTopicExistence:
         from ccgram.handlers.topics import topic_lifecycle as tl
 
         bot = AsyncMock(spec=Bot)
-        # Real Telegram error for unpin without can_pin_messages is lowercase.
         bot.unpin_all_forum_topic_messages = AsyncMock(
             side_effect=BadRequest("not enough rights to manage pinned messages")
         )
@@ -313,11 +308,9 @@ class TestProbeTopicExistence:
 
                 await probe_topic_existence(bot)
 
-                # Permission error must not count as a probe failure (no suspend).
                 mock_strategy.record_probe_failure.assert_not_called()
                 assert wid in tl._probe_pin_disabled
 
-                # Next tick skips the window entirely — no further API call.
                 bot.unpin_all_forum_topic_messages.reset_mock()
                 await probe_topic_existence(bot)
                 bot.unpin_all_forum_topic_messages.assert_not_called()

@@ -1,5 +1,3 @@
-"""Tests for window_launch_service.py — _cwd_within, _persist_worktree_state, launch_window."""
-
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -18,9 +16,6 @@ from ccgram.handlers.user_state import (
     PENDING_WORKTREE_BRANCH,
     PENDING_WORKTREE_PATH,
 )
-
-
-# ── _cwd_within ──────────────────────────────────────────────────────────────
 
 
 class TestCwdWithin:
@@ -45,12 +40,7 @@ class TestCwdWithin:
         assert _cwd_within(str(tmp_path), str(sub)) is False
 
     def test_nonexistent_path_returns_false(self):
-        # Path.resolve() is non-strict by default — does not raise on nonexistent paths.
-        # Both paths resolve to themselves, so a != b → False.
         assert _cwd_within("/nonexistent/a", "/nonexistent/b") is False
-
-
-# ── _persist_worktree_state ──────────────────────────────────────────────────
 
 
 class TestPersistWorktreeState:
@@ -84,7 +74,6 @@ class TestPersistWorktreeState:
 
         _persist_worktree_state("@1", wt_path, context)
 
-        # clear_worktree_state removes the pending worktree keys
         assert PENDING_WORKTREE_PATH not in user_data
         assert PENDING_WORKTREE_BRANCH not in user_data
 
@@ -104,7 +93,6 @@ class TestPersistWorktreeState:
         _persist_worktree_state("@1", cwd, context)
 
         mock_sm.set_window_worktree.assert_not_called()
-        # Keys are still cleared
         assert PENDING_WORKTREE_PATH not in user_data
 
     @patch("ccgram.handlers.topics.window_launch_service.session_manager")
@@ -115,9 +103,6 @@ class TestPersistWorktreeState:
         context.user_data = {}
         _persist_worktree_state("@1", str(tmp_path), context)
         mock_sm.set_window_worktree.assert_not_called()
-
-
-# ── launch_window ────────────────────────────────────────────────────────────
 
 
 def _make_query() -> AsyncMock:
@@ -138,7 +123,6 @@ def _make_context(user_data: dict | None = None) -> MagicMock:
 
 
 def _base_patches():
-    """Return a dict of patch targets → return values for a successful launch."""
     return {
         "ccgram.handlers.topics.window_launch_service.tmux_manager": None,
         "ccgram.handlers.topics.window_launch_service.session_manager": None,
@@ -154,7 +138,6 @@ def _base_patches():
 @pytest.mark.asyncio
 class TestLaunchWindowSuccess:
     async def test_creates_window_and_binds_thread(self, tmp_path) -> None:
-        """Happy path: window created, thread bound, success message sent."""
         user_data = {PENDING_THREAD_ID: 42}
         query = _make_query()
         context = _make_context(user_data)
@@ -225,7 +208,6 @@ class TestLaunchWindowSuccess:
         assert "✅" in mock_edit.call_args[0][1]
 
     async def test_create_window_failure_calls_abort(self, tmp_path) -> None:
-        """When create_window returns success=False, abort is called, no bind."""
         user_data = {PENDING_THREAD_ID: 42}
         query = _make_query()
         context = _make_context(user_data)
@@ -274,14 +256,11 @@ class TestLaunchWindowSuccess:
                 ),
             )
 
-        # Thread must not be bound on failure
         mock_tr.bind_thread.assert_not_called()
-        # Error message sent via safe_edit
         mock_edit.assert_awaited_once()
         assert "❌" in mock_edit.call_args[0][1]
 
     async def test_pending_text_forwarded_via_send_to_window(self, tmp_path) -> None:
-        """PENDING_THREAD_TEXT is forwarded to the new window after bind."""
         user_data = {
             PENDING_THREAD_ID: 42,
             PENDING_THREAD_TEXT: "hello agent",
@@ -351,5 +330,4 @@ class TestLaunchWindowSuccess:
             )
 
         mock_send.assert_awaited_once_with("@5", "hello agent")
-        # Keys consumed after forwarding
         assert PENDING_THREAD_TEXT not in user_data

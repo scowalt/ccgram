@@ -1,18 +1,3 @@
-"""Topic emoji status updates via editForumTopic.
-
-Updates topic names with status transitions while keeping titles clean:
-  - Active/idle/done/dead: local fork renders no lifecycle prefix
-  - RC and YOLO badges are also suppressed
-
-Tracks per-topic state to avoid redundant API calls. Debounces transitions
-to prevent rapid active/idle toggling from flooding the chat with rename
-messages. Gracefully degrades when the bot lacks editForumTopic permission.
-
-Key functions:
-  - update_topic_emoji: Update emoji for a specific topic (debounced)
-  - clear_topic_emoji_state: Clean up tracking for a topic
-"""
-
 import time
 
 import structlog
@@ -26,28 +11,20 @@ from ...window_query import get_approval_mode
 
 logger = structlog.get_logger()
 
-# Color circles used for the active/idle state prefix.
-# Which color maps to which state depends on ``config.status_mode`` (see
-# ``_state_emoji_map``). The constants are color-named (not state-named) so
-# that ``strip_emoji_prefix`` and tests work regardless of mode.
 EMOJI_GREEN_CIRCLE = "\U0001f7e2"
 EMOJI_YELLOW_CIRCLE = "\U0001f7e1"
-EMOJI_DONE = "\u2705"  # Check mark (agent exited normally)
-EMOJI_DEAD = "\U0001f4a5"  # Collision / crash
-EMOJI_YOLO = "\U0001f3b2"  # Dice (risk/gamble — auto-approve mode)
-EMOJI_RC = "\U0001f4e1"  # Satellite dish (Remote Control active)
+EMOJI_DONE = "\u2705"
+EMOJI_DEAD = "\U0001f4a5"
+EMOJI_YOLO = "\U0001f3b2"
+EMOJI_RC = "\U0001f4e1"
 _EMOJI_DEAD_OLD = (
     "\u26ab",
     "\u274c",
-)  # Legacy dead emoji (black circle pre-2026-02, cross mark pre-2026-03)
+)
 
-# Backward-compatible aliases — original (system-mode) defaults.
 EMOJI_ACTIVE = EMOJI_GREEN_CIRCLE
 EMOJI_IDLE = EMOJI_YELLOW_CIRCLE
 
-# State → emoji mapping.
-#   system mode (default): green=active (working), yellow=idle (paused).
-#   user mode:             green=idle (waiting for me), yellow=active (busy).
 _STATE_EMOJI_SYSTEM: dict[str, str] = {
     "active": EMOJI_GREEN_CIRCLE,
     "idle": EMOJI_YELLOW_CIRCLE,
@@ -63,7 +40,6 @@ _STATE_EMOJI_USER: dict[str, str] = {
 
 
 def _state_emoji_map() -> dict[str, str]:
-    """Return the active state→emoji table for the configured status mode."""
     return _STATE_EMOJI_USER if config.status_mode == "user" else _STATE_EMOJI_SYSTEM
 
 
@@ -71,23 +47,14 @@ _VALID_TOPIC_STATES = frozenset({"active", "idle", "done", "dead"})
 
 
 def _display_state_for_update(state: str) -> str:
-    """Return the topic badge state to render for a logical lifecycle state."""
     if state in _VALID_TOPIC_STATES:
-        # Local fork preference: don't add lifecycle badges to topic names.
         return ""
     return state
 
 
-# Debounce: state must be stable for this many seconds before updating topic name.
-# Prevents rapid active↔idle toggling from flooding chat with rename messages.
-#
-# Asymmetric by design:
-#   → active (5s):  fast feedback — user sees "agent is working" quickly
-#   → idle (30s):   slow transition — brief pauses during work don't cause flicker
-#   → done/dead (5s): meaningful lifecycle events, fire fast
 DEBOUNCE_TO_ACTIVE_SECONDS = 5.0
 DEBOUNCE_TO_IDLE_SECONDS = 30.0
-DEBOUNCE_TERMINAL_SECONDS = 5.0  # done, dead
+DEBOUNCE_TERMINAL_SECONDS = 5.0
 
 _DEBOUNCE_BY_STATE: dict[str, float] = {
     "active": DEBOUNCE_TO_ACTIVE_SECONDS,
@@ -96,28 +63,16 @@ _DEBOUNCE_BY_STATE: dict[str, float] = {
     "dead": DEBOUNCE_TERMINAL_SECONDS,
 }
 
-# Topic state tracking: (chat_id, thread_id) -> (state, approval_mode, rc_active)
 _topic_states: dict[tuple[int, int], tuple[str, str, bool]] = {}
 
-# Pending transitions: (chat_id, thread_id) -> (desired_state, first_seen_monotonic)
 _pending_transitions: dict[tuple[int, int], tuple[str, float]] = {}
 
-# Topic display names: (chat_id, thread_id) -> clean name (without emoji prefix).
-# Updated when the incoming display name changes (write-through cache) so that
-# tmux window renames and Telegram topic renames propagate correctly.
 _topic_names: dict[tuple[int, int], str] = {}
 
-# Chats where editForumTopic is disabled due to permission errors
 _disabled_chats: set[int] = set()
 
 
 def _resolve_topic_name(key: tuple[int, int], display_name: str) -> tuple[str, bool]:
-    """Return the clean topic name and whether it changed.
-
-    On first call, strips emoji and stores the clean name. On subsequent calls,
-    if the incoming display_name (stripped) differs from the stored name,
-    overwrites the cache so tmux renames propagate to Telegram.
-    """
     clean = strip_emoji_prefix(display_name)
     cached = _topic_names.get(key)
     if cached is None:
@@ -137,7 +92,6 @@ def _should_apply_update(
     name_changed: bool,
     now: float,
 ) -> bool:
-    """Return True when the topic rename should be sent to Telegram."""
     if _topic_states.get(key) == state_token:
         _pending_transitions.pop(key, None)
         return name_changed
@@ -162,7 +116,6 @@ def _compose_topic_name(
     approval_mode: str = "normal",
     rc_active: bool = False,
 ) -> str:
-    """Build the full Telegram topic title from state badges and clean name."""
     del state, approval_mode, rc_active
     return clean_name
 
@@ -177,7 +130,6 @@ async def _edit_topic_name(
     state_token: tuple[str, str, bool] | None = None,
     state: str = "",
 ) -> None:
-    """Apply a topic name update with shared Telegram error handling."""
     try:
         await client.edit_forum_topic(
             chat_id=chat_id,
@@ -212,7 +164,6 @@ async def _edit_topic_name(
 
 
 def _resolve_approval_mode(chat_id: int, thread_id: int) -> str:
-    """Resolve approval mode for a topic via session bindings."""
     window_id = thread_router.get_window_for_chat_thread(chat_id, thread_id)
     if not window_id:
         return "normal"
@@ -220,18 +171,15 @@ def _resolve_approval_mode(chat_id: int, thread_id: int) -> str:
 
 
 def _resolve_rc_mode(chat_id: int, thread_id: int) -> bool:
-    """Resolve Remote Control active state for a topic via session bindings."""
     window_id = thread_router.get_window_for_chat_thread(chat_id, thread_id)
     if not window_id:
         return False
-    # Lazy: polling_state cycle — same as status_bar_actions sites.
     from ..polling.polling_state import terminal_screen_buffer
 
     return terminal_screen_buffer.is_rc_active(window_id)
 
 
 def format_topic_name_for_mode(display_name: str, approval_mode: str) -> str:
-    """Format a topic display name with a positive mode badge."""
     clean_name = strip_emoji_prefix(display_name)
     return _compose_topic_name(clean_name, approval_mode=approval_mode)
 
@@ -242,11 +190,6 @@ async def sync_topic_name(
     thread_id: int,
     display_name: str,
 ) -> None:
-    """Force a topic title refresh to the current clean tmux name.
-
-    Preserves the last known lifecycle emoji when it is cached so `/sync`
-    can repair stale titles without waiting for a later state transition.
-    """
     if chat_id in _disabled_chats:
         return
 
@@ -281,19 +224,6 @@ async def update_topic_emoji(
     state: str,
     display_name: str,
 ) -> None:
-    """Update topic name with emoji prefix reflecting session state.
-
-    Debounces transitions: the new state must be requested consistently for
-    the debounce period before the API call is made. This prevents rapid
-    active/idle flickering from generating lots of "topic renamed" messages.
-
-    Args:
-        client: Telegram client (TelegramClient Protocol)
-        chat_id: Group chat ID
-        thread_id: Forum topic thread ID
-        state: One of "active", "idle", "done", "dead"
-        display_name: Base topic name (without emoji prefix)
-    """
     if chat_id in _disabled_chats:
         return
 
@@ -340,13 +270,11 @@ async def update_topic_emoji(
 
 
 def strip_emoji_prefix(name: str) -> str:
-    """Remove known emoji prefix from a topic name."""
     for emoji in (EMOJI_ACTIVE, EMOJI_IDLE, EMOJI_DONE, EMOJI_DEAD, *_EMOJI_DEAD_OLD):
         prefix = f"{emoji} "
         if name.startswith(prefix):
             name = name[len(prefix) :]
             break
-    # Strip badge emojis (RC, YOLO) — order: RC before YOLO matches composition order
     for badge in (EMOJI_RC, EMOJI_YOLO):
         badge_prefix = f"{badge} "
         if name.startswith(badge_prefix):
@@ -355,18 +283,11 @@ def strip_emoji_prefix(name: str) -> str:
 
 
 def update_stored_topic_name(chat_id: int, thread_id: int, new_clean_name: str) -> None:
-    """Overwrite the stored clean name for a topic.
-
-    Called from FORUM_TOPIC_EDITED handler. Does not invalidate _topic_states
-    since the Telegram topic already has the correct name — the next emoji
-    cycle will naturally use the updated base name.
-    """
     _topic_names[(chat_id, thread_id)] = new_clean_name
 
 
 @topic_state.register("chat")
 def clear_topic_emoji_state(chat_id: int, thread_id: int) -> None:
-    """Clear emoji tracking for a topic (called on topic cleanup)."""
     key = (chat_id, thread_id)
     _topic_states.pop(key, None)
     _pending_transitions.pop(key, None)
@@ -378,14 +299,12 @@ _MAX_DISABLED_CHATS = 1000
 
 @topic_state.register("chat")
 def clear_disabled_chat(chat_id: int, _thread_id: int = 0) -> None:
-    """Remove a chat from the disabled set (called on topic cleanup)."""
     _disabled_chats.discard(chat_id)
     if len(_disabled_chats) > _MAX_DISABLED_CHATS:
         _disabled_chats.clear()
 
 
 def reset_all_state() -> None:
-    """Reset all tracking state (for testing)."""
     _topic_states.clear()
     _pending_transitions.clear()
     _disabled_chats.clear()

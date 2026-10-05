@@ -848,8 +848,8 @@ class TestBottomUpFallback:
 
     def test_action_hint_too_far_from_bottom(self):
         lines = [
-            "  Esc to cancel",  # action hint
-            *[f"  output line {i}" for i in range(10)],  # lots of output after
+            "  Esc to cancel",
+            *[f"  output line {i}" for i in range(10)],
             "",
         ]
         pane = "\n".join(lines)
@@ -878,7 +878,7 @@ class TestBottomUpFallback:
         pane = "  Do you want to proceed?\n\n  ❯ Yes    No\n\n  Esc to cancel\n"
         result = extract_interactive_content(pane)
         assert result is not None
-        assert result.name == "PermissionPrompt"  # not bottom-up
+        assert result.name == "PermissionPrompt"
 
 
 class TestExtractInteractiveContentWithLines:

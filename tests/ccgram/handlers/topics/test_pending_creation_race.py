@@ -1,12 +1,3 @@
-"""Tests for the directory-flow vs handle_new_window race guard.
-
-See `topic_orchestration._pending_user_creations` for the bug context (MC-2967):
-when the directory flow creates a tmux window, the SessionStart hook can fire
-before `thread_router.bind_thread()` runs, which previously caused
-`handle_new_window` to spawn a duplicate Telegram topic. The pending-creation
-set lets `handle_new_window` defer to the in-flight directory flow.
-"""
-
 from __future__ import annotations
 
 import time
@@ -70,7 +61,7 @@ def test_pending_creation_expires_after_ttl(monkeypatch):
 
 
 def test_clear_pending_creation_is_idempotent():
-    clear_pending_creation("@nonexistent")  # should not raise
+    clear_pending_creation("@nonexistent")
 
 
 def test_register_pending_creation_ignores_blank_window_id():
@@ -122,8 +113,7 @@ async def test_handle_new_window_proceeds_when_not_pending(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_handle_new_window_skips_when_already_bound_takes_priority(monkeypatch):
-    """already-bound check runs first; pending-creation check is a fallback."""
-    register_pending_creation("@42")  # also pending
+    register_pending_creation("@42")
     bound_mock = MagicMock(return_value=True)
     create_topic_mock = AsyncMock()
     rebind_mock = AsyncMock(return_value=False)

@@ -1,5 +1,3 @@
-"""Tests for toolbar_callbacks (dispatch) and toolbar_keyboard (keyboard build + labels)."""
-
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -34,11 +32,6 @@ def _fresh_toolbar_config():
     reload_toolbar_config()
     yield
     reload_toolbar_config()
-
-
-# ──────────────────────────────────────────────────────────────────────
-# build_toolbar_keyboard
-# ──────────────────────────────────────────────────────────────────────
 
 
 class TestBuildToolbarKeyboard:
@@ -108,11 +101,6 @@ class TestBuildToolbarKeyboardCustom:
         assert kb.inline_keyboard[0][0].text == "\u23f9"
 
 
-# ──────────────────────────────────────────────────────────────────────
-# _parse_callback_data
-# ──────────────────────────────────────────────────────────────────────
-
-
 class TestParseCallbackData:
     def test_simple_window_id(self) -> None:
         assert _parse_callback_data("tb:@5:mode") == ("@5", "mode")
@@ -122,11 +110,6 @@ class TestParseCallbackData:
 
     def test_no_colon_returns_none(self) -> None:
         assert _parse_callback_data("tb:") is None
-
-
-# ──────────────────────────────────────────────────────────────────────
-# Dispatch — common test helpers
-# ──────────────────────────────────────────────────────────────────────
 
 
 def _make_query(data: str) -> AsyncMock:
@@ -150,11 +133,6 @@ def _make_context() -> MagicMock:
     ctx = MagicMock()
     ctx.user_data = {}
     return ctx
-
-
-# ──────────────────────────────────────────────────────────────────────
-# Dispatch — key actions
-# ──────────────────────────────────────────────────────────────────────
 
 
 class TestDispatchKey:
@@ -226,11 +204,6 @@ class TestDispatchKey:
         query.answer.assert_awaited_once_with("Window not found", show_alert=True)
 
 
-# ──────────────────────────────────────────────────────────────────────
-# Dispatch — text actions
-# ──────────────────────────────────────────────────────────────────────
-
-
 class TestDispatchText:
     async def test_text_action_sends_with_enter_literal(self) -> None:
         clear_action = ToolbarAction(
@@ -269,11 +242,6 @@ class TestDispatchText:
             "@5", "/clear", enter=True, literal=True
         )
         query.answer.assert_awaited_once()
-
-
-# ──────────────────────────────────────────────────────────────────────
-# Dispatch — builtin actions
-# ──────────────────────────────────────────────────────────────────────
 
 
 class TestDispatchBuiltinCtrlc:
@@ -404,11 +372,6 @@ class TestDispatchBuiltinLast:
         query.answer.assert_awaited_once_with("Use in a topic", show_alert=True)
 
 
-# ──────────────────────────────────────────────────────────────────────
-# Dispatch — error paths
-# ──────────────────────────────────────────────────────────────────────
-
-
 class TestDispatchErrorPaths:
     async def test_bad_callback_data_format(self) -> None:
         query = _make_query("notb:foo")
@@ -443,11 +406,6 @@ class TestDispatchErrorPaths:
         assert call_args is not None
         assert "doesnotexist" in call_args.args[0]
         assert call_args.kwargs.get("show_alert") is True
-
-
-# ──────────────────────────────────────────────────────────────────────
-# State readback — button label updates via provider.scrape_current_mode
-# ──────────────────────────────────────────────────────────────────────
 
 
 class TestRefreshButtonLabel:

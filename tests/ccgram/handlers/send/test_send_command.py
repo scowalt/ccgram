@@ -1,5 +1,3 @@
-"""Tests for src/ccgram/handlers/send/send_command.py."""
-
 from __future__ import annotations
 
 import os
@@ -470,7 +468,7 @@ class TestBuildSearchResults:
             p.write_bytes(b"x")
             paths.append(p)
         _, _, shown = build_search_results(paths, tmp_path)
-        assert len(shown) == 24  # _ITEMS_PER_PAGE * 3 = 8 * 3
+        assert len(shown) == 24
 
     def test_empty_list(self, tmp_path: Path) -> None:
         text, markup, shown = build_search_results([], tmp_path)
@@ -488,11 +486,7 @@ class TestBuildSearchResults:
         assert "1" in text
 
 
-# ---------------------------------------------------------------------------
-# Helpers for upload_file and send_command tests
-# ---------------------------------------------------------------------------
-
-from unittest.mock import AsyncMock, MagicMock  # noqa: E402 (appended)
+from unittest.mock import AsyncMock, MagicMock  # noqa: E402
 
 import pytest  # noqa: E402
 from telegram.error import TelegramError  # noqa: E402
@@ -579,7 +573,7 @@ class TestSendCommand:
             mock_tr.resolve_window_for_thread.return_value = "@1"
             mock_tr.resolve_chat_id.return_value = -100123
             ws = MagicMock()
-            ws.cwd = None  # overridden per test
+            ws.cwd = None
             mock_view.return_value = ws
             self.ws = ws
             yield
@@ -616,10 +610,6 @@ class TestSendCommand:
         await send_command(update, ctx)
 
     async def test_view_window_returns_none_handled_gracefully(self) -> None:
-        # Window is bound (resolve_window_for_thread succeeds), but
-        # view_window returns None (window state was wiped after binding).
-        # The new None guard at send_command.py should reject cleanly
-        # instead of raising AttributeError.
         self.mock_view.return_value = None
         update = _make_update()
         ctx = _make_context()

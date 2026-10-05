@@ -1,10 +1,7 @@
-"""Tests for FORUM_TOPIC_CLOSED handler (unbind thread, keep window)."""
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
 def _make_update(thread_id: int = 42, user_id: int = 1) -> MagicMock:
-    """Create a mock Update for FORUM_TOPIC_CLOSED."""
     update = MagicMock()
     update.effective_user.id = user_id
     update.message.message_thread_id = thread_id

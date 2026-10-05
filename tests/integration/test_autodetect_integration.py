@@ -1,5 +1,3 @@
-"""Integration tests for tmux auto-detection with a real tmux server."""
-
 import asyncio
 import shutil
 import subprocess
@@ -28,7 +26,6 @@ def tmux():
 
 
 def test_detect_tmux_context_real(monkeypatch):
-    """detect_tmux_context returns values when inside tmux."""
     monkeypatch.setenv("TMUX", "/tmp/tmux-test/default,99999,0")
     session, _window_id = detect_tmux_context()
     if session is not None:
@@ -37,14 +34,12 @@ def test_detect_tmux_context_real(monkeypatch):
 
 
 async def test_check_duplicate_no_ccgram_running(tmux, monkeypatch):
-    """No duplicate detected when no ccgram process is running."""
     monkeypatch.setenv("TMUX_PANE", "%99999")
     result = check_duplicate_ccgram(TEST_SESSION)
     assert result is None
 
 
 async def test_list_windows_skips_own_window(tmux, tmp_path, monkeypatch):
-    """list_windows excludes our own window when own_window_id is set."""
     ok, _msg, _name, window_id = await tmux.create_window(
         str(tmp_path), window_name="agent-win", start_agent=False
     )
@@ -70,7 +65,6 @@ async def test_list_windows_skips_own_window(tmux, tmp_path, monkeypatch):
 
 
 async def test_check_duplicate_with_ccgram_process(tmux, tmp_path, monkeypatch):
-    """Duplicate detection finds ccgram process in another pane."""
     monkeypatch.setenv("TMUX_PANE", "%99999")
 
     ok, _msg, _name, window_id = await tmux.create_window(

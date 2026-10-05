@@ -924,8 +924,6 @@ class TestGeminiTranscriptParsing:
         assert gemini.is_user_transcript_entry({"type": "gemini"}) is False
 
     def test_dedup_repeated_message_id(self) -> None:
-        # Gemini's JSONL transcript re-appends the same message line on every
-        # toolCalls update. The parser must dedup by id across calls.
         gemini = GeminiProvider()
         first = [
             {
@@ -938,11 +936,9 @@ class TestGeminiTranscriptParsing:
             }
         ]
         msgs1, pending = gemini.parse_transcript_entries(first, {})
-        # First emission: text once + tool_use once, no result yet.
         assert [m.content_type for m in msgs1] == ["tool_use", "text"]
         assert "tc-1" in pending
 
-        # Same message id re-appended with the result attached.
         second = [
             {
                 "id": "msg-1",
@@ -959,7 +955,6 @@ class TestGeminiTranscriptParsing:
             }
         ]
         msgs2, pending = gemini.parse_transcript_entries(second, pending)
-        # Second emission: only tool_result. No duplicate text or tool_use.
         assert [m.content_type for m in msgs2] == ["tool_result"]
         assert "tc-1" not in pending
 
@@ -1430,12 +1425,6 @@ def _write_codex_session(
     source: object = "cli",
     originator: object = "codex_cli_rs",
 ) -> Path:
-    """Write a fake Codex session JSONL.
-
-    ``source`` and ``originator`` mirror the keys real Codex writes into the
-    ``session_meta`` payload. Pass ``originator=None`` to omit the field
-    entirely (simulating older transcripts that predate the field).
-    """
     day_dir = sessions_dir / date_parts
     day_dir.mkdir(parents=True, exist_ok=True)
     fpath = day_dir / f"{name}.jsonl"
@@ -1598,9 +1587,6 @@ class TestCodexDiscoverTranscript:
         assert event is None
 
     def test_skips_codex_exec_session(self, tmp_path: Path) -> None:
-        """``codex exec`` runs (originator=codex_exec) must not be claimed by
-        hookless discovery, even if a real interactive session exists in the
-        same cwd. The interactive session wins."""
         sessions_dir = tmp_path / ".codex" / "sessions"
         _write_codex_session(
             sessions_dir,
@@ -1627,9 +1613,6 @@ class TestCodexDiscoverTranscript:
         assert event.session_id == "uuid-main"
 
     def test_codex_desktop_exec_survives_filter(self, tmp_path: Path) -> None:
-        """Codex Desktop legitimately writes ``source = "exec"`` while keeping
-        a non-``codex_exec`` originator. Those sessions must survive the
-        filter."""
         sessions_dir = tmp_path / ".codex" / "sessions"
         _write_codex_session(
             sessions_dir,
@@ -1648,8 +1631,6 @@ class TestCodexDiscoverTranscript:
         assert event.session_id == "uuid-desktop"
 
     def test_missing_originator_field_is_kept(self, tmp_path: Path) -> None:
-        """Older Codex transcripts predate the ``originator`` field. Absence of
-        the field must be treated as fail-safe-open (keep the session)."""
         sessions_dir = tmp_path / ".codex" / "sessions"
         _write_codex_session(
             sessions_dir,
@@ -1667,9 +1648,6 @@ class TestCodexDiscoverTranscript:
         assert event.session_id == "uuid-bare"
 
     def test_skips_codex_exec_when_only_match(self, tmp_path: Path) -> None:
-        """Reproduce the production bug: when the only cwd-matching session is
-        a ``codex exec`` run, discovery must return ``None`` rather than bind
-        the wrong session."""
         sessions_dir = tmp_path / ".codex" / "sessions"
         _write_codex_session(
             sessions_dir,

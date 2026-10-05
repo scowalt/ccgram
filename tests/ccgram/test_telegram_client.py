@@ -298,8 +298,5 @@ class TestUnwrapBot:
         assert unwrap_bot(client) is fake_bot
 
     def test_returns_client_unchanged_for_non_adapter(self):
-        # Production passes PTBTelegramClient; tests that pass an
-        # AsyncMock-shaped-as-Bot get it back so DraftStream's
-        # do_api_request lookups still resolve on the mock.
         mock = MagicMock()
         assert unwrap_bot(mock) is mock

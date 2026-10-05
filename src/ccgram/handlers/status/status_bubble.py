@@ -1,14 +1,3 @@
-"""Status-bubble rendering, send/edit/clear, and task-status formatting.
-
-Owns the per-topic status message lifecycle: keyboard layout, send/edit/clear
-I/O, Claude task-list formatting, and status-to-content conversion.  The queue
-worker in ``message_queue`` delegates ``StatusUpdateTask`` / ``StatusClearTask``
-here; ``convert_status_to_content`` is defined here and imported by
-``message_queue._process_content_task``.
-
-Status-bar Row 1: [⎋ Esc] [📸 Screenshot] [📄 Last] [📥 Get File].
-"""
-
 from __future__ import annotations
 
 import contextlib
@@ -44,22 +33,10 @@ from ..messaging_pipeline.message_task import (
 logger = structlog.get_logger()
 
 
-# ---------------------------------------------------------------------------
-# State
-# ---------------------------------------------------------------------------
-
-# Status message tracking: (user_id, thread_key) -> (message_id, window_id, last_text, chat_id)
 _status_msg_info: dict[tuple[int, int], tuple[int, str, str, int]] = {}
 
-# Last time a topic delivered visible content into Telegram. Used to avoid
-# immediately recreating a status bubble that was just replaced by content.
 _last_content_sent_at: dict[tuple[int, int], float] = {}
 _STATUS_RECREATE_COOLDOWN_SECS = 10.0
-
-
-# ---------------------------------------------------------------------------
-# Keyboard builder
-# ---------------------------------------------------------------------------
 
 
 def build_status_keyboard(
@@ -68,19 +45,8 @@ def build_status_keyboard(
     *,
     user_id: int | None = None,
 ) -> InlineKeyboardMarkup:
-    """Build inline keyboard for status messages.
-
-    Layout:
-      Row 1 (optional): up to 2 history-recall buttons
-      Row 2: [⎋ Esc] [📸 Screenshot] [📄 Last] [📥 Get File]
-      Row 3 (optional): [🪟 Dashboard] when Mini App is enabled and user_id is set
-    """
-    # Lazy: command_history → messaging_pipeline → status → status_bubble
-    # forms a cycle when imported at module top. Keep lazy.
-    # Lazy: command_history ↔ status cycle
     from ..command_history import truncate_for_display
 
-    # Lazy: status_bubble ↔ status_bar_actions sibling cycle
     from .status_bar_actions import build_dashboard_button
 
     rows: list[list[InlineKeyboardButton]] = []
@@ -124,21 +90,13 @@ def build_status_keyboard(
     return InlineKeyboardMarkup(rows)
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _is_idle_status_text(status_text: str) -> bool:
-    """Return True when the status represents the idle ready bubble."""
     return status_text.split("\n", 1)[0] == IDLE_STATUS_TEXT
 
 
 def _get_idle_history(
     user_id: int, thread_id_or_0: int, status_text: str
 ) -> list[str] | None:
-    """Return history list if the status is idle, else None."""
-    # Lazy: command_history → messaging_pipeline → status forms a cycle.
     from ..command_history import get_history
 
     if not _is_idle_status_text(status_text):
@@ -147,14 +105,12 @@ def _get_idle_history(
 
 
 def note_content_sent(user_id: int, thread_id_or_0: int) -> None:
-    """Record that visible content was just delivered for a topic."""
     _last_content_sent_at[(user_id, thread_id_or_0)] = time.monotonic()
 
 
 def _should_skip_new_status(
     user_id: int, thread_id_or_0: int, status_text: str
 ) -> bool:
-    """Return True if a missing status bubble should not be recreated yet."""
     if _is_idle_status_text(status_text):
         if config.diagnostic_logs:
             logger.debug(
@@ -184,24 +140,16 @@ def _should_skip_new_status(
 
 @topic_state.register("topic")
 def clear_recent_content_for_topic(user_id: int, thread_id: int | None = None) -> None:
-    """Clear recent-content cooldown tracking for a specific topic."""
     _last_content_sent_at.pop((user_id, thread_key(thread_id)), None)
 
 
-# ---------------------------------------------------------------------------
-# Per-pane status block
-# ---------------------------------------------------------------------------
-
-# When a window has this many or more visible panes, the per-pane block is
-# rendered as an expandable blockquote so the bubble stays compact.
 _PANE_BLOCK_EXPAND_THRESHOLD = 4
-_PANE_BLOCKED_GLYPH = "⏸"  # ⏸
+_PANE_BLOCKED_GLYPH = "⏸"
 _SECONDS_PER_MINUTE = 60
 _MINUTES_PER_HOUR = 60
 
 
 def _format_pane_idle_age(pane: PaneProjection, now_wall: float) -> str:
-    """Format a pane's idle duration relative to ``now_wall``."""
     if not pane.last_active_ts:
         return "idle"
     delta = max(0.0, now_wall - pane.last_active_ts)
@@ -215,7 +163,6 @@ def _format_pane_idle_age(pane: PaneProjection, now_wall: float) -> str:
 
 
 def _format_pane_item(pane: PaneProjection, now_wall: float) -> str:
-    """Render a single pane as ``"<label> <state>"``."""
     label = pane.name.strip() if pane.name and pane.name.strip() else pane.pane_id
     if pane.state == "active":
         return f"{label} active"
@@ -227,24 +174,12 @@ def _format_pane_item(pane: PaneProjection, now_wall: float) -> str:
 
 
 def format_pane_block(window_id: str) -> str | None:
-    """Render a per-pane status block for windows with multiple panes.
-
-    Returns ``None`` for single-pane windows (or windows without recorded
-    panes). For 2-3 panes returns a single ``└``-prefixed line listing each
-    pane's state. For 4+ panes wraps the list in an expandable blockquote
-    so the status bubble stays compact while still letting users tap to
-    reveal every pane.
-
-    Dead panes are excluded from the rendered list — pane lifecycle
-    notifications are owned by ``PaneStatusStrategy`` and Theme 5 Task 2.5.
-    """
     projections = list_pane_projections(window_id)
     if len(projections) <= 1:
         return None
     visible = [p for p in projections if p.state != "dead"]
     if len(visible) <= 1:
         return None
-    # Preserve tmux's numeric order while allowing opaque backend pane IDs.
     visible.sort(
         key=lambda p: (
             (0, int(p.pane_id[1:]), p.pane_id)
@@ -260,11 +195,6 @@ def format_pane_block(window_id: str) -> str | None:
     return "└ " + " · ".join(items)
 
 
-# ---------------------------------------------------------------------------
-# Claude task-status formatting
-# ---------------------------------------------------------------------------
-
-
 _TASK_STATUS_GLYPHS = {
     "completed": "\u2714",
     "in_progress": "\u25d4",
@@ -274,7 +204,6 @@ _VISIBLE_TASK_LIMIT = 8
 
 
 def _format_task_lines(snapshot: object) -> list[str]:
-    """Render the task snapshot into status-bubble lines."""
     total = getattr(snapshot, "total_count", 0)
     done = getattr(snapshot, "done_count", 0)
     open_count = getattr(snapshot, "open_count", 0)
@@ -302,7 +231,6 @@ def _format_task_lines(snapshot: object) -> list[str]:
 
 
 def format_claude_task_status(window_id: str, base_text: str | None) -> str | None:
-    """Compose Claude wait/task state plus the per-pane block (if any)."""
     snapshot = get_task_snapshot(window_id)
     wait_header = get_wait_header(window_id)
     pane_block = format_pane_block(window_id)
@@ -320,11 +248,6 @@ def format_claude_task_status(window_id: str, base_text: str | None) -> str | No
     return "\n".join(lines) if lines else base_text
 
 
-# ---------------------------------------------------------------------------
-# Status I/O — send / edit / clear
-# ---------------------------------------------------------------------------
-
-
 async def send_status_text(
     client: TelegramClient,
     user_id: int,
@@ -332,12 +255,6 @@ async def send_status_text(
     window_id: str,
     text: str,
 ) -> None:
-    """Send a new status message with action buttons and track it.
-
-    If a status message already exists for this (user, thread), edit it
-    in-place via ``edit_with_fallback`` (entity-formatted, plain-text fallback
-    on TelegramError).  Same-window same-text calls are a no-op.
-    """
     skey = (user_id, thread_id_or_0)
     thread_id: int | None = thread_id_or_0 if thread_id_or_0 != 0 else None
     chat_id = thread_router.resolve_chat_id(user_id, thread_id)
@@ -361,8 +278,6 @@ async def send_status_text(
             if success:
                 _status_msg_info[skey] = (msg_id, window_id, text, stored_chat_id)
                 return
-            # Edit failed — original message may still exist server-side.
-            # Best-effort delete to avoid an orphan before creating a replacement.
             with contextlib.suppress(TelegramError):
                 await client.delete_message(chat_id=stored_chat_id, message_id=msg_id)
             _status_msg_info.pop(skey, None)
@@ -387,7 +302,6 @@ async def clear_status_message(
     user_id: int,
     thread_id_or_0: int = 0,
 ) -> None:
-    """Delete the status message for a user."""
     skey = (user_id, thread_id_or_0)
     info = _status_msg_info.pop(skey, None)
     if info:
@@ -405,10 +319,6 @@ async def convert_status_to_content(
     window_id: str,
     content_text: str,
 ) -> int | None:
-    """Convert status message to content message by editing it.
-
-    Returns the message_id if converted successfully, None otherwise.
-    """
     skey = (user_id, thread_id_or_0)
     info = _status_msg_info.pop(skey, None)
     if not info:
@@ -432,17 +342,11 @@ async def convert_status_to_content(
     return None
 
 
-# ---------------------------------------------------------------------------
-# Status task processors (called by message_queue worker)
-# ---------------------------------------------------------------------------
-
-
 async def process_status_update(
     client: TelegramClient,
     user_id: int,
     task: StatusUpdateTask,
 ) -> None:
-    """Update the status bubble in place."""
     tkey = thread_key(task.thread_id)
     status_text = format_claude_task_status(task.window_id, task.text)
 
@@ -458,7 +362,6 @@ async def process_status_clear(
     user_id: int,
     task: StatusClearTask,
 ) -> None:
-    """Clear the status bubble — re-render with task list or delete."""
     window_id = task.window_id or ""
     tkey = thread_key(task.thread_id)
     status_text = format_claude_task_status(window_id, None)
@@ -468,20 +371,6 @@ async def process_status_clear(
     await clear_status_message(client, user_id, tkey)
 
 
-# ---------------------------------------------------------------------------
-# Cleanup (non-registry — see docstring)
-# ---------------------------------------------------------------------------
-
-
 def clear_status_msg_info(user_id: int, thread_id: int | None = None) -> None:
-    """Clear status message tracking for a user (and optionally a specific thread).
-
-    NOT registered with TopicStateRegistry — must only be called explicitly
-    from cleanup.py in the ``client is None`` path.  When a client is available,
-    ``clear_status_message`` (via the queued ``status_clear`` task) pops
-    the entry *and* deletes the Telegram message.  Registering this function
-    with the registry would pop the entry before the worker runs, preventing
-    the actual Telegram delete.
-    """
     skey = (user_id, thread_key(thread_id))
     _status_msg_info.pop(skey, None)

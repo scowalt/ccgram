@@ -1,16 +1,3 @@
-"""Topics subpackage — topic creation, lifecycle, directory browser, window picker.
-
-Bundles the modules that drive Telegram-topic ↔ tmux-window binding:
-``topic_orchestration`` (new-window/new-topic flow, retries),
-``topic_lifecycle`` (autoclose timers, unbound TTL, topic close/edit
-handlers), ``directory_browser`` (directory + window picker UI),
-``directory_callbacks`` (browser callback dispatcher), and
-``window_callbacks`` (window picker callback dispatcher).
-
-Public surface re-exported here is the entry point for ``bot.py`` and
-the rest of ``handlers/``; internals stay in the per-module files.
-"""
-
 from .directory_browser import (
     BROWSE_DIRS_KEY,
     BROWSE_PAGE_KEY,

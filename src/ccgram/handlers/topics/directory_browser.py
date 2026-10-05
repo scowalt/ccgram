@@ -1,20 +1,3 @@
-"""Directory browser and window picker UI for session creation.
-
-Provides UIs in Telegram for:
-  - Window picker: list unbound tmux windows for quick binding
-  - Directory browser: navigate directory hierarchies to create new sessions
-
-Key components:
-  - DIRS_PER_PAGE: Number of directories shown per page
-  - User state keys for tracking browse/picker session
-  - build_window_picker: Build unbound window picker UI
-  - build_directory_browser: Build directory browser UI
-  - clear_window_picker_state: Clear picker state from user_data
-  - clear_browse_state: Clear browsing state from user_data
-  - build_worktree_picker: Offer current-branch vs new-worktree for a git repo
-  - build_worktree_confirm: Confirm a suggested worktree branch (or edit it)
-"""
-
 from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -54,28 +37,22 @@ from ..user_state import (
     PENDING_WORKTREE_SUBDIR,
 )
 
-# Max favorites shown in directory browser
 _MAX_FAVORITES = 5
 
-# Max characters for a favorite path label before truncating
 _MAX_FAV_LABEL_LEN = 26
 
-# Directories per page in directory browser
 DIRS_PER_PAGE = 6
 
-# Max characters to show in a button label before truncating with "…"
 _MAX_BUTTON_LABEL_LEN = 13
 
-# User state keys
 STATE_KEY = "state"
 STATE_BROWSING_DIRECTORY = "browsing_directory"
 STATE_SELECTING_WINDOW = "selecting_window"
 BROWSE_PATH_KEY = "browse_path"
 BROWSE_PAGE_KEY = "browse_page"
-BROWSE_DIRS_KEY = "browse_dirs"  # Cache of subdirs for current path
-UNBOUND_WINDOWS_KEY = "unbound_windows"  # Cache of (name, cwd) tuples
+BROWSE_DIRS_KEY = "browse_dirs"
+UNBOUND_WINDOWS_KEY = "unbound_windows"
 
-# Project markers: filename → badge icon (checked via os.scandir)
 _PROJECT_MARKERS: dict[str, str] = {
     ".git": "\u2699",
     "pyproject.toml": "\U0001f40d",
@@ -87,7 +64,6 @@ _PROJECT_MARKERS: dict[str, str] = {
 
 
 def _detect_project_badge(parent: Path, name: str) -> str:
-    """Return a project badge icon for a subdirectory, or empty string."""
     subdir = parent / name
     for marker, icon in _PROJECT_MARKERS.items():
         try:
@@ -99,7 +75,6 @@ def _detect_project_badge(parent: Path, name: str) -> str:
 
 
 def clear_browse_state(user_data: dict | None) -> None:
-    """Clear directory browsing state keys from user_data."""
     if user_data is not None:
         user_data.pop(STATE_KEY, None)
         user_data.pop(BROWSE_PATH_KEY, None)
@@ -108,7 +83,6 @@ def clear_browse_state(user_data: dict | None) -> None:
 
 
 def clear_worktree_state(user_data: dict | None) -> None:
-    """Clear worktree-picker flow state keys from user_data."""
     if user_data is not None:
         for key in (
             PENDING_WORKTREE_REPO,
@@ -123,7 +97,6 @@ def clear_worktree_state(user_data: dict | None) -> None:
 
 
 def clear_window_picker_state(user_data: dict | None) -> None:
-    """Clear window picker state keys from user_data."""
     if user_data is not None:
         user_data.pop(STATE_KEY, None)
         user_data.pop(UNBOUND_WINDOWS_KEY, None)
@@ -132,13 +105,6 @@ def clear_window_picker_state(user_data: dict | None) -> None:
 def build_window_picker(
     windows: list[tuple[str, str, str]],
 ) -> tuple[str, InlineKeyboardMarkup, list[str]]:
-    """Build window picker UI for unbound tmux windows.
-
-    Args:
-        windows: List of (window_id, window_name, cwd) tuples.
-
-    Returns: (text, keyboard, window_ids) where window_ids is the ordered list for caching.
-    """
     window_ids = [wid for wid, _, _ in windows]
 
     lines = [
@@ -175,11 +141,6 @@ def build_window_picker(
 
 
 def get_favorites(user_id: int | None) -> tuple[list[str], set[str]]:
-    """Get deduplicated favorites list and starred set.
-
-    Returns (favorites, starred_set) where favorites is starred-first then MRU,
-    filtered to existing dirs, capped at _MAX_FAVORITES.
-    """
     if user_id is None:
         return [], set()
     starred = user_preferences.get_user_starred(user_id)
@@ -205,7 +166,6 @@ def _build_favorites_buttons(
     favorites: list[str],
     starred_set: set[str],
 ) -> list[list[InlineKeyboardButton]]:
-    """Build favorite directory buttons (starred + MRU) with star toggles."""
     if not favorites:
         return []
     rows: list[list[InlineKeyboardButton]] = []
@@ -230,10 +190,6 @@ def _build_favorites_buttons(
 def build_directory_browser(
     current_path: str, page: int = 0, user_id: int | None = None
 ) -> tuple[str, InlineKeyboardMarkup, list[str]]:
-    """Build directory browser UI.
-
-    Returns: (text, keyboard, subdirs) where subdirs is the full list for caching.
-    """
 
     path = Path(current_path).expanduser().resolve()
     if not path.exists() or not path.is_dir():
@@ -248,7 +204,7 @@ def build_directory_browser(
                 and (config.show_hidden_dirs or not d.name.startswith("."))
             ]
         )
-    except (PermissionError, OSError):  # fmt: skip
+    except PermissionError, OSError:
         subdirs = []
 
     favorites, starred_set = get_favorites(user_id)
@@ -256,7 +212,6 @@ def build_directory_browser(
         favorites, starred_set
     )
 
-    # Subdirectory listing
     total_pages = max(1, (len(subdirs) + DIRS_PER_PAGE - 1) // DIRS_PER_PAGE)
     page = max(0, min(page, total_pages - 1))
     start = page * DIRS_PER_PAGE
@@ -294,7 +249,6 @@ def build_directory_browser(
         buttons.append(nav)
 
     action_row: list[InlineKeyboardButton] = []
-    # Allow going up unless at filesystem root
     if path != path.parent:
         action_row.append(InlineKeyboardButton("..", callback_data=CB_DIR_UP))
     action_row.append(InlineKeyboardButton("\U0001f3e0", callback_data=CB_DIR_HOME))
@@ -311,7 +265,6 @@ def build_directory_browser(
     return text, InlineKeyboardMarkup(buttons), subdirs
 
 
-# Provider display metadata: (label, icon)
 _PROVIDER_META: dict[str, tuple[str, str]] = {
     "claude": ("Claude", "\U0001f7e0"),
     "codex": ("Codex", "\U0001f9e9"),
@@ -322,10 +275,6 @@ _PROVIDER_META: dict[str, tuple[str, str]] = {
 
 
 def build_provider_picker(selected_path: str) -> tuple[str, InlineKeyboardMarkup]:
-    """Build provider selection keyboard shown after directory confirmation.
-
-    Returns: (text, keyboard).
-    """
     display_path = selected_path.replace(str(Path.home()), "~")
     text = (
         f"*Select Provider*\n\nDirectory: `{display_path}`\n\nWhich agent CLI to use?"
@@ -348,10 +297,6 @@ def build_provider_picker(selected_path: str) -> tuple[str, InlineKeyboardMarkup
 def build_mode_picker(
     selected_path: str, provider_name: str
 ) -> tuple[str, InlineKeyboardMarkup]:
-    """Build launch-mode keyboard shown after provider selection.
-
-    Returns: (text, keyboard).
-    """
     display_path = selected_path.replace(str(Path.home()), "~")
     provider_label, provider_icon = _PROVIDER_META.get(
         provider_name, (provider_name.title(), "🤖")
@@ -381,7 +326,6 @@ def build_mode_picker(
 
 
 def clear_workspace_state(user_data: dict | None) -> None:
-    """Clear workspace-picker flow state keys from user_data."""
     if user_data is not None:
         user_data.pop(PENDING_WORKSPACES, None)
         user_data.pop(PENDING_WORKSPACE_ID, None)
@@ -391,19 +335,6 @@ def build_workspace_picker(
     selected_path: str,
     workspaces: list[tuple[str, str, str]],
 ) -> tuple[str, InlineKeyboardMarkup]:
-    """Build workspace selection keyboard shown before provider pick on herdr.
-
-    *workspaces* is a list of ``(workspace_id, label, cwd)`` tuples — the
-    caller caches this list and stores the chosen index in user_data so the
-    callback can recover the ``workspace_id`` without embedding it in the
-    64-byte callback_data limit.
-
-    A "Skip / auto-resolve" button is always present: it lets the backend's
-    cwd-matching logic pick (or create) the workspace without user input,
-    preserving the tmux-equivalent behaviour on herdr.
-
-    Returns: (text, keyboard).
-    """
     display_path = selected_path.replace(str(Path.home()), "~")
     text = (
         f"*Select Workspace*\n\nDirectory: `{display_path}`\n\n"
@@ -435,14 +366,6 @@ def build_workspace_picker(
 def build_worktree_picker(
     repo_path: str, current_branch: str
 ) -> tuple[str, InlineKeyboardMarkup]:
-    """Build the worktree opt-in keyboard for an eligible git repo.
-
-    Shown between directory-confirm and provider-pick. The user either
-    keeps the current branch (today's behaviour) or spins up a new
-    worktree on a fresh branch.
-
-    Returns: (text, keyboard).
-    """
     display_path = repo_path.replace(str(Path.home()), "~")
     text = (
         "*Git Worktree*\n\n"
@@ -467,14 +390,6 @@ def build_worktree_picker(
 def build_worktree_confirm(
     repo_path: str, branch: str, worktree_path: str, dirty: bool
 ) -> tuple[str, InlineKeyboardMarkup]:
-    """Build the worktree confirm/edit keyboard with a suggested branch.
-
-    The suggested branch name is the happy path (one-tap confirm); the
-    Edit name button opens the only free-text step in this flow. A
-    dirty source repo is allowed but warned about.
-
-    Returns: (text, keyboard).
-    """
     display_repo = repo_path.replace(str(Path.home()), "~")
     display_wt = worktree_path.replace(str(Path.home()), "~")
     lines = [

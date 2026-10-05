@@ -96,7 +96,7 @@ class TestMakeLaunchArgs:
         caps = provider.capabilities
         result = provider.make_launch_args(use_continue=True)
         if caps.supports_continue:
-            assert result != ""  # Each provider has its own continue syntax
+            assert result != ""
         else:
             assert result == ""
 

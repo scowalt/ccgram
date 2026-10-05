@@ -63,7 +63,6 @@ class TestDraftStreamHappyPath:
         await stream.append("c")
         await stream.finalize()
 
-        # 1 sendMessageDraft + 2 editMessageDraft + 1 finalizeMessageDraft
         assert bot.do_api_request.await_count == 4
         called_methods = [c.args[0] for c in bot.do_api_request.call_args_list]
         assert called_methods == [
@@ -72,7 +71,6 @@ class TestDraftStreamHappyPath:
             "editMessageDraft",
             "finalizeMessageDraft",
         ]
-        # Buffer accumulates
         last_call = bot.do_api_request.call_args_list[-1]
         assert last_call.kwargs["api_kwargs"]["text"] == "abc"
         assert stream.closed is True
@@ -121,7 +119,6 @@ class TestDraftStreamFallback:
         await stream.start("hi")
 
         assert stream.mode == DRAFT_LEGACY
-        # Generic BadRequest does not set process-wide unavailable
         assert is_draft_unavailable() is False
 
     async def test_legacy_mode_uses_edit_message_text(self) -> None:
@@ -134,7 +131,6 @@ class TestDraftStreamFallback:
         await stream.finalize()
 
         bot.do_api_request.assert_not_awaited()
-        # 2 edit calls (append + finalize), 1 send_message at start
         assert bot.send_message.await_count == 1
         assert bot.edit_message_text.await_count == 2
         last_call = bot.edit_message_text.call_args_list[-1]
@@ -142,7 +138,6 @@ class TestDraftStreamFallback:
 
     async def test_self_degrade_after_repeated_failures(self) -> None:
         bot = _make_bot(draft_result={"message_id": 7})
-        # Start succeeds; subsequent calls raise transient errors twice.
         bot.do_api_request.side_effect = [
             {"message_id": 7},
             TelegramError("transient1"),
@@ -154,11 +149,9 @@ class TestDraftStreamFallback:
         assert stream.mode == DRAFT_STREAMING
 
         await stream.append("b")
-        # First failure does not degrade
         assert stream.mode == DRAFT_STREAMING
 
         await stream.append("c")
-        # Second failure degrades to legacy and re-pushes via edit_message_text
         assert stream.mode == DRAFT_LEGACY
         bot.edit_message_text.assert_awaited()
 
@@ -216,8 +209,6 @@ class TestDraftStreamTransientLegacyFailure:
 
         mark_draft_unavailable("test")
         bot = _make_bot()
-        # Non-transient TelegramError (e.g. BadRequest, RetryAfter, generic)
-        # must not propagate — the stream is best-effort and silent.
         bot.send_message.side_effect = TgError("flood")
 
         stream = DraftStream(bot, chat_id=100)
@@ -245,7 +236,7 @@ class TestDraftStreamPeerCache:
         await stream.start("hi")
 
         assert stream.mode == DRAFT_LEGACY
-        assert is_draft_unavailable() is False  # only this peer
+        assert is_draft_unavailable() is False
         assert is_peer_draft_unsupported(100, 5) is True
 
     async def test_subsequent_stream_to_same_peer_skips_probe(self) -> None:
@@ -359,7 +350,6 @@ class TestDraftStreamTextSafety:
 
         sent_text = bot.do_api_request.call_args.kwargs["api_kwargs"]["text"]
         assert len(sent_text) == 4096
-        # Buffer is full; truncation only at send/edit boundary
         assert stream.text == "a" * 4096
 
     async def test_legacy_not_modified_is_silent(self) -> None:
@@ -371,7 +361,6 @@ class TestDraftStreamTextSafety:
 
         stream = DraftStream(bot, chat_id=100)
         await stream.start("a")
-        # Should not raise
         await stream.append("a")
         assert stream.mode == DRAFT_LEGACY
 
@@ -465,9 +454,6 @@ class TestDraftStreamReplyMarkup:
         await stream.start("hi")
         await stream.replace("bye", reply_markup=None)
 
-        # Telegram leaves the existing keyboard untouched when reply_markup
-        # is omitted, so an explicit clear must serialize to an empty
-        # InlineKeyboardMarkup for the keyboard to actually disappear.
         last_edit = bot.edit_message_text.call_args_list[-1]
         markup = last_edit.kwargs["reply_markup"]
         assert isinstance(markup, InlineKeyboardMarkup)

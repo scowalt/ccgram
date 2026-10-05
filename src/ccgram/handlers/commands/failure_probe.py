@@ -1,19 +1,3 @@
-"""Post-send command failure detection.
-
-After a slash command is forwarded to the provider session, this module
-probes for "command failed" signals from two sources:
-
-  1. transcript delta — incremental read of the JSONL since the offset
-     captured before the send, looking for assistant messages that
-     match common "unknown command" / "unrecognized command" lines.
-  2. pane delta — diff of capture_pane output before/after the send,
-     used as a fallback when the provider has no transcript or the
-     transcript has no error line.
-
-If either source yields an error line, a one-shot Telegram reply is
-posted in the topic.
-"""
-
 from __future__ import annotations
 
 
@@ -59,7 +43,6 @@ def _extract_probe_error_line(text: str) -> str | None:
 
 
 def _extract_pane_delta(before: str | None, after: str | None) -> str:
-    """Return the likely newly-added pane text after a command send."""
     if not after:
         return ""
     if not before:
@@ -82,7 +65,6 @@ async def _capture_command_probe_context(
     window_id: str,
     provider: AgentProvider,
 ) -> tuple[str | None, int | None, str | None]:
-    """Capture transcript offset + pane snapshot before sending a command."""
     view = window_query.view_window(window_id)
     transcript_path: str | None = (
         str(view.transcript_path) if view and view.transcript_path else None
@@ -109,7 +91,6 @@ async def _probe_transcript_command_error(
     transcript_path: str | None,
     since_offset: int | None,
 ) -> str | None:
-    """Return first command-like error line found in transcript delta."""
     if not transcript_path or since_offset is None:
         return None
 
@@ -160,7 +141,6 @@ async def _maybe_send_command_failure_message(
     since_offset: int | None,
     pane_before: str | None,
 ) -> None:
-    """Probe transcript/pane for quick command failures and surface them."""
     await asyncio.sleep(_COMMAND_ERROR_PROBE_DELAY_SECONDS)
 
     error_line = await _probe_transcript_command_error(

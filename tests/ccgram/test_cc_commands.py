@@ -1,5 +1,3 @@
-"""Tests for CC command discovery and menu registration."""
-
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -21,7 +19,6 @@ from ccgram.cc_commands import (
 
 @pytest.fixture(autouse=True)
 def _reset_cache():
-    """Reset module-level cache before each test."""
     cc_mod._name_map = {}
     yield
     cc_mod._name_map = {}
@@ -308,7 +305,6 @@ class TestRegisterCommands:
         assert len(registered) <= 100
 
     async def test_duplicate_telegram_names_deduplicated(self, tmp_path: Path) -> None:
-        # skill "foo-bar" and command "foo:bar" both sanitize to "foo_bar"
         skill_dir = tmp_path / "skills" / "foo-bar"
         skill_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
@@ -351,7 +347,6 @@ class TestRegisterCommands:
         assert bot.set_my_commands.call_args.kwargs.get("scope") is scope
 
     async def test_bot_native_name_collision_skipped(self, tmp_path: Path) -> None:
-        # A skill that sanitizes to "start" should not create a duplicate.
         skill_dir = tmp_path / "skills" / "start"
         skill_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(

@@ -1,25 +1,3 @@
-"""Directory browser callback handlers.
-
-Handles all inline keyboard callbacks for the directory browser UI:
-  - CB_DIR_SELECT: Navigate into a subdirectory
-  - CB_DIR_UP: Navigate to parent directory
-  - CB_DIR_PAGE: Paginate directory listing
-  - CB_DIR_CONFIRM: Confirm directory selection, show provider picker
-  - CB_PROV_SELECT: Select provider, then show launch mode picker
-  - CB_MODE_SELECT: Select launch mode and create tmux window
-  - CB_DIR_CANCEL: Cancel directory browsing
-  - CB_DIR_FAV: Select a favorite directory
-  - CB_DIR_STAR: Star/unstar a directory
-
-Key function: handle_directory_callback (uniform callback handler signature).
-
-Navigation, worktree-picker, and cancel logic live here.
-Provider/mode selection: provider_mode_callbacks.py
-Workspace picker: workspace_callbacks.py
-Window launch: window_launch_service.py
-Flow state: topic_creation_draft.py
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -89,7 +67,6 @@ from .topic_creation_draft import (
     _required_selected_path,
 )
 
-# Intentional test-compat re-exports: tests import these names from this module.
 from .window_launch_service import (
     _accept_yolo_confirmation,
     _cwd_within,
@@ -118,7 +95,6 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-# Re-export for backward compatibility (tests import these from directory_callbacks)
 __all__ = [
     "handle_directory_callback",
     "_browser_flow_stale",
@@ -142,7 +118,6 @@ __all__ = [
     "_handle_provider_select",
     "_parse_mode_select",
     "_handle_mode_select",
-    # test-compat re-exports from window_launch_service / thread_router
     "_accept_yolo_confirmation",
     "_cwd_within",
     "_persist_worktree_state",
@@ -188,10 +163,6 @@ async def handle_directory_callback(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle directory browser callbacks.
-
-    Dispatches to the appropriate sub-handler based on callback data prefix.
-    """
     if data.startswith(CB_DIR_FAV):
         await _handle_fav(query, user_id, data, update, context)
     elif data.startswith(CB_DIR_STAR):
@@ -226,7 +197,6 @@ async def _resolve_fav_index(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> str | None:
-    """Validate pending thread, parse fav index, and return the fav path or None."""
     if _browser_flow_stale(update, context):
         await query.answer("Stale browser (flow reset)", show_alert=True)
         return None
@@ -250,7 +220,6 @@ async def _handle_fav(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle CB_DIR_FAV: select a favorite directory and navigate into it."""
     fav_path = await _resolve_fav_index(
         query, user_id, data, CB_DIR_FAV, update, context
     )
@@ -271,7 +240,6 @@ async def _handle_star(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle CB_DIR_STAR: toggle star on a favorite directory."""
     fav_path = await _resolve_fav_index(
         query, user_id, data, CB_DIR_STAR, update, context
     )
@@ -298,7 +266,6 @@ async def _handle_select(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle CB_DIR_SELECT: navigate into a subdirectory."""
     if _browser_flow_stale(update, context):
         await query.answer("Stale browser (flow reset)", show_alert=True)
         return
@@ -334,7 +301,6 @@ async def _handle_up(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle CB_DIR_UP: navigate to parent directory."""
     if _browser_flow_stale(update, context):
         await query.answer("Stale browser (flow reset)", show_alert=True)
         return
@@ -352,7 +318,6 @@ async def _handle_home(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle CB_DIR_HOME: jump to home directory."""
     if _browser_flow_stale(update, context):
         await query.answer("Stale browser (flow reset)", show_alert=True)
         return
@@ -369,7 +334,6 @@ async def _handle_page(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle CB_DIR_PAGE: paginate directory listing."""
     if _browser_flow_stale(update, context):
         await query.answer("Stale browser (flow reset)", show_alert=True)
         return
@@ -390,12 +354,6 @@ async def _handle_page(
 
 
 def _subdir_within_repo(selected_path: str, repo_path: Path) -> str:
-    """Path of *selected_path* relative to *repo_path*, or "" if at the root.
-
-    Both sides are resolved first so a symlinked tmp/realpath mismatch
-    (common on macOS) doesn't lose the subdirectory. Returns "" when
-    *selected_path* is the repo top-level or not inside the repo.
-    """
     try:
         rel = Path(selected_path).resolve().relative_to(repo_path.resolve())
     except ValueError, OSError:
@@ -409,16 +367,11 @@ async def _handle_confirm(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle CB_DIR_CONFIRM: confirm directory, show provider picker."""
     selected_path = _required_selected_path(context)
     pending_thread_id: int | None = (
         context.user_data.get(PENDING_THREAD_ID) if context.user_data else None
     )
 
-    # A live browser always has both a selected path and a pending thread
-    # (set together when it was shown). Either being absent means the flow
-    # was reset (e.g. /start) and this is a stale tap — proceeding would
-    # confirm the bot's own cwd and spawn an unbound window/worktree there.
     if selected_path is None or pending_thread_id is None:
         clear_browse_state(context.user_data)
         clear_worktree_state(context.user_data)
@@ -440,8 +393,6 @@ async def _handle_confirm(
 
     await query.answer()
 
-    # Guard against double-click: if thread already has a window, skip
-
     if pending_thread_id is not None:
         existing_wid = thread_router.get_window_for_thread(user_id, pending_thread_id)
         if existing_wid is not None:
@@ -459,9 +410,6 @@ async def _handle_confirm(
             )
             return
 
-    # Eligible git repo → offer the worktree step before provider pick.
-    # Ineligible (non-git, bare, detached, mid-rebase) → unchanged flow.
-    # Offloaded: check_worktree_eligibility runs blocking git subprocesses.
     eligibility = await asyncio.to_thread(
         check_worktree_eligibility, Path(selected_path)
     )
@@ -478,7 +426,6 @@ async def _handle_confirm(
         await safe_edit(query, text, reply_markup=keyboard)
         return
 
-    # Show provider selection keyboard (keep browse state for _handle_provider_select)
     await _show_workspace_picker_or_provider(query, selected_path, context)
 
 
@@ -494,16 +441,9 @@ async def _handle_worktree_callback(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Dispatch the four worktree-picker callbacks (shared stale guard)."""
     pending_tid = (
         context.user_data.get(PENDING_THREAD_ID) if context.user_data else None
     )
-    # Same fail-closed invariant as _handle_confirm / window_callbacks
-    # _handle_new: a live worktree picker always has PENDING_THREAD_ID.
-    # None means the flow was reset (e.g. /start, or Cancel raced the
-    # eligibility probe in _handle_confirm) — a stale tap that would
-    # otherwise reach a sub-handler whose only remaining guard is a
-    # leftover PENDING_WORKTREE_REPO and spawn an unbound window.
     if pending_tid is None:
         await query.answer("Stale browser (flow reset)", show_alert=True)
         return
@@ -523,7 +463,6 @@ async def _handle_worktree_callback(
 async def _handle_wt_use_current(
     query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Keep the current branch — clear worktree state, go to provider pick."""
     await query.answer()
     repo = context.user_data.get(PENDING_WORKTREE_REPO) if context.user_data else None
     selected_path = _required_selected_path(context)
@@ -537,14 +476,12 @@ async def _handle_wt_use_current(
 async def _handle_wt_new(
     query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Suggest a non-colliding branch name and show the confirm/edit screen."""
     await query.answer()
     repo = context.user_data.get(PENDING_WORKTREE_REPO) if context.user_data else None
     if not repo:
         await safe_edit(query, "❌ Worktree state lost. Tap Cancel and retry.")
         return
     repo_path = Path(repo)
-    # Offloaded: suggest_branch_name runs blocking git branch/worktree list.
     branch = await asyncio.to_thread(suggest_branch_name, None, repo_path)
     worktree_path = worktree_path_for(repo_path, slug_for_path(branch))
     dirty = bool(
@@ -562,15 +499,7 @@ async def _handle_wt_new(
 async def _handle_wt_confirm(
     query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Create the worktree, then continue to provider pick rooted in it."""
     user_data = context.user_data
-    # On herdr the worktree is created later (delegated to `worktree create`
-    # in _create_window_and_bind), so no slow git op runs here and no
-    # re-entrancy guard is needed. On tmux the guard is set synchronously
-    # *before* the first await: a fast double-tap on "Use this" would otherwise
-    # run `git worktree add` twice and the second call would overwrite the
-    # provider picker with a "branch already exists" error even though the
-    # first succeeded.
 
     delegate = tmux_manager.capabilities.native_worktrees
     if not delegate:
@@ -589,24 +518,16 @@ async def _handle_wt_confirm(
         await safe_edit(query, "❌ Worktree state lost. Tap Cancel and retry.")
         return
     if delegate:
-        # herdr makes the checkout + grouped workspace itself at creation time.
-        # Skip ccgram's `git worktree add` and the workspace picker (herdr
-        # assigns the worktree its own workspace); keep the PENDING_WORKTREE_*
-        # keys so _create_window_and_bind issues `worktree create` at this path.
         if user_data is not None:
             user_data[BROWSE_PATH_KEY] = worktree_path
         logger.info("Deferring worktree %s (branch %s) to herdr", worktree_path, branch)
         await _show_provider_picker(query, worktree_path)
         return
     try:
-        # Offloaded: create_worktree runs a blocking `git worktree add`
-        # (up to 30s) that would otherwise freeze the whole event loop.
         await asyncio.to_thread(
             create_worktree, Path(repo), branch, Path(worktree_path)
         )
     except WorktreeError as exc:
-        # Clear the guard so a transient failure (e.g. disk full) is
-        # retryable from the same screen.
         if user_data is not None:
             user_data.pop(PENDING_WORKTREE_CREATING, None)
         logger.warning("Worktree creation failed: %s", exc)
@@ -643,12 +564,7 @@ async def _handle_wt_confirm(
 async def _handle_wt_edit_name(
     query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Prompt for a custom branch name via a text reply."""
     await query.answer()
-    # Fail closed like the other worktree handlers: a stale wt:ed tapped
-    # after the flow was reset (e.g. by /start clearing PENDING_WORKTREE_REPO)
-    # must not arm AWAITING_WORKTREE_BRANCH_NAME — a leaked flag hijacks the
-    # next message in a fresh unbound-topic flow with "Worktree state lost".
     repo = context.user_data.get(PENDING_WORKTREE_REPO) if context.user_data else None
     if not repo:
         await safe_edit(query, "❌ Worktree state lost. Tap Cancel and retry.")
@@ -667,7 +583,6 @@ async def _handle_cancel(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Handle CB_DIR_CANCEL: cancel directory browsing."""
     pending_tid = (
         context.user_data.get(PENDING_THREAD_ID) if context.user_data else None
     )
@@ -682,9 +597,6 @@ async def _handle_cancel(
         context.user_data.pop(PENDING_THREAD_TEXT, None)
     await safe_edit(query, "Cancelled")
     await query.answer("Cancelled")
-
-
-# --- Registry dispatch entry point ---
 
 
 @register(

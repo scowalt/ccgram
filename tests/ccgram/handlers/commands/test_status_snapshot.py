@@ -1,5 +1,3 @@
-"""Tests for status_snapshot — /status and /stats fallback for non-native providers."""
-
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch

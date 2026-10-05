@@ -1,0 +1,1452 @@
+[
+  {
+    "path": "src/ccgram/bootstrap.py",
+    "scope": "bootstrap_application",
+    "import": "from .main import start_miniapp_if_enabled"
+  },
+  {
+    "path": "src/ccgram/bootstrap.py",
+    "scope": "reset_for_testing",
+    "import": "from .event_stream_monitor import get_active_event_stream, set_active_event_stream"
+  },
+  {
+    "path": "src/ccgram/bootstrap.py",
+    "scope": "reset_for_testing",
+    "import": "from .handlers.shell import shell_capture"
+  },
+  {
+    "path": "src/ccgram/bootstrap.py",
+    "scope": "shutdown_runtime",
+    "import": "from .event_stream_monitor import get_active_event_stream, set_active_event_stream"
+  },
+  {
+    "path": "src/ccgram/bootstrap.py",
+    "scope": "shutdown_runtime",
+    "import": "from .main import stop_miniapp_if_enabled"
+  },
+  {
+    "path": "src/ccgram/bootstrap.py",
+    "scope": "start_event_stream",
+    "import": "from .event_stream_monitor import EventStreamMonitor, set_active_event_stream"
+  },
+  {
+    "path": "src/ccgram/bootstrap.py",
+    "scope": "start_event_stream",
+    "import": "from .thread_router import thread_router"
+  },
+  {
+    "path": "src/ccgram/bootstrap.py",
+    "scope": "verify_hooks_installed",
+    "import": "from .hook import _claude_settings_file, get_installed_events"
+  },
+  {
+    "path": "src/ccgram/bot.py",
+    "scope": "_send_shutdown_notification",
+    "import": "from . import __version__"
+  },
+  {
+    "path": "src/ccgram/bot.py",
+    "scope": "_send_shutdown_notification",
+    "import": "from .main import _shutdown_signal"
+  },
+  {
+    "path": "src/ccgram/bot.py",
+    "scope": "_send_shutdown_notification",
+    "import": "from telegram.error import TelegramError"
+  },
+  {
+    "path": "src/ccgram/bot.py",
+    "scope": "create_bot",
+    "import": "import warnings"
+  },
+  {
+    "path": "src/ccgram/cc_commands.py",
+    "scope": "_provider_base_dir",
+    "import": "from ccgram.config import config as _cfg"
+  },
+  {
+    "path": "src/ccgram/cc_commands.py",
+    "scope": "discover_cc_commands",
+    "import": "from ccgram.config import config"
+  },
+  {
+    "path": "src/ccgram/cc_commands.py",
+    "scope": "register_commands",
+    "import": "from telegram.error import RetryAfter"
+  },
+  {
+    "path": "src/ccgram/cc_commands.py",
+    "scope": "register_commands",
+    "import": "import asyncio"
+  },
+  {
+    "path": "src/ccgram/cli.py",
+    "scope": "doctor_cmd",
+    "import": "from .doctor_cmd import doctor_main"
+  },
+  {
+    "path": "src/ccgram/cli.py",
+    "scope": "hook_cmd",
+    "import": "from .hook import hook_main"
+  },
+  {
+    "path": "src/ccgram/cli.py",
+    "scope": "run_cmd",
+    "import": "from .main import run_bot"
+  },
+  {
+    "path": "src/ccgram/cli.py",
+    "scope": "status_cmd",
+    "import": "from .status_cmd import status_main"
+  },
+  {
+    "path": "src/ccgram/command_catalog.py",
+    "scope": "discover_user_defined_commands",
+    "import": "from ccgram.config import config"
+  },
+  {
+    "path": "src/ccgram/doctor_cmd.py",
+    "scope": "_check_herdr",
+    "import": "from .multiplexer import get_multiplexer"
+  },
+  {
+    "path": "src/ccgram/doctor_cmd.py",
+    "scope": "_check_herdr_hook_coexistence",
+    "import": "from .hook import _claude_settings_file"
+  },
+  {
+    "path": "src/ccgram/doctor_cmd.py",
+    "scope": "_check_hooks",
+    "import": "from .hook import get_installed_events"
+  },
+  {
+    "path": "src/ccgram/doctor_cmd.py",
+    "scope": "_check_multiplexer",
+    "import": "from .multiplexer import multiplexer_names"
+  },
+  {
+    "path": "src/ccgram/doctor_cmd.py",
+    "scope": "_check_provider_command",
+    "import": "from ccgram.providers import resolve_launch_command"
+  },
+  {
+    "path": "src/ccgram/doctor_cmd.py",
+    "scope": "_fix_hooks",
+    "import": "from .hook import _install_hook"
+  },
+  {
+    "path": "src/ccgram/doctor_cmd.py",
+    "scope": "_resolve_hook_check_config",
+    "import": "from .hook import _CODEX_HOOK_EVENTS, _GEMINI_HOOK_EVENTS, _HOOK_EVENT_TYPES, _claude_settings_file, _codex_hooks_file, _gemini_settings_file, _json_hook_command_predicate"
+  },
+  {
+    "path": "src/ccgram/event_stream_monitor.py",
+    "scope": "EventStreamMonitor._notify_dead",
+    "import": "from .handlers.polling.window_tick.apply import _handle_dead_window_notification"
+  },
+  {
+    "path": "src/ccgram/event_stream_monitor.py",
+    "scope": "EventStreamMonitor._notify_dead",
+    "import": "from .thread_router import thread_router"
+  },
+  {
+    "path": "src/ccgram/handlers/agent_command.py",
+    "scope": "_apply_switch",
+    "import": "from .shell.shell_prompt_orchestrator import ensure_setup"
+  },
+  {
+    "path": "src/ccgram/handlers/agent_command.py",
+    "scope": "_commit_switch",
+    "import": "from .shell.shell_capture import clear_shell_monitor_state"
+  },
+  {
+    "path": "src/ccgram/handlers/agent_command.py",
+    "scope": "_commit_switch",
+    "import": "from .shell.shell_prompt_orchestrator import clear_state as clear_orchestrator"
+  },
+  {
+    "path": "src/ccgram/handlers/agent_command.py",
+    "scope": "_redetect_provider",
+    "import": "from ..multiplexer import multiplexer as tmux_manager"
+  },
+  {
+    "path": "src/ccgram/handlers/agent_command.py",
+    "scope": "_redetect_provider",
+    "import": "from ..providers import detect_provider_from_pane"
+  },
+  {
+    "path": "src/ccgram/handlers/callback_registry.py",
+    "scope": "load_handlers",
+    "import": "from . import agent_command, command_history, hook_events, sessions_dashboard, sync_command"
+  },
+  {
+    "path": "src/ccgram/handlers/callback_registry.py",
+    "scope": "load_handlers",
+    "import": "from .interactive import interactive_callbacks"
+  },
+  {
+    "path": "src/ccgram/handlers/callback_registry.py",
+    "scope": "load_handlers",
+    "import": "from .live import pane_callbacks, screenshot_callbacks"
+  },
+  {
+    "path": "src/ccgram/handlers/callback_registry.py",
+    "scope": "load_handlers",
+    "import": "from .recovery import history_callbacks, recovery_callbacks, resume_command"
+  },
+  {
+    "path": "src/ccgram/handlers/callback_registry.py",
+    "scope": "load_handlers",
+    "import": "from .send import send_callbacks"
+  },
+  {
+    "path": "src/ccgram/handlers/callback_registry.py",
+    "scope": "load_handlers",
+    "import": "from .shell import shell_capture, shell_commands, shell_prompt_orchestrator"
+  },
+  {
+    "path": "src/ccgram/handlers/callback_registry.py",
+    "scope": "load_handlers",
+    "import": "from .status import status_bar_actions"
+  },
+  {
+    "path": "src/ccgram/handlers/callback_registry.py",
+    "scope": "load_handlers",
+    "import": "from .toolbar import toolbar_callbacks"
+  },
+  {
+    "path": "src/ccgram/handlers/callback_registry.py",
+    "scope": "load_handlers",
+    "import": "from .topics import directory_callbacks, window_callbacks"
+  },
+  {
+    "path": "src/ccgram/handlers/callback_registry.py",
+    "scope": "load_handlers",
+    "import": "from .voice import voice_callbacks"
+  },
+  {
+    "path": "src/ccgram/handlers/cleanup.py",
+    "scope": "clear_topic_state",
+    "import": "from .shell.shell_prompt_orchestrator import clear_state as _clear_shell_prompt"
+  },
+  {
+    "path": "src/ccgram/handlers/commands/forward.py",
+    "scope": "_arm_rc_probe_if_remote_control",
+    "import": "from ..status.rc_probe import arm_rc_probe"
+  },
+  {
+    "path": "src/ccgram/handlers/commands/forward.py",
+    "scope": "_picker_hint",
+    "import": "from ..toolbar.toolbar_keyboard import get_toolbar_config"
+  },
+  {
+    "path": "src/ccgram/handlers/hook_events.py",
+    "scope": "_get_llm_summary",
+    "import": "from ..llm.summarizer import summarize_completion"
+  },
+  {
+    "path": "src/ccgram/handlers/hook_events.py",
+    "scope": "_handle_stop_failure",
+    "import": "from .messaging_pipeline.message_sender import rate_limit_send_message"
+  },
+  {
+    "path": "src/ccgram/handlers/hook_events.py",
+    "scope": "_is_agent_still_active",
+    "import": "from ..multiplexer import multiplexer as tmux_manager"
+  },
+  {
+    "path": "src/ccgram/handlers/hook_events.py",
+    "scope": "_is_agent_still_active",
+    "import": "from ..providers import get_provider_for_window"
+  },
+  {
+    "path": "src/ccgram/handlers/interactive/interactive_callbacks.py",
+    "scope": "handle_interactive_callback",
+    "import": "from ..callback_helpers import get_thread_id, user_owns_window"
+  },
+  {
+    "path": "src/ccgram/handlers/interactive/interactive_callbacks.py",
+    "scope": "match_interactive_prefix",
+    "import": "from ..callback_data import CB_PANE_DELIMITER"
+  },
+  {
+    "path": "src/ccgram/handlers/interactive/interactive_ui.py",
+    "scope": "_build_interactive_keyboard",
+    "import": "from ..callback_data import CB_PANE_DELIMITER"
+  },
+  {
+    "path": "src/ccgram/handlers/interactive/interactive_ui.py",
+    "scope": "_lookup_pane_name",
+    "import": "from ...window_state_ports.pane_state import get_pane_projection"
+  },
+  {
+    "path": "src/ccgram/handlers/last_reply.py",
+    "scope": "_deliver",
+    "import": "from .messaging_pipeline.message_sender import safe_send"
+  },
+  {
+    "path": "src/ccgram/handlers/last_reply.py",
+    "scope": "_deliver",
+    "import": "from pathlib import Path"
+  },
+  {
+    "path": "src/ccgram/handlers/last_reply.py",
+    "scope": "_deliver",
+    "import": "import tempfile"
+  },
+  {
+    "path": "src/ccgram/handlers/last_reply.py",
+    "scope": "_extract_last_ai_reply",
+    "import": "from .. import session_query"
+  },
+  {
+    "path": "src/ccgram/handlers/last_reply.py",
+    "scope": "last_command",
+    "import": "from ..config import config"
+  },
+  {
+    "path": "src/ccgram/handlers/last_reply.py",
+    "scope": "last_command",
+    "import": "from ..telegram_client import PTBTelegramClient"
+  },
+  {
+    "path": "src/ccgram/handlers/last_reply.py",
+    "scope": "last_command",
+    "import": "from ..utils import handle_general_topic_message, is_general_topic"
+  },
+  {
+    "path": "src/ccgram/handlers/last_reply.py",
+    "scope": "last_command",
+    "import": "from .callback_helpers import get_thread_id"
+  },
+  {
+    "path": "src/ccgram/handlers/last_reply.py",
+    "scope": "last_command",
+    "import": "from .messaging_pipeline.message_sender import safe_reply"
+  },
+  {
+    "path": "src/ccgram/handlers/last_reply.py",
+    "scope": "send_last_reply",
+    "import": "from ..last_unit import extract_last_shell_block"
+  },
+  {
+    "path": "src/ccgram/handlers/last_reply.py",
+    "scope": "send_last_reply",
+    "import": "from ..providers import get_provider_for_window"
+  },
+  {
+    "path": "src/ccgram/handlers/live/live_view.py",
+    "scope": "_edit_caption",
+    "import": "from .screenshot_callbacks import build_screenshot_keyboard"
+  },
+  {
+    "path": "src/ccgram/handlers/live/live_view.py",
+    "scope": "build_live_keyboard",
+    "import": "from ..callback_data import CB_PANE_DELIMITER"
+  },
+  {
+    "path": "src/ccgram/handlers/live/screenshot_callbacks.py",
+    "scope": "_handle_live_start",
+    "import": "from .live_view import LiveViewState, build_live_keyboard, content_hash, is_live, start_live_view"
+  },
+  {
+    "path": "src/ccgram/handlers/live/screenshot_callbacks.py",
+    "scope": "_handle_live_stop",
+    "import": "from .live_view import stop_live_view"
+  },
+  {
+    "path": "src/ccgram/handlers/live/screenshot_callbacks.py",
+    "scope": "live_command",
+    "import": "from ...config import config"
+  },
+  {
+    "path": "src/ccgram/handlers/live/screenshot_callbacks.py",
+    "scope": "live_command",
+    "import": "from ...utils import handle_general_topic_message, is_general_topic"
+  },
+  {
+    "path": "src/ccgram/handlers/live/screenshot_callbacks.py",
+    "scope": "live_command",
+    "import": "from ..messaging_pipeline.message_sender import safe_reply"
+  },
+  {
+    "path": "src/ccgram/handlers/live/screenshot_callbacks.py",
+    "scope": "live_command",
+    "import": "from .live_view import LiveViewState, build_live_keyboard, content_hash, is_live, start_live_view"
+  },
+  {
+    "path": "src/ccgram/handlers/live/screenshot_callbacks.py",
+    "scope": "panes_command",
+    "import": "from ...config import config"
+  },
+  {
+    "path": "src/ccgram/handlers/live/screenshot_callbacks.py",
+    "scope": "panes_command",
+    "import": "from ...utils import handle_general_topic_message, is_general_topic"
+  },
+  {
+    "path": "src/ccgram/handlers/live/screenshot_callbacks.py",
+    "scope": "panes_command",
+    "import": "from ...window_state_ports.pane_state import get_pane_lifecycle_notify, get_pane_projection"
+  },
+  {
+    "path": "src/ccgram/handlers/live/screenshot_callbacks.py",
+    "scope": "panes_command",
+    "import": "from ..messaging_pipeline.message_sender import safe_reply"
+  },
+  {
+    "path": "src/ccgram/handlers/live/screenshot_callbacks.py",
+    "scope": "panes_command",
+    "import": "from ..polling.polling_state import interactive_strategy"
+  },
+  {
+    "path": "src/ccgram/handlers/live/screenshot_callbacks.py",
+    "scope": "panes_command",
+    "import": "from .pane_callbacks import build_pane_buttons, build_pane_lifecycle_button"
+  },
+  {
+    "path": "src/ccgram/handlers/live/screenshot_callbacks.py",
+    "scope": "panes_command",
+    "import": "from telegram import InlineKeyboardMarkup"
+  },
+  {
+    "path": "src/ccgram/handlers/live/screenshot_callbacks.py",
+    "scope": "screenshot_command",
+    "import": "from ...config import config"
+  },
+  {
+    "path": "src/ccgram/handlers/live/screenshot_callbacks.py",
+    "scope": "screenshot_command",
+    "import": "from ...utils import handle_general_topic_message, is_general_topic"
+  },
+  {
+    "path": "src/ccgram/handlers/live/screenshot_callbacks.py",
+    "scope": "screenshot_command",
+    "import": "from ..messaging_pipeline.message_sender import safe_reply"
+  },
+  {
+    "path": "src/ccgram/handlers/live/screenshot_callbacks.py",
+    "scope": "screenshot_command",
+    "import": "import io"
+  },
+  {
+    "path": "src/ccgram/handlers/messaging_pipeline/tool_batch.py",
+    "scope": "_rate_limit_chat",
+    "import": "from .message_sender import rate_limit_send"
+  },
+  {
+    "path": "src/ccgram/handlers/messaging_pipeline/tool_batch.py",
+    "scope": "_send_or_edit_batch",
+    "import": "from ...claude_task_state import build_subagent_label, get_subagent_names"
+  },
+  {
+    "path": "src/ccgram/handlers/messaging_pipeline/tool_batch.py",
+    "scope": "_send_or_edit_batch",
+    "import": "from ..status.status_bubble import clear_status_message"
+  },
+  {
+    "path": "src/ccgram/handlers/messaging_pipeline/tool_batch.py",
+    "scope": "_send_or_edit_batch",
+    "import": "from .message_sender import edit_with_fallback, safe_send"
+  },
+  {
+    "path": "src/ccgram/handlers/messaging_pipeline/tool_batch.py",
+    "scope": "flush_batch",
+    "import": "from ...claude_task_state import build_subagent_label, get_subagent_names"
+  },
+  {
+    "path": "src/ccgram/handlers/messaging_pipeline/tool_batch.py",
+    "scope": "flush_batch",
+    "import": "from telegram.error import TelegramError"
+  },
+  {
+    "path": "src/ccgram/handlers/polling/polling_coordinator.py",
+    "scope": "status_poll_loop",
+    "import": "from ...config import config as _cfg"
+  },
+  {
+    "path": "src/ccgram/handlers/polling/polling_coordinator.py",
+    "scope": "status_poll_loop",
+    "import": "from ...telegram_client import PTBTelegramClient"
+  },
+  {
+    "path": "src/ccgram/handlers/polling/polling_coordinator.py",
+    "scope": "status_poll_loop",
+    "import": "from .periodic_tasks import run_lifecycle_tasks, run_periodic_tasks"
+  },
+  {
+    "path": "src/ccgram/handlers/polling/polling_runtime.py",
+    "scope": "PollingRuntime.create",
+    "import": "from .polling_state import InteractiveUIStrategy, PaneStatusStrategy, TerminalPollState, TerminalScreenBuffer, TopicLifecycleStrategy"
+  },
+  {
+    "path": "src/ccgram/handlers/polling/polling_runtime.py",
+    "scope": "_build_default_runtime",
+    "import": "from .polling_state import interactive_strategy, lifecycle_strategy, pane_status_strategy, terminal_poll_state, terminal_screen_buffer"
+  },
+  {
+    "path": "src/ccgram/handlers/polling/polling_state.py",
+    "scope": "PaneStatusStrategy._classify_non_active",
+    "import": "from ...multiplexer import multiplexer as tmux_manager"
+  },
+  {
+    "path": "src/ccgram/handlers/polling/polling_state.py",
+    "scope": "PaneStatusStrategy._clear_pane_content_state",
+    "import": "from ...window_state_ports.pane_state import list_pane_projections"
+  },
+  {
+    "path": "src/ccgram/handlers/polling/polling_state.py",
+    "scope": "PaneStatusStrategy._maybe_forward_subscribed",
+    "import": "from ...window_state_ports.pane_state import get_pane_projection"
+  },
+  {
+    "path": "src/ccgram/handlers/polling/polling_state.py",
+    "scope": "PaneStatusStrategy._resolve_pane_provider",
+    "import": "from ...providers import detect_provider_from_command"
+  },
+  {
+    "path": "src/ccgram/handlers/polling/polling_state.py",
+    "scope": "PaneStatusStrategy._resolve_pane_provider",
+    "import": "from ...window_query import get_window_provider"
+  },
+  {
+    "path": "src/ccgram/handlers/polling/polling_state.py",
+    "scope": "PaneStatusStrategy.reconcile_dead_panes",
+    "import": "from ...window_state_ports.pane_state import list_pane_projections, remove_pane"
+  },
+  {
+    "path": "src/ccgram/handlers/polling/polling_state.py",
+    "scope": "PaneStatusStrategy.record_pane_state",
+    "import": "from ...window_state_ports.pane_state import get_pane_projection, upsert_pane"
+  },
+  {
+    "path": "src/ccgram/handlers/polling/polling_state.py",
+    "scope": "PaneStatusStrategy.scan_window",
+    "import": "from ...multiplexer import multiplexer as tmux_manager"
+  },
+  {
+    "path": "src/ccgram/handlers/polling/polling_state.py",
+    "scope": "PaneStatusStrategy.scan_window",
+    "import": "from ...providers import get_provider_for_window"
+  },
+  {
+    "path": "src/ccgram/handlers/polling/polling_state.py",
+    "scope": "PaneStatusStrategy.scan_window",
+    "import": "from ...window_query import get_window_provider"
+  },
+  {
+    "path": "src/ccgram/handlers/polling/polling_state.py",
+    "scope": "TerminalScreenBuffer.get_screen_buffer",
+    "import": "from ...screen_buffer import ScreenBuffer"
+  },
+  {
+    "path": "src/ccgram/handlers/polling/polling_state.py",
+    "scope": "TerminalScreenBuffer.parse_with_pyte",
+    "import": "from ...terminal_parser import detect_remote_control, format_status_display, parse_from_screen, parse_status_block_from_screen"
+  },
+  {
+    "path": "src/ccgram/handlers/polling/window_tick/apply.py",
+    "scope": "_maybe_check_passive_shell",
+    "import": "from ...shell.shell_capture import check_passive_shell_output"
+  },
+  {
+    "path": "src/ccgram/handlers/recovery/recovery_banner.py",
+    "scope": "_create_and_bind_window",
+    "import": "from ..polling.polling_state import lifecycle_strategy"
+  },
+  {
+    "path": "src/ccgram/handlers/recovery/recovery_banner.py",
+    "scope": "_handle_browse",
+    "import": "from ..user_state import RESUME_SESSIONS"
+  },
+  {
+    "path": "src/ccgram/handlers/recovery/recovery_banner.py",
+    "scope": "_handle_browse",
+    "import": "from .resume_command import _build_resume_keyboard, scan_all_sessions"
+  },
+  {
+    "path": "src/ccgram/handlers/recovery/recovery_callbacks.py",
+    "scope": "handle_recovery_callback",
+    "import": "from .recovery_banner import _handle_back, _handle_browse, _handle_cancel, _handle_continue, _handle_fresh, _handle_resume"
+  },
+  {
+    "path": "src/ccgram/handlers/recovery/recovery_callbacks.py",
+    "scope": "handle_recovery_callback",
+    "import": "from .resume_picker import _handle_resume_pick"
+  },
+  {
+    "path": "src/ccgram/handlers/recovery/resume_command.py",
+    "scope": "_create_resume_window",
+    "import": "from ..polling.polling_state import lifecycle_strategy"
+  },
+  {
+    "path": "src/ccgram/handlers/recovery/resume_picker.py",
+    "scope": "_build_resume_picker_keyboard",
+    "import": "from .resume_command import format_session_entry"
+  },
+  {
+    "path": "src/ccgram/handlers/recovery/resume_picker.py",
+    "scope": "_handle_resume_pick",
+    "import": "from .recovery_banner import _create_and_bind_window"
+  },
+  {
+    "path": "src/ccgram/handlers/recovery/transcript_discovery.py",
+    "scope": "_detect_and_apply_provider",
+    "import": "from ...providers import get_provider_for_window"
+  },
+  {
+    "path": "src/ccgram/handlers/recovery/transcript_discovery.py",
+    "scope": "_detect_and_apply_provider",
+    "import": "from ..shell.shell_capture import clear_shell_monitor_state"
+  },
+  {
+    "path": "src/ccgram/handlers/recovery/transcript_discovery.py",
+    "scope": "_detect_and_apply_provider",
+    "import": "from ..shell.shell_prompt_orchestrator import clear_state as clear_orchestrator"
+  },
+  {
+    "path": "src/ccgram/handlers/recovery/transcript_discovery.py",
+    "scope": "_detect_and_apply_provider",
+    "import": "from ..shell.shell_prompt_orchestrator import ensure_setup"
+  },
+  {
+    "path": "src/ccgram/handlers/recovery/transcript_discovery.py",
+    "scope": "_resolve_providers_to_try",
+    "import": "from ...providers import registry"
+  },
+  {
+    "path": "src/ccgram/handlers/recovery/transcript_discovery.py",
+    "scope": "_resolve_providers_to_try",
+    "import": "from ..polling.polling_types import is_shell_prompt"
+  },
+  {
+    "path": "src/ccgram/handlers/recovery/transcript_discovery.py",
+    "scope": "_session_id_already_bound",
+    "import": "from ...thread_router import thread_router"
+  },
+  {
+    "path": "src/ccgram/handlers/recovery/transcript_discovery.py",
+    "scope": "_switch_to_shell",
+    "import": "from ..shell.shell_prompt_orchestrator import ensure_setup"
+  },
+  {
+    "path": "src/ccgram/handlers/recovery/transcript_discovery.py",
+    "scope": "discover_and_register_transcript",
+    "import": "from ...thread_router import thread_router"
+  },
+  {
+    "path": "src/ccgram/handlers/recovery/transcript_discovery.py",
+    "scope": "discover_and_register_transcript",
+    "import": "from ..polling.polling_types import is_shell_prompt"
+  },
+  {
+    "path": "src/ccgram/handlers/send/send_security.py",
+    "scope": "_gitignored_by_pathspec",
+    "import": "import pathspec"
+  },
+  {
+    "path": "src/ccgram/handlers/shell/shell_capture.py",
+    "scope": "_maybe_suggest_fix",
+    "import": "from ...llm import get_completer"
+  },
+  {
+    "path": "src/ccgram/handlers/shell/shell_capture.py",
+    "scope": "_maybe_suggest_fix",
+    "import": "from .shell_context import gather_llm_context, redact_for_llm"
+  },
+  {
+    "path": "src/ccgram/handlers/shell/shell_commands.py",
+    "scope": "_cancel_stuck_input",
+    "import": "from ...providers.shell import KNOWN_SHELLS, match_prompt"
+  },
+  {
+    "path": "src/ccgram/handlers/shell/shell_commands.py",
+    "scope": "_ensure_prompt_marker",
+    "import": "from .shell_prompt_orchestrator import ensure_setup"
+  },
+  {
+    "path": "src/ccgram/handlers/shell/shell_commands.py",
+    "scope": "_execute_raw_command",
+    "import": "from .shell_capture import mark_telegram_command"
+  },
+  {
+    "path": "src/ccgram/handlers/shell/shell_commands.py",
+    "scope": "handle_shell_message",
+    "import": "from ..command_history import record_command"
+  },
+  {
+    "path": "src/ccgram/handlers/shell/shell_context.py",
+    "scope": "gather_llm_context",
+    "import": "from ...providers.shell import detect_pane_shell"
+  },
+  {
+    "path": "src/ccgram/handlers/shell/shell_prompt_orchestrator.py",
+    "scope": "_dispatch",
+    "import": "from ..callback_helpers import user_owns_window"
+  },
+  {
+    "path": "src/ccgram/handlers/shell/shell_prompt_orchestrator.py",
+    "scope": "_show_offer_keyboard",
+    "import": "from ...providers.shell_infra import setup_shell_prompt"
+  },
+  {
+    "path": "src/ccgram/handlers/shell/shell_prompt_orchestrator.py",
+    "scope": "accept_offer",
+    "import": "from ...providers.shell_infra import setup_shell_prompt"
+  },
+  {
+    "path": "src/ccgram/handlers/shell/shell_prompt_orchestrator.py",
+    "scope": "ensure_setup",
+    "import": "from ...providers.shell_infra import has_prompt_marker, setup_shell_prompt"
+  },
+  {
+    "path": "src/ccgram/handlers/split_command.py",
+    "scope": "split_command",
+    "import": "from ..config import config"
+  },
+  {
+    "path": "src/ccgram/handlers/split_command.py",
+    "scope": "split_command",
+    "import": "from .callback_helpers import get_thread_id"
+  },
+  {
+    "path": "src/ccgram/handlers/split_command.py",
+    "scope": "split_command",
+    "import": "from .messaging_pipeline.message_sender import safe_reply"
+  },
+  {
+    "path": "src/ccgram/handlers/status/rc_probe.py",
+    "scope": "_classify_loop",
+    "import": "from ..polling.polling_state import terminal_screen_buffer"
+  },
+  {
+    "path": "src/ccgram/handlers/status/status_bar_actions.py",
+    "scope": "_clear_key_refreshes",
+    "import": "from ..callback_data import CB_PANE_DELIMITER"
+  },
+  {
+    "path": "src/ccgram/handlers/status/status_bar_actions.py",
+    "scope": "_handle_get_file",
+    "import": "from ..send import open_file_browser"
+  },
+  {
+    "path": "src/ccgram/handlers/status/status_bar_actions.py",
+    "scope": "_handle_get_file",
+    "import": "from pathlib import Path"
+  },
+  {
+    "path": "src/ccgram/handlers/status/status_bar_actions.py",
+    "scope": "_handle_keys",
+    "import": "from ..live.live_view import get_live_view"
+  },
+  {
+    "path": "src/ccgram/handlers/status/status_bar_actions.py",
+    "scope": "_handle_last_reply",
+    "import": "from ..last_reply import send_last_reply"
+  },
+  {
+    "path": "src/ccgram/handlers/status/status_bar_actions.py",
+    "scope": "_handle_status_recall",
+    "import": "from ...providers import get_provider_for_window"
+  },
+  {
+    "path": "src/ccgram/handlers/status/status_bar_actions.py",
+    "scope": "_handle_status_recall",
+    "import": "from ..command_history import get_history, record_command"
+  },
+  {
+    "path": "src/ccgram/handlers/status/status_bar_actions.py",
+    "scope": "_handle_status_recall",
+    "import": "from ..shell.shell_commands import handle_shell_message"
+  },
+  {
+    "path": "src/ccgram/handlers/status/status_bubble.py",
+    "scope": "_get_idle_history",
+    "import": "from ..command_history import get_history"
+  },
+  {
+    "path": "src/ccgram/handlers/status/status_bubble.py",
+    "scope": "build_status_keyboard",
+    "import": "from ..command_history import truncate_for_display"
+  },
+  {
+    "path": "src/ccgram/handlers/status/status_bubble.py",
+    "scope": "build_status_keyboard",
+    "import": "from .status_bar_actions import build_dashboard_button"
+  },
+  {
+    "path": "src/ccgram/handlers/status/topic_emoji.py",
+    "scope": "_resolve_rc_mode",
+    "import": "from ..polling.polling_state import terminal_screen_buffer"
+  },
+  {
+    "path": "src/ccgram/handlers/sync_command.py",
+    "scope": "_adopt_orphaned_windows",
+    "import": "from ..session_monitor import NewWindowEvent"
+  },
+  {
+    "path": "src/ccgram/handlers/sync_command.py",
+    "scope": "_adopt_orphaned_windows",
+    "import": "from .topics.topic_orchestration import handle_new_window as _handle_new_window"
+  },
+  {
+    "path": "src/ccgram/handlers/sync_command.py",
+    "scope": "_recreate_dead_topics",
+    "import": "from ..session_monitor import NewWindowEvent"
+  },
+  {
+    "path": "src/ccgram/handlers/sync_command.py",
+    "scope": "_recreate_dead_topics",
+    "import": "from .topics.topic_orchestration import handle_new_window as _handle_new_window"
+  },
+  {
+    "path": "src/ccgram/handlers/text/text_handler.py",
+    "scope": "_forward_message",
+    "import": "from ..command_history import record_command"
+  },
+  {
+    "path": "src/ccgram/handlers/text/text_handler.py",
+    "scope": "handle_text_message",
+    "import": "from ..shell.shell_commands import handle_shell_message"
+  },
+  {
+    "path": "src/ccgram/handlers/toolbar/toolbar_callbacks.py",
+    "scope": "_builtin_getfile",
+    "import": "from ...telegram_client import PTBTelegramClient"
+  },
+  {
+    "path": "src/ccgram/handlers/toolbar/toolbar_callbacks.py",
+    "scope": "_builtin_getfile",
+    "import": "from ..send import open_file_browser"
+  },
+  {
+    "path": "src/ccgram/handlers/toolbar/toolbar_callbacks.py",
+    "scope": "_builtin_last",
+    "import": "from ...telegram_client import PTBTelegramClient"
+  },
+  {
+    "path": "src/ccgram/handlers/toolbar/toolbar_callbacks.py",
+    "scope": "_builtin_last",
+    "import": "from ..last_reply import send_last_reply"
+  },
+  {
+    "path": "src/ccgram/handlers/toolbar/toolbar_callbacks.py",
+    "scope": "_builtin_live",
+    "import": "from ..callback_data import CB_LIVE_START"
+  },
+  {
+    "path": "src/ccgram/handlers/toolbar/toolbar_callbacks.py",
+    "scope": "_builtin_live",
+    "import": "from ..live.screenshot_callbacks import handle_screenshot_callback"
+  },
+  {
+    "path": "src/ccgram/handlers/toolbar/toolbar_callbacks.py",
+    "scope": "_builtin_screenshot",
+    "import": "from ..callback_data import CB_STATUS_SCREENSHOT"
+  },
+  {
+    "path": "src/ccgram/handlers/toolbar/toolbar_callbacks.py",
+    "scope": "_builtin_screenshot",
+    "import": "from ..live.screenshot_callbacks import handle_screenshot_callback"
+  },
+  {
+    "path": "src/ccgram/handlers/toolbar/toolbar_keyboard.py",
+    "scope": "refresh_button_label",
+    "import": "from telegram.error import TelegramError"
+  },
+  {
+    "path": "src/ccgram/handlers/toolbar/toolbar_keyboard.py",
+    "scope": "refresh_button_label",
+    "import": "import asyncio"
+  },
+  {
+    "path": "src/ccgram/handlers/toolbar/toolbar_keyboard.py",
+    "scope": "refresh_button_label",
+    "import": "import structlog"
+  },
+  {
+    "path": "src/ccgram/handlers/topics/provider_mode_callbacks.py",
+    "scope": "_handle_provider_select",
+    "import": "from ccgram.providers import has_yolo_mode"
+  },
+  {
+    "path": "src/ccgram/handlers/topics/topic_lifecycle.py",
+    "scope": "_kill_expired_unbound",
+    "import": "from ...topic_state_registry import topic_state"
+  },
+  {
+    "path": "src/ccgram/handlers/topics/topic_lifecycle.py",
+    "scope": "topic_closed_handler",
+    "import": "from ..callback_helpers import get_thread_id"
+  },
+  {
+    "path": "src/ccgram/handlers/topics/topic_lifecycle.py",
+    "scope": "topic_edited_handler",
+    "import": "from ..callback_helpers import get_thread_id"
+  },
+  {
+    "path": "src/ccgram/handlers/topics/topic_lifecycle.py",
+    "scope": "topic_edited_handler",
+    "import": "from ..status.topic_emoji import strip_emoji_prefix, update_stored_topic_name"
+  },
+  {
+    "path": "src/ccgram/handlers/topics/topic_orchestration.py",
+    "scope": "adopt_unbound_windows",
+    "import": "from ..sync_command import _adopt_orphaned_windows"
+  },
+  {
+    "path": "src/ccgram/handlers/topics/window_callbacks.py",
+    "scope": "_detect_and_setup_provider",
+    "import": "from ...providers import detect_provider_from_pane"
+  },
+  {
+    "path": "src/ccgram/handlers/topics/window_callbacks.py",
+    "scope": "_detect_and_setup_provider",
+    "import": "from ...providers import get_provider_for_window"
+  },
+  {
+    "path": "src/ccgram/handlers/topics/window_callbacks.py",
+    "scope": "_detect_and_setup_provider",
+    "import": "from ..shell.shell_prompt_orchestrator import ensure_setup"
+  },
+  {
+    "path": "src/ccgram/handlers/topics/window_callbacks.py",
+    "scope": "_forward_pending_text",
+    "import": "from ...providers import get_provider_for_window"
+  },
+  {
+    "path": "src/ccgram/handlers/topics/window_callbacks.py",
+    "scope": "_forward_pending_text",
+    "import": "from ..shell.shell_commands import handle_shell_message"
+  },
+  {
+    "path": "src/ccgram/handlers/topics/window_launch_service.py",
+    "scope": "_wait_for_shell_ready",
+    "import": "from ccgram.providers.shell import KNOWN_SHELLS"
+  },
+  {
+    "path": "src/ccgram/handlers/topics/window_launch_service.py",
+    "scope": "_wait_for_shell_ready",
+    "import": "import os"
+  },
+  {
+    "path": "src/ccgram/handlers/topics/window_launch_service.py",
+    "scope": "launch_window",
+    "import": "from ...telegram_client import PTBTelegramClient"
+  },
+  {
+    "path": "src/ccgram/handlers/topics/window_launch_service.py",
+    "scope": "launch_window",
+    "import": "from ...telegram_client import PTBTelegramClient"
+  },
+  {
+    "path": "src/ccgram/handlers/topics/window_launch_service.py",
+    "scope": "launch_window",
+    "import": "from ..shell.shell_commands import handle_shell_message"
+  },
+  {
+    "path": "src/ccgram/handlers/topics/window_launch_service.py",
+    "scope": "launch_window",
+    "import": "from ..shell.shell_prompt_orchestrator import ensure_setup"
+  },
+  {
+    "path": "src/ccgram/handlers/topics/window_launch_service.py",
+    "scope": "launch_window",
+    "import": "from ccgram.providers import resolve_launch_command"
+  },
+  {
+    "path": "src/ccgram/handlers/upgrade.py",
+    "scope": "upgrade_command",
+    "import": "from .. import __version__"
+  },
+  {
+    "path": "src/ccgram/handlers/upgrade.py",
+    "scope": "upgrade_command",
+    "import": "from .. import main as main_module"
+  },
+  {
+    "path": "src/ccgram/handlers/voice/voice_callbacks.py",
+    "scope": "_handle_send",
+    "import": "from ..shell.shell_commands import handle_shell_message"
+  },
+  {
+    "path": "src/ccgram/hook.py",
+    "scope": "_clear_session_map_entry",
+    "import": "from .utils import atomic_write_json, ccgram_dir"
+  },
+  {
+    "path": "src/ccgram/hook.py",
+    "scope": "_install_json_hooks",
+    "import": "from .utils import atomic_write_json"
+  },
+  {
+    "path": "src/ccgram/hook.py",
+    "scope": "_read_session_map_entry",
+    "import": "from .utils import ccgram_dir"
+  },
+  {
+    "path": "src/ccgram/hook.py",
+    "scope": "_uninstall_json_hooks",
+    "import": "from .utils import atomic_write_json"
+  },
+  {
+    "path": "src/ccgram/hook.py",
+    "scope": "_update_session_map",
+    "import": "from .hooks.state_files import serialize_session_map_entry"
+  },
+  {
+    "path": "src/ccgram/hook.py",
+    "scope": "_update_session_map",
+    "import": "from .utils import ccgram_dir, atomic_write_json"
+  },
+  {
+    "path": "src/ccgram/hook.py",
+    "scope": "_update_session_map",
+    "import": "import shutil"
+  },
+  {
+    "path": "src/ccgram/hook.py",
+    "scope": "_write_event",
+    "import": "from .hooks.state_files import serialize_event_record"
+  },
+  {
+    "path": "src/ccgram/hook.py",
+    "scope": "_write_event",
+    "import": "from .utils import ccgram_dir"
+  },
+  {
+    "path": "src/ccgram/hook.py",
+    "scope": "hook_main",
+    "import": "from .utils import load_ccgram_env"
+  },
+  {
+    "path": "src/ccgram/llm/__init__.py",
+    "scope": "_create_completer",
+    "import": "from ccgram.config import config"
+  },
+  {
+    "path": "src/ccgram/llm/summarizer.py",
+    "scope": "summarize_completion",
+    "import": "from . import get_text_completer"
+  },
+  {
+    "path": "src/ccgram/main.py",
+    "scope": "_ensure_tmux_session",
+    "import": "from .config import config"
+  },
+  {
+    "path": "src/ccgram/main.py",
+    "scope": "_ensure_tmux_session",
+    "import": "from .multiplexer.tmux import tmux_manager"
+  },
+  {
+    "path": "src/ccgram/main.py",
+    "scope": "main",
+    "import": "from .cli import cli"
+  },
+  {
+    "path": "src/ccgram/main.py",
+    "scope": "run_bot",
+    "import": "from . import __version__"
+  },
+  {
+    "path": "src/ccgram/main.py",
+    "scope": "run_bot",
+    "import": "from .bot import create_bot"
+  },
+  {
+    "path": "src/ccgram/main.py",
+    "scope": "run_bot",
+    "import": "from .config import config"
+  },
+  {
+    "path": "src/ccgram/main.py",
+    "scope": "run_bot",
+    "import": "from .utils import ccgram_dir"
+  },
+  {
+    "path": "src/ccgram/main.py",
+    "scope": "run_bot",
+    "import": "from .utils import check_duplicate_ccgram, detect_tmux_context"
+  },
+  {
+    "path": "src/ccgram/main.py",
+    "scope": "start_miniapp_if_enabled",
+    "import": "from .config import config"
+  },
+  {
+    "path": "src/ccgram/main.py",
+    "scope": "start_miniapp_if_enabled",
+    "import": "from .miniapp import start_server"
+  },
+  {
+    "path": "src/ccgram/main.py",
+    "scope": "stop_miniapp_if_enabled",
+    "import": "from .miniapp import stop_server"
+  },
+  {
+    "path": "src/ccgram/miniapp/api/terminal.py",
+    "scope": "_default_capture",
+    "import": "from ...multiplexer import multiplexer as tmux_manager"
+  },
+  {
+    "path": "src/ccgram/miniapp/api/terminal.py",
+    "scope": "_default_pane_capture",
+    "import": "from ...multiplexer import multiplexer as tmux_manager"
+  },
+  {
+    "path": "src/ccgram/miniapp/api/terminal.py",
+    "scope": "_default_pane_list",
+    "import": "from ...multiplexer import multiplexer as tmux_manager"
+  },
+  {
+    "path": "src/ccgram/miniapp/api/terminal.py",
+    "scope": "_default_pane_list",
+    "import": "from ...window_state_ports.pane_state import list_pane_projections"
+  },
+  {
+    "path": "src/ccgram/miniapp/api/transcript.py",
+    "scope": "_default_reader",
+    "import": "from ...session_query import get_recent_messages"
+  },
+  {
+    "path": "src/ccgram/multiplexer/reconciliation.py",
+    "scope": "list_windows_for_reconciliation",
+    "import": "from . import get_active_multiplexer"
+  },
+  {
+    "path": "src/ccgram/multiplexer/registry.py",
+    "scope": "_make_herdr",
+    "import": "from ccgram.multiplexer.herdr import HerdrManager"
+  },
+  {
+    "path": "src/ccgram/multiplexer/registry.py",
+    "scope": "_make_tmux",
+    "import": "from ccgram.multiplexer.tmux import tmux_manager"
+  },
+  {
+    "path": "src/ccgram/providers/__init__.py",
+    "scope": "_ensure_registered",
+    "import": "from ccgram.providers.claude import ClaudeProvider"
+  },
+  {
+    "path": "src/ccgram/providers/__init__.py",
+    "scope": "_ensure_registered",
+    "import": "from ccgram.providers.codex import CodexProvider"
+  },
+  {
+    "path": "src/ccgram/providers/__init__.py",
+    "scope": "_ensure_registered",
+    "import": "from ccgram.providers.gemini import GeminiProvider"
+  },
+  {
+    "path": "src/ccgram/providers/__init__.py",
+    "scope": "_ensure_registered",
+    "import": "from ccgram.providers.pi import PiProvider"
+  },
+  {
+    "path": "src/ccgram/providers/__init__.py",
+    "scope": "_ensure_registered",
+    "import": "from ccgram.providers.shell import ShellProvider"
+  },
+  {
+    "path": "src/ccgram/providers/__init__.py",
+    "scope": "detect_provider_from_command",
+    "import": "from .shell import KNOWN_SHELLS"
+  },
+  {
+    "path": "src/ccgram/providers/__init__.py",
+    "scope": "detect_provider_from_pane",
+    "import": "from ..multiplexer import multiplexer"
+  },
+  {
+    "path": "src/ccgram/providers/__init__.py",
+    "scope": "detect_provider_from_pane",
+    "import": "from .process_detection import detect_provider_cached"
+  },
+  {
+    "path": "src/ccgram/providers/__init__.py",
+    "scope": "get_provider",
+    "import": "from ccgram.config import config"
+  },
+  {
+    "path": "src/ccgram/providers/__init__.py",
+    "scope": "resolve_launch_command",
+    "import": "from ccgram.providers.gemini import build_hardened_gemini_launch_command"
+  },
+  {
+    "path": "src/ccgram/providers/claude.py",
+    "scope": "ClaudeProvider.apply_task_entries",
+    "import": "from ccgram.claude_task_state import claude_task_state"
+  },
+  {
+    "path": "src/ccgram/providers/claude.py",
+    "scope": "ClaudeProvider.scrape_current_mode",
+    "import": "from ccgram.multiplexer import multiplexer as tmux_manager"
+  },
+  {
+    "path": "src/ccgram/providers/claude.py",
+    "scope": "ClaudeProvider.seed_task_state",
+    "import": "from ccgram.claude_task_state import claude_task_state"
+  },
+  {
+    "path": "src/ccgram/providers/claude.py",
+    "scope": "ClaudeProvider.seed_task_state",
+    "import": "import aiofiles"
+  },
+  {
+    "path": "src/ccgram/providers/codex.py",
+    "scope": "CodexProvider.build_status_snapshot",
+    "import": "from ccgram.providers.codex_status import build_codex_status_snapshot"
+  },
+  {
+    "path": "src/ccgram/providers/codex.py",
+    "scope": "CodexProvider.discover_transcript",
+    "import": "import time"
+  },
+  {
+    "path": "src/ccgram/providers/codex.py",
+    "scope": "CodexProvider.has_output_since",
+    "import": "from ccgram.providers.codex_status import has_codex_assistant_output_since"
+  },
+  {
+    "path": "src/ccgram/providers/shell_infra.py",
+    "scope": "_get_marker_prefix",
+    "import": "from ccgram.config import config"
+  },
+  {
+    "path": "src/ccgram/providers/shell_infra.py",
+    "scope": "_get_prompt_mode",
+    "import": "from ccgram.config import config"
+  },
+  {
+    "path": "src/ccgram/providers/shell_infra.py",
+    "scope": "_is_interactive_shell",
+    "import": "from ccgram.multiplexer import multiplexer"
+  },
+  {
+    "path": "src/ccgram/providers/shell_infra.py",
+    "scope": "detect_pane_shell",
+    "import": "from ccgram.multiplexer import multiplexer as tmux_manager"
+  },
+  {
+    "path": "src/ccgram/providers/shell_infra.py",
+    "scope": "has_prompt_marker",
+    "import": "from ccgram.multiplexer import multiplexer as tmux_manager"
+  },
+  {
+    "path": "src/ccgram/providers/shell_infra.py",
+    "scope": "setup_shell_prompt",
+    "import": "from ccgram.config import config"
+  },
+  {
+    "path": "src/ccgram/providers/shell_infra.py",
+    "scope": "setup_shell_prompt",
+    "import": "from ccgram.multiplexer import multiplexer as tmux_manager"
+  },
+  {
+    "path": "src/ccgram/session.py",
+    "scope": "SessionManager.resolve_stale_ids",
+    "import": "from .window_resolver import LiveWindow, resolve_stale_ids as _resolve"
+  },
+  {
+    "path": "src/ccgram/session.py",
+    "scope": "SessionManager.set_window_provider",
+    "import": "from .providers.registry import UnknownProviderError, registry"
+  },
+  {
+    "path": "src/ccgram/session.py",
+    "scope": "SessionManager.view_window",
+    "import": "from .window_query import view_window as _view_window"
+  },
+  {
+    "path": "src/ccgram/session_map.py",
+    "scope": "SessionMapSync._remove_stale_window_states",
+    "import": "from .thread_router import thread_router"
+  },
+  {
+    "path": "src/ccgram/session_map.py",
+    "scope": "SessionMapSync._remove_stale_window_states",
+    "import": "from .window_state_store import window_store"
+  },
+  {
+    "path": "src/ccgram/session_map.py",
+    "scope": "SessionMapSync._sync_window_from_session_map",
+    "import": "from .providers import detect_provider_from_transcript_path"
+  },
+  {
+    "path": "src/ccgram/session_map.py",
+    "scope": "SessionMapSync._sync_window_from_session_map",
+    "import": "from .thread_router import thread_router"
+  },
+  {
+    "path": "src/ccgram/session_map.py",
+    "scope": "SessionMapSync._sync_window_from_session_map",
+    "import": "from .window_state_store import window_store"
+  },
+  {
+    "path": "src/ccgram/session_map.py",
+    "scope": "SessionMapSync.prune_session_map",
+    "import": "from .window_state_store import window_store"
+  },
+  {
+    "path": "src/ccgram/session_map.py",
+    "scope": "SessionMapSync.register_hookless_session",
+    "import": "from .window_state_store import window_store"
+  },
+  {
+    "path": "src/ccgram/session_map.py",
+    "scope": "SessionMapSync.write_hookless_session_map",
+    "import": "from .hooks.state_files import serialize_session_map_entry"
+  },
+  {
+    "path": "src/ccgram/session_map.py",
+    "scope": "SessionMapSync.write_hookless_session_map",
+    "import": "from .thread_router import thread_router"
+  },
+  {
+    "path": "src/ccgram/session_map.py",
+    "scope": "_prefer_existing_primary",
+    "import": "from .window_state_store import is_window_store_wired, window_store"
+  },
+  {
+    "path": "src/ccgram/session_monitor.py",
+    "scope": "SessionMonitor.__init__",
+    "import": "from .providers.base import HookEvent"
+  },
+  {
+    "path": "src/ccgram/session_monitor.py",
+    "scope": "SessionMonitor._detect_and_cleanup_changes",
+    "import": "from .session import session_manager as _sm"
+  },
+  {
+    "path": "src/ccgram/session_monitor.py",
+    "scope": "SessionMonitor._detect_and_cleanup_changes",
+    "import": "from .session_map import session_map_sync"
+  },
+  {
+    "path": "src/ccgram/session_monitor.py",
+    "scope": "SessionMonitor._detect_and_cleanup_changes",
+    "import": "from .thread_router import thread_router"
+  },
+  {
+    "path": "src/ccgram/session_monitor.py",
+    "scope": "SessionMonitor._emit_known_unbound_window_events",
+    "import": "from .thread_router import thread_router"
+  },
+  {
+    "path": "src/ccgram/session_monitor.py",
+    "scope": "SessionMonitor._emit_unbound_window_events",
+    "import": "from .thread_router import thread_router"
+  },
+  {
+    "path": "src/ccgram/session_monitor.py",
+    "scope": "SessionMonitor._monitor_loop",
+    "import": "from .session_map import session_map_sync"
+  },
+  {
+    "path": "src/ccgram/session_monitor.py",
+    "scope": "SessionMonitor._reconcile_session_map",
+    "import": "from .hooks.state_files import serialize_session_map_entry"
+  },
+  {
+    "path": "src/ccgram/session_monitor.py",
+    "scope": "SessionMonitor._reconcile_session_map",
+    "import": "from .utils import atomic_write_json"
+  },
+  {
+    "path": "src/ccgram/session_query.py",
+    "scope": "find_users_for_session",
+    "import": "from .session_resolver import session_resolver"
+  },
+  {
+    "path": "src/ccgram/session_query.py",
+    "scope": "get_recent_messages",
+    "import": "from .session_resolver import session_resolver"
+  },
+  {
+    "path": "src/ccgram/session_query.py",
+    "scope": "resolve_session_for_window",
+    "import": "from .session_resolver import session_resolver"
+  },
+  {
+    "path": "src/ccgram/session_state_ports/live_session_state.py",
+    "scope": "get_last_activity_ts",
+    "import": "from ..session_lifecycle import session_lifecycle"
+  },
+  {
+    "path": "src/ccgram/session_state_ports/live_session_state.py",
+    "scope": "get_last_activity_ts",
+    "import": "from ..session_monitor import get_active_monitor"
+  },
+  {
+    "path": "src/ccgram/session_state_ports/live_session_state.py",
+    "scope": "get_session_id",
+    "import": "from ..session_lifecycle import session_lifecycle"
+  },
+  {
+    "path": "src/ccgram/session_state_ports/live_session_state.py",
+    "scope": "get_task_snapshot",
+    "import": "from ..claude_task_state import get_claude_task_snapshot"
+  },
+  {
+    "path": "src/ccgram/session_state_ports/live_session_state.py",
+    "scope": "get_wait_header",
+    "import": "from ..claude_task_state import get_claude_wait_header"
+  },
+  {
+    "path": "src/ccgram/session_state_ports/live_session_state.py",
+    "scope": "has_task_snapshot",
+    "import": "from ..claude_task_state import claude_task_state"
+  },
+  {
+    "path": "src/ccgram/status_cmd.py",
+    "scope": "_capability_summary",
+    "import": "from .providers import resolve_capabilities"
+  },
+  {
+    "path": "src/ccgram/status_cmd.py",
+    "scope": "_list_herdr_windows",
+    "import": "from .multiplexer import get_multiplexer"
+  },
+  {
+    "path": "src/ccgram/status_cmd.py",
+    "scope": "status_main",
+    "import": "from . import __version__"
+  },
+  {
+    "path": "src/ccgram/transcript_reader.py",
+    "scope": "TranscriptReader._get_active_cwds",
+    "import": "from .multiplexer import multiplexer as tmux_manager"
+  },
+  {
+    "path": "src/ccgram/transcript_reader.py",
+    "scope": "_resolve_provider_for_file",
+    "import": "from .window_state_ports import identity_state"
+  },
+  {
+    "path": "src/ccgram/tts/__init__.py",
+    "scope": "_make_edge",
+    "import": "from .edge import EdgeTtsSynthesizer"
+  },
+  {
+    "path": "src/ccgram/tts/__init__.py",
+    "scope": "_make_openai",
+    "import": "from .openai import OpenAITtsSynthesizer"
+  },
+  {
+    "path": "src/ccgram/tts/__init__.py",
+    "scope": "prepare_tts_text",
+    "import": "from ccgram.entity_formatting import convert_to_entities"
+  },
+  {
+    "path": "src/ccgram/utils.py",
+    "scope": "load_ccgram_env",
+    "import": "from dotenv import load_dotenv"
+  },
+  {
+    "path": "src/ccgram/whisper/__init__.py",
+    "scope": "get_transcriber",
+    "import": "from ccgram.config import config"
+  }
+]

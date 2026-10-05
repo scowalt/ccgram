@@ -1,10 +1,3 @@
-// Transcript surface — paginated history + substring search.
-//
-// Reads its token from the URL path (mirrors terminal.js) and talks to
-// /api/transcript/<token>. Renders a threaded view with date markers and a
-// simple search input that hits /api/transcript/<token>/search?q=...
-//
-// Phase 3 read-only; no input forwarding.
 
 (function () {
     "use strict";

@@ -1,14 +1,3 @@
-"""Feature-port package for window state — narrow read/write seams.
-
-Each module exposes frozen projection dataclasses for reads and thin
-write functions that delegate to ``WindowStateStore`` (the persistence
-kernel). Ports do not own state; they are the only approved feature
-seam between handler code and the raw ``WindowState`` shape.
-
-Provider/session identity writes still go through ``SessionManager`` so
-provider-capability resolution stays in one place.
-"""
-
 from __future__ import annotations
 
 from .identity_state import (
@@ -62,7 +51,6 @@ from .worktree_state import (
 )
 
 __all__ = [
-    # Identity
     "IdentityProjection",
     "clear_transcript_path",
     "get_identity",
@@ -75,12 +63,10 @@ __all__ = [
     "is_provider_manually_overridden",
     "set_provider_manual_override",
     "set_window_approval_mode",
-    # Lifecycle
     "LifecycleProjection",
     "get_lifecycle",
     "get_origin",
     "set_window_origin",
-    # Pane
     "PaneProjection",
     "WindowPaneSnapshot",
     "get_pane_lifecycle_notify",
@@ -90,7 +76,6 @@ __all__ = [
     "set_pane_lifecycle_notify",
     "snapshot_window_panes",
     "upsert_pane",
-    # Tool mode
     "ToolModeProjection",
     "cycle_batch_mode",
     "cycle_tool_call_visibility",
@@ -101,7 +86,6 @@ __all__ = [
     "is_tool_calls_hidden",
     "set_batch_mode",
     "set_tool_call_visibility",
-    # Worktree
     "WorktreeProjection",
     "clear_worktree",
     "get_worktree",

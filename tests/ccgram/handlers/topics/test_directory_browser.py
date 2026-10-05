@@ -1,5 +1,3 @@
-"""Tests for directory browser favorites and hidden dirs."""
-
 from pathlib import Path
 from unittest.mock import Mock, patch
 
